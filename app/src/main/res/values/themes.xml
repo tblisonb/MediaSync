@@ -1,0 +1,4 @@
+<resources>
+    <!-- Only affects the window before Compose draws. -->
+    <style name="Theme.MediaSync" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
