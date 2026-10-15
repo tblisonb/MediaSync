@@ -13,6 +13,8 @@ kotlinxSerialization = "1.11.0"
 sqliteJdbc = "3.53.4.0"
 logback = "1.6.5"
 zxing = "3.5.4"
+dbusJava = "5.2.2"
+slf4j = "2.0.20"
 androidxTestRunner = "1.7.0"
 androidxTestExtJunit = "1.3.0"
 
@@ -53,6 +55,9 @@ ktor-client-cio = { module = "io.ktor:ktor-client-cio" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+dbus-java-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbusJava" }
+dbus-java-transport-unixsocket = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbusJava" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

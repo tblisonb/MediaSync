@@ -37,14 +37,45 @@ object AudioTags {
         TagOptionSingleton.getInstance().isAndroid = true
     }
 
-    fun read(path: Path): TagSet {
-        val tag = AudioFileIO.read(path.toFile()).tag ?: return TagSet.EMPTY
+    /** Canonical names this class can read and write. */
+    val FIELDS: Set<String> = keys.keys
+
+    fun read(path: Path): TagSet = inspect(path).tags
+
+    /** Everything MediaSync wants from one parse of the file. */
+    class Inspection(
+        val tags: TagSet,
+        /** Every field the file's tag holds, by its format's own id, before any policy. */
+        val raw: Map<String, List<String>>,
+        val durationMs: Long?,
+        /**
+         * The file holds something besides the fields in [FIELDS] and one front cover: a comment,
+         * an encoder note, a second picture. Writing [tags] back would remove it.
+         */
+        val hasExtras: Boolean,
+    )
+
+    fun inspect(path: Path): Inspection {
+        val audio = AudioFileIO.read(path.toFile())
+        val duration = runCatching { (audio.audioHeader.preciseTrackLength * 1000).toLong() }.getOrNull()?.takeIf { it > 0 }
+        val tag = audio.tag ?: return Inspection(TagSet.EMPTY, emptyMap(), duration, hasExtras = false)
         val fields = keys.mapNotNull { (name, key) ->
             val values = tag.getAll(key).filter { it.isNotBlank() }
             if (values.isEmpty()) null else name to values
         }.toMap()
         val cover = tag.artworkList.firstOrNull { it.pictureType == PictureTypes.DEFAULT_ID } ?: tag.firstArtwork
-        return TagSet(fields, cover?.let { Picture(it.mimeType, it.binaryData) })
+        val raw = LinkedHashMap<String, MutableList<String>>()
+        for (field in tag.fields) {
+            val value = if (field.isBinary) "(binary)" else field.toString()
+            raw.getOrPut(field.id) { mutableListOf() } += value
+        }
+        // Counted rather than listed: formats name their fields differently, but every field outside
+        // the allowed ones adds to the total.
+        val allowedCount = keys.values.sumOf { key -> tag.getFields(key).size } + minOf(tag.artworkList.size, 1)
+        // Vorbis comments carry the encoder's VENDOR string, which is part of the format, not a tag.
+        val vendor = raw["VENDOR"]?.size ?: 0
+        val hasExtras = tag.artworkList.size > 1 || tag.fieldCount - vendor > allowedCount
+        return Inspection(TagSet(fields, cover?.let { Picture(it.mimeType, it.binaryData) }), raw, duration, hasExtras)
     }
 
     fun write(path: Path, tags: TagSet) {

@@ -15,5 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "MediaSync"
-// :desktop arrives with milestone M2.
-include(":shared", ":spike", ":app", ":server")
+include(":shared", ":spike", ":app", ":server", ":desktop")

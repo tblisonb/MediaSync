@@ -1,0 +1,542 @@
+package com.tlisonbee.mediasync.desktop
+
+import com.tlisonbee.mediasync.api.AssetDto
+import com.tlisonbee.mediasync.api.AssetKind
+import com.tlisonbee.mediasync.api.PictureRef
+import com.tlisonbee.mediasync.api.PushChange
+import com.tlisonbee.mediasync.api.PushRequest
+import com.tlisonbee.mediasync.api.PushResult
+import com.tlisonbee.mediasync.api.RenditionDto
+import com.tlisonbee.mediasync.api.Tags
+import com.tlisonbee.mediasync.library.RepoPaths
+import com.tlisonbee.mediasync.library.SyncMode
+import com.tlisonbee.mediasync.library.TagPolicy
+import com.tlisonbee.mediasync.tags.AudioTags
+import com.tlisonbee.mediasync.tags.Picture
+import java.io.IOException
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
+
+/** What one sync did, for the log, the CLI and notifications. */
+class SyncReport {
+    var filesRead = 0
+    var pushed = 0
+    var rev: Long? = null
+    var head = 0L
+    var uploadedFiles = 0
+    var uploadedBytes = 0L
+    var downloadedFiles = 0
+    var downloadedBytes = 0L
+    var retagged = 0
+    var renamed = 0
+    var deleted = 0
+
+    /** Local changes in receive-only folders, which are never pushed. */
+    var notPushed = 0
+
+    /** Some files were still being written; another sync should follow shortly. */
+    var unsettled = false
+    val warnings = mutableListOf<String>()
+
+    fun warn(message: String) {
+        warnings += message
+    }
+
+    fun summary(): String = buildList {
+        if (pushed > 0) add("pushed $pushed${rev?.let { " as r$it" } ?: ""}")
+        if (uploadedFiles > 0) add("uploaded $uploadedFiles (${bytes(uploadedBytes)})")
+        if (downloadedFiles > 0) add("downloaded $downloadedFiles (${bytes(downloadedBytes)})")
+        if (retagged > 0) add("retagged $retagged")
+        if (renamed > 0) add("renamed $renamed")
+        if (deleted > 0) add("deleted $deleted")
+        if (warnings.isNotEmpty()) add("${warnings.size} warning(s)")
+    }.ifEmpty { listOf("nothing to do") }.joinToString(", ") + " (at r${maxOf(head, rev ?: 0)})"
+}
+
+/**
+ * One sync cycle: scan the folders, pull what changed on the server, upload new media, push local
+ * changes, and bring each file in line with the server's answer. The server does the merging; this
+ * side only works out what changed locally and writes the results into files.
+ */
+class SyncEngine(
+    private val config: DesktopConfig,
+    private val api: ApiClient,
+    private val index: Index,
+    private val dirs: Dirs,
+    private val log: (String) -> Unit = ::println,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    private val knownMedia = HashSet<String>()
+    private var policy = TagPolicy()
+
+    fun sync(allowDeletes: Boolean = false): SyncReport {
+        val report = SyncReport()
+        policy = api.policy()
+        scan(report, allowDeletes)
+        pull(report, allowDeletes)
+        push(report)
+        clean(report)
+        index.setState(LAST_SUCCESS, clock().toString())
+        return report
+    }
+
+    // ---- Scan: what changed on disk ----
+
+    private fun scan(report: SyncReport, allowDeletes: Boolean) {
+        for (folder in config.folders) {
+            val root = folder.root
+            if (!Files.isDirectory(root)) {
+                // Possibly an unmounted disk: never read that as "everything was deleted".
+                report.warn("$root isn't there, so it was skipped")
+                continue
+            }
+            val known = index.inFolder(folder.prefix).associateBy { it.path }
+            val seen = HashSet<String>()
+            val fresh = mutableListOf<Row>()
+            for (file in walk(root)) {
+                val path = file.toString()
+                seen += path
+                val (size, mtime) = try {
+                    LocalFiles.stat(file)
+                } catch (e: IOException) {
+                    continue
+                }
+                val row = known[path]
+                if (row != null && !row.missing && row.size == size && row.mtime == mtime) continue
+                if (clock() - mtime / 1000 < SETTLE_MS) {
+                    report.unsettled = true // still being written; it's picked up next time
+                    continue
+                }
+                val state = try {
+                    LocalFiles.read(file)
+                } catch (e: IOException) {
+                    report.warn("$file: ${e.message}")
+                    continue
+                }
+                report.filesRead++
+                if (report.filesRead % 500 == 0) log("Read ${report.filesRead} files…")
+                val updated = (row ?: Row(path, folder.prefix, size, mtime, state.kind, state.media, state.tags, null, null, null)).copy(
+                    size = size, mtime = mtime, kind = state.kind, media = state.media, tags = state.tags,
+                    cover = state.coverHash, coverMime = state.cover?.mimeType, durationMs = state.durationMs, missing = false,
+                    extras = hasExtras(state),
+                )
+                index.put(updated)
+                if (row == null) fresh += updated
+            }
+
+            // Files that vanished. A vanished file whose media turned up elsewhere was moved.
+            val gone = known.values.filter { it.path !in seen && !it.missing }.toMutableList()
+            for (row in fresh) {
+                val moved = gone.firstOrNull { it.assetId != null && it.media == row.media } ?: continue
+                gone -= moved
+                val carried = row.copy(seenMedia = moved.seenMedia, seenTags = moved.seenTags, seenCover = moved.seenCover, assetId = moved.assetId, base = moved.base, ignored = moved.ignored)
+                index.replace(moved.path, carried)
+                moveBackIfMusic(folder, carried, report)
+            }
+            gone.filter { it.assetId == null || it.ignored != null }.forEach { index.delete(it.path) }
+            val deletions = gone.filter { it.assetId != null && it.ignored == null }
+            if (!allowDeletes && tooMany(deletions.size, known.size)) {
+                report.warn(
+                    "${deletions.size} files vanished from $root, so their deletion wasn't synced. " +
+                        "If you meant it, run: mediasync-desktop sync --allow-deletes",
+                )
+            } else {
+                deletions.forEach { index.put(it.copy(missing = true)) }
+            }
+        }
+    }
+
+    /** Music paths follow the tags, so a track renamed by hand goes back where its tags put it. */
+    private fun moveBackIfMusic(folder: FolderConfig, row: Row, report: SyncReport) {
+        val base = row.base ?: return
+        if (row.ignored != null || base.kind != AssetKind.AUDIO || !RepoPaths.isMusic(base.path)) return
+        val expected = LocalFiles.localPath(folder, base.path, row.extension)
+        if (expected == row.file || Files.exists(expected)) return
+        LocalFiles.move(row.file, expected)
+        LocalFiles.pruneEmpty(row.file.parent, folder.root)
+        val (size, mtime) = LocalFiles.stat(expected)
+        index.replace(row.path, row.copy(path = expected.toString(), size = size, mtime = mtime))
+        log("Moved ${row.path} back to $expected: music files are named by their tags")
+        report.renamed++
+    }
+
+    /** Whether a file holds tags the policy doesn't keep, which the next write removes. */
+    private fun hasExtras(state: FileState): Boolean {
+        if (state.kind != AssetKind.AUDIO) return false
+        val allowed = policy.fields[AssetKind.AUDIO].orEmpty()
+        return state.hasExtras || state.tags.keys.any { it !in allowed } ||
+            (state.cover != null && TagPolicy.FRONT_COVER !in policy.pictures[AssetKind.AUDIO].orEmpty())
+    }
+
+    private fun walk(root: Path): List<Path> {
+        val files = mutableListOf<Path>()
+        Files.walkFileTree(
+            root,
+            object : SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult =
+                    if (dir != root && LocalFiles.skipped(dir.fileName.toString())) FileVisitResult.SKIP_SUBTREE else FileVisitResult.CONTINUE
+
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (attrs.isRegularFile && !LocalFiles.skipped(file.fileName.toString())) files.add(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult = FileVisitResult.CONTINUE
+            },
+        )
+        return files
+    }
+
+    // ---- Pull: what changed on the server ----
+
+    private fun pull(report: SyncReport, allowDeletes: Boolean) {
+        val since = index.state(SINCE)?.toLong() ?: 0
+        var after: String? = null
+        var reset = false
+        val listed = HashSet<String>()
+        val removals = LinkedHashMap<String, Row>()
+        do {
+            val page = api.changes(since, after)
+            reset = reset || page.reset
+            for (asset in page.assets) {
+                listed += asset.assetId
+                try {
+                    applyRemote(asset, report, removals)
+                } catch (e: IOException) {
+                    report.warn("${asset.path}: ${e.message}")
+                }
+            }
+            for (id in page.left) index.byAsset(id).forEach { removals[it.path] = it }
+            report.head = page.head
+            after = page.next
+        } while (page.more)
+
+        if (reset) {
+            // A full listing: anything held here that it doesn't mention left this device's scope.
+            index.all().filter { it.assetId != null && it.assetId !in listed && it.ignored == null && receives(it.prefix) }
+                .forEach { removals[it.path] = it }
+        }
+        // Rows with local changes are pushed first; the push result decides their fate.
+        val doomed = removals.values.filter { !it.changed }
+        if (!allowDeletes && tooMany(doomed.size, index.all().size)) {
+            report.warn(
+                "The server asks to delete ${doomed.size} local files; nothing was deleted. " +
+                    "If that's expected, run: mediasync-desktop sync --allow-deletes",
+            )
+            return // leave `since` where it was, so the deletions come again
+        }
+        doomed.forEach { removeLocal(it, report) }
+        index.setState(SINCE, report.head.toString())
+    }
+
+    private fun applyRemote(asset: AssetDto, report: SyncReport, removals: MutableMap<String, Row>) {
+        val folder = config.folderFor(asset.path) ?: return
+        val row = index.byAsset(asset.assetId).firstOrNull { it.ignored == null }
+        if (row != null && row.base?.rev == asset.rev && !row.missing) return
+        // A file with local changes keeps them; the push merges both sides on the server.
+        if (row != null && row.changed && folder.mode != SyncMode.RECEIVE_ONLY) return
+        if (asset.deleted) {
+            if (row != null) removals[row.path] = row
+            return
+        }
+        if (folder.mode == SyncMode.SEND_ONLY) return
+        val onFile = if (row != null && !row.changed) row.base?.let { it.tags to LocalFiles.coverOf(it)?.blob } else null
+        materialize(folder, asset, row, onFile, report)
+    }
+
+    /**
+     * Brings the local file of [asset] in line with it: rewrite tags, rename, or download. [onFile]
+     * is what the file's tags already represent (tags, cover blob); null means rewrite them.
+     */
+    private fun materialize(folder: FolderConfig, asset: AssetDto, row: Row?, onFile: Pair<Tags, String?>?, report: SyncReport) {
+        val hashes = asset.renditions.map { it.mediaHash }
+        if (row != null && row.media in hashes && Files.exists(row.file)) {
+            if (LocalFiles.stat(row.file) != (row.size to row.mtime)) {
+                report.warn("${row.path} changed while syncing; it's merged next time")
+                return
+            }
+            var file = row.file
+            val coverBlob = LocalFiles.coverOf(asset)?.blob
+            val retag = asset.kind == AssetKind.AUDIO && row.kind == AssetKind.AUDIO &&
+                (onFile == null || row.extras || LocalFiles.writable(onFile.first) != LocalFiles.writable(asset.tags) || onFile.second != coverBlob)
+            if (retag) {
+                LocalFiles.writeTags(file, asset.tags, cover(asset))
+                report.retagged++
+            }
+            val target = LocalFiles.localPath(folder, asset.path, row.extension)
+            if (target != file) {
+                LocalFiles.move(file, target)
+                LocalFiles.pruneEmpty(file.parent, folder.root)
+                report.renamed++
+                file = target
+            }
+            val (size, mtime) = LocalFiles.stat(file)
+            var updated = row.copy(path = file.toString(), size = size, mtime = mtime)
+            if (retag) {
+                val read = AudioTags.inspect(file)
+                val front = read.tags.frontCover
+                updated = updated.copy(
+                    tags = read.tags.fields, cover = front?.let { sha256Hex(it.data) }, coverMime = front?.mimeType,
+                    extras = read.hasExtras,
+                )
+            }
+            index.replace(row.path, updated.synced(asset))
+            return
+        }
+
+        // This device has none of the asset's renditions (or the media was replaced): download one.
+        val rendition = pick(asset, folder, row) ?: return report.warn("${asset.path} has no renditions")
+        val target = LocalFiles.localPath(folder, asset.path, rendition.format)
+        if (Files.exists(target) && (row == null || target != row.file)) {
+            report.warn("$target already exists and isn't MediaSync's, so ${asset.path} wasn't downloaded")
+            return
+        }
+        Files.createDirectories(target.parent)
+        val tmp = target.resolveSibling(".mediasync-${rendition.blob.take(16)}.${rendition.format}")
+        report.downloadedBytes += api.download(rendition.blob, tmp)
+        report.downloadedFiles++
+        if (asset.kind == AssetKind.AUDIO && LocalFiles.isTagged(rendition.format)) LocalFiles.writeTags(tmp, asset.tags, cover(asset))
+        Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        if (row != null && row.file != target) LocalFiles.delete(row.file, folder.root)
+        val state = LocalFiles.read(target)
+        val (size, mtime) = LocalFiles.stat(target)
+        val fresh = Row(
+            target.toString(), folder.prefix, size, mtime, state.kind, state.media, state.tags,
+            state.coverHash, state.cover?.mimeType, state.durationMs, extras = hasExtras(state),
+        ).synced(asset)
+        index.transaction {
+            row?.let { index.delete(it.path) }
+            index.put(fresh)
+        }
+    }
+
+    /** The rendition to fetch: the format this device already uses, else its preference, else the original. */
+    private fun pick(asset: AssetDto, folder: FolderConfig, row: Row?): RenditionDto? {
+        val renditions = asset.renditions
+        row?.extension?.lowercase()?.let { ext -> renditions.firstOrNull { it.format == ext }?.let { return it } }
+        folder.prefer.forEach { format -> renditions.firstOrNull { it.format == format }?.let { return it } }
+        return renditions.firstOrNull()
+    }
+
+    private fun removeLocal(row: Row, report: SyncReport) {
+        val folder = config.folders.firstOrNull { it.prefix == row.prefix }
+        if (Files.exists(row.file)) {
+            if (LocalFiles.stat(row.file) != (row.size to row.mtime)) {
+                report.warn("${row.path} was deleted on the server but changed here; it was kept")
+                return
+            }
+            LocalFiles.delete(row.file, folder?.root ?: row.file.parent)
+        }
+        index.delete(row.path)
+        report.deleted++
+    }
+
+    // ---- Push: local changes up ----
+
+    private fun push(report: SyncReport) {
+        val all = index.all()
+        report.notPushed = all.count { it.changed && it.ignored == null && modeOf(it.prefix) == SyncMode.RECEIVE_ONLY }
+        val pending = all.filter { (it.changed || movedOutsideMusic(it)) && it.ignored == null && modeOf(it.prefix) != SyncMode.RECEIVE_ONLY }
+        if (pending.isEmpty()) return
+        log("Pushing ${pending.size} local change(s)…")
+        var done = 0
+        for (batch in pending.chunked(BATCH)) {
+            val prepared = batch.mapNotNull { row ->
+                try {
+                    row to prepare(row, report)
+                } catch (e: IOException) {
+                    report.warn("${row.path}: ${e.message}")
+                    null
+                }
+            }
+            if (prepared.isEmpty()) continue
+            val response = api.push(PushRequest(changes = prepared.map { it.second }))
+            report.rev = response.rev
+            report.pushed += prepared.size
+            response.results.zip(prepared).forEach { (result, pair) ->
+                try {
+                    applyResult(pair.first, pair.second, result, report)
+                } catch (e: IOException) {
+                    report.warn("${pair.first.path}: ${e.message}")
+                }
+            }
+            done += batch.size
+            if (pending.size > BATCH) log("Pushed $done of ${pending.size} (uploaded ${bytes(report.uploadedBytes)})")
+        }
+    }
+
+    /** The change to push for [row], after uploading whatever media and cover the server lacks. */
+    private fun prepare(row: Row, report: SyncReport): PushChange {
+        val folder = folderOf(row)
+        val base = row.base
+        if (row.missing) {
+            return PushChange(row.assetId, base!!.rev, base.path, base.kind, deleted = true)
+        }
+        if (LocalFiles.stat(row.file) != (row.size to row.mtime)) throw IOException("changed while syncing; it's pushed next time")
+        uploadMedia(row, report)
+
+        val coverChanged = row.assetId == null || row.cover != row.seenCover
+        val cover = row.cover?.let { PictureRef(TagPolicy.FRONT_COVER, it, row.coverMime ?: "image/jpeg") }
+        if (cover != null && coverChanged) uploadCover(row, cover)
+
+        if (base == null) {
+            val raw = if (row.kind == AssetKind.AUDIO) runCatching { AudioTags.inspect(row.file).raw }.getOrNull() else null
+            return PushChange(
+                path = LocalFiles.repoPath(folder, row.file),
+                kind = row.kind,
+                mediaHash = row.media,
+                durationMs = row.durationMs,
+                tags = row.tags,
+                pictures = listOfNotNull(cover),
+                rawTags = raw,
+                sourcePath = row.path,
+            )
+        }
+        // Only the fields edited here count: the rest stays as the server had it, so a format that
+        // can't hold a value exactly (a full date in an old ID3 tag) never overwrites it.
+        val seen = row.seenTags.orEmpty()
+        val tags = base.tags.toMutableMap()
+        for (field in seen.keys + row.tags.keys) {
+            if (seen[field] == row.tags[field]) continue
+            val value = row.tags[field]
+            if (value == null) tags.remove(field) else tags[field] = value
+        }
+        val pictures = if (coverChanged) base.pictures.filter { it.type != TagPolicy.FRONT_COVER } + listOfNotNull(cover) else base.pictures
+        val music = base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path)
+        return PushChange(
+            assetId = row.assetId,
+            baseRev = base.rev,
+            path = if (music) base.path else LocalFiles.repoPath(folder, row.file),
+            kind = base.kind,
+            mediaHash = row.media,
+            baseMediaHash = row.seenMedia,
+            durationMs = row.durationMs,
+            tags = tags,
+            pictures = pictures,
+        )
+    }
+
+    private fun uploadMedia(row: Row, report: SyncReport) {
+        if (row.media in knownMedia) return
+        if (api.media(row.media) == null) {
+            val hash = sha256Hex(row.file)
+            val result = api.upload(row.file, hash, row.file.fileName.toString()) { report.uploadedBytes += it }
+            report.uploadedFiles++
+            val served = result.media?.mediaHash
+            if (served != row.media) throw IOException("the server read this file's media as $served, not ${row.media}")
+        }
+        knownMedia += row.media
+    }
+
+    private fun uploadCover(row: Row, cover: PictureRef) {
+        if (api.hasBlob(cover.blob)) return
+        val bytes = AudioTags.read(row.file).frontCover?.data ?: throw IOException("its cover art disappeared")
+        if (sha256Hex(bytes) != cover.blob) throw IOException("its cover art changed while syncing")
+        api.uploadBytes(bytes, "cover." + if (cover.mime == "image/png") "png" else "jpg")
+        cachePicture(cover.blob, bytes)
+    }
+
+    /** Brings the file in line with the server's answer to its push. */
+    private fun applyResult(row: Row, change: PushChange, result: PushResult, report: SyncReport) {
+        val asset = result.asset
+        val folder = folderOf(row)
+        if (row.missing) {
+            index.delete(row.path)
+            // Deleted here but edited elsewhere: the edit won, so the file comes back.
+            if (!asset.deleted && folder.mode != SyncMode.SEND_ONLY && receives(row.prefix, asset)) materialize(folder, asset, null, null, report)
+            return
+        }
+        val others = index.byAsset(asset.assetId).filter { it.path != row.path && it.ignored == null && !it.missing }
+        if (others.isNotEmpty()) {
+            // A second local copy of something already synced from here: leave it be.
+            report.warn("${row.path} has the same audio as ${others.first().path}; it's left alone and not synced")
+            index.put(row.synced(asset).copy(ignored = "same audio as ${others.first().path}"))
+            return
+        }
+        if (folder.mode == SyncMode.SEND_ONLY) {
+            index.put(row.synced(asset))
+            return
+        }
+        if (asset.deleted || !receives(row.prefix, asset)) {
+            removeLocal(row.synced(asset), report)
+            return
+        }
+        materialize(folder, asset, row, change.tags to change.pictures.firstOrNull { it.type == TagPolicy.FRONT_COVER }?.blob, report)
+    }
+
+    /** Outside music, where paths follow tags, moving a file is a change like any other. */
+    private fun movedOutsideMusic(row: Row): Boolean {
+        val base = row.base ?: return false
+        if (row.missing || (base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path))) return false
+        val folder = config.folders.firstOrNull { it.prefix == row.prefix } ?: return false
+        return LocalFiles.repoPath(folder, row.file) != base.path
+    }
+
+    /** Removes tags outside the policy from files that are otherwise in sync, such as a comment some app added. */
+    private fun clean(report: SyncReport) {
+        for (row in index.all()) {
+            if (!row.extras || row.changed || row.ignored != null || row.missing) continue
+            val folder = config.folders.firstOrNull { it.prefix == row.prefix } ?: continue
+            if (folder.mode == SyncMode.SEND_ONLY) continue
+            try {
+                materialize(folder, row.base ?: continue, row, null, report)
+            } catch (e: IOException) {
+                report.warn("${row.path}: ${e.message}")
+            }
+        }
+    }
+
+    // ---- Helpers ----
+
+    private fun cover(asset: AssetDto): Picture? {
+        val ref = LocalFiles.coverOf(asset) ?: return null
+        return Picture(ref.mime, pictureBytes(ref.blob))
+    }
+
+    private fun pictureBytes(hash: String): ByteArray {
+        val cached = dirs.pictures.resolve(hash)
+        if (Files.exists(cached)) return Files.readAllBytes(cached)
+        return api.downloadBytes(hash).also { cachePicture(hash, it) }
+    }
+
+    private fun cachePicture(hash: String, bytes: ByteArray) {
+        Files.createDirectories(dirs.pictures)
+        val tmp = Files.createTempFile(dirs.pictures, hash, ".tmp")
+        Files.write(tmp, bytes)
+        Files.move(tmp, dirs.pictures.resolve(hash), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    private fun folderOf(row: Row): FolderConfig =
+        config.folders.firstOrNull { it.prefix == row.prefix } ?: throw IOException("no synced folder for ${row.prefix}")
+
+    private fun modeOf(prefix: String) = config.folders.firstOrNull { it.prefix == prefix }?.mode
+
+    private fun receives(prefix: String, asset: AssetDto? = null): Boolean {
+        val folder = config.folders.firstOrNull { it.prefix == prefix } ?: return false
+        if (folder.mode == SyncMode.SEND_ONLY) return false
+        return asset == null || folder.rule().covers(asset.path, asset.kind)
+    }
+
+    companion object {
+        const val SINCE = "since"
+        const val LAST_SUCCESS = "lastSuccessAt"
+
+        /** A file is recorded once it has gone this long without being written to. */
+        const val SETTLE_MS = 10_000L
+        const val BATCH = 200
+
+        /** More deletions than this at once need --allow-deletes: an unmounted disk mustn't empty the library. */
+        fun tooMany(count: Int, total: Int) = count > 20 && count * 10 > total
+    }
+}
+
+fun bytes(n: Long): String = when {
+    n >= 1L shl 30 -> "%.1f GiB".format(n / (1L shl 30).toDouble())
+    n >= 1L shl 20 -> "%.1f MiB".format(n / (1L shl 20).toDouble())
+    n >= 1L shl 10 -> "%.0f KiB".format(n / (1L shl 10).toDouble())
+    else -> "$n B"
+}

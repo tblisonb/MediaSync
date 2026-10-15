@@ -194,6 +194,8 @@ private fun Route.apiRoutes(repo: Repository) {
         call.respond(io { repo.resolve(call.device().id, id, request) })
     }
 
+    // Clients preview the import and keep files tidy with the same rules the server applies.
+    get("/policy") { call.respond(repo.policy) }
     get("/devices/me") { call.respond(call.device().toDto()) }
     get("/devices/{id}/subscription") { call.respond(call.ownDevice().subscription) }
     put("/devices/{id}/subscription") {

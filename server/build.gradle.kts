@@ -4,7 +4,15 @@ plugins {
     application
 }
 
-kotlin { jvmToolchain(21) }
+// Java 17 bytecode like :shared, so the desktop client's tests can run this server in-process.
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+kotlin {
+    compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 }
+}
 
 application {
     mainClass = "com.tlisonbee.mediasync.server.MainKt"

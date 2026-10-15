@@ -9,10 +9,9 @@ Design: [MediaSync design](https://claude.ai/code/artifact/6e772e9f-ebc6-411c-93
 | `shared/` | Plain Kotlin used everywhere: media hashing (`media/`), tag reading and writing with jaudiotagger (`tags/`), the sync API types (`api/`), tag policy, path rules, subscriptions and the three-way merge (`library/`) |
 | `server/` | Ktor server: repository, sync API, web UI, and the `setup`, `fsck`, `prune` and `snapshot` commands |
 | `spike/` | Milestone 0 command-line check, run on the PC |
+| `desktop/` | Desktop client: a systemd user service that keeps `~/Music` in sync, Plasma notifications, and a CLI |
 | `app/` | Android app; for now just the Milestone 0 check screen |
 | `deploy/` | systemd unit, install script and an end-to-end smoke test |
-
-`desktop/` arrives with milestone M2.
 
 ## Toolchain
 
@@ -74,3 +73,38 @@ sudo -u mediasync /opt/mediasync/bin/mediasync-server pair-code --repo /var/lib/
 
 Logs: `journalctl -u mediasync`. The API is under `/api/v1` (types in `shared/.../api/Api.kt`);
 `server/src/test/.../TestDevice.kt` is a scripted client showing how a device drives it.
+
+## Milestone 2: the desktop client
+
+```sh
+./gradlew :desktop:test                                                     # two clients + a real server, end to end
+./gradlew :desktop:installDist && desktop/build/install/mediasync-desktop/install.sh   # install for this user
+./gradlew :desktop:bundledDist   # desktop/build/distributions/*.tar.gz: includes its own Java, for other PCs
+```
+
+The first `install.sh` asks for the server URL and a pairing code (web UI > Devices > Pair a device),
+then shows what the first sync will do to your files (`mediasync-desktop preview`: which tracks
+move, which tags go) and starts syncing only when you say yes. The client needs the server's
+`/api/v1/policy`, so update the server first.
+
+How it behaves:
+
+- Music files are named by their tags; a file renamed by hand moves back. Tags outside the policy
+  (ripper comments and the like) are removed from the files; the server keeps the originals.
+- Files whose tags MediaSync can't manage (Opus, WAV, cover.jpg, .cue) sync as plain files, where they are.
+- A sync runs 10 s after local changes settle, every 15 minutes, and within a second or two of a
+  change pushed from elsewhere.
+- More than 20 files (and over 10% of them) disappearing at once, or the server asking to delete
+  that many, is held back until `mediasync-desktop sync --allow-deletes`. A missing folder (an
+  unmounted disk) is never read as a deletion.
+- A second local copy of a track that's already synced is left alone and reported.
+
+```sh
+mediasync-desktop status          # folders, what's waiting, the resolve queue
+mediasync-desktop sync            # now (through the running service)
+mediasync-desktop log | diff <rev> | revert <rev> | open [resolve]
+journalctl --user -u mediasync-desktop -f
+```
+
+Config is in `~/.config/mediasync/` (the token is owner-only), the index in
+`~/.local/state/mediasync/`. The service can write only to the synced folders and its own state and cache folders.
