@@ -8,6 +8,11 @@ lifecycle = "2.11.0"
 coroutines = "1.11.0"
 jaudiotagger = "3.0.1"
 junit = "4.13.2"
+ktor = "3.6.0"
+kotlinxSerialization = "1.11.0"
+sqliteJdbc = "3.53.4.0"
+logback = "1.6.5"
+zxing = "3.5.4"
 androidxTestRunner = "1.7.0"
 androidxTestExtJunit = "1.3.0"
 
@@ -27,8 +32,30 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 jaudiotagger = { module = "net.jthink:jaudiotagger", version.ref = "jaudiotagger" }
 junit = { module = "junit:junit", version.ref = "junit" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+ktor-bom = { module = "io.ktor:ktor-bom", version.ref = "ktor" }
+ktor-server-core = { module = "io.ktor:ktor-server-core" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth" }
+ktor-server-sessions = { module = "io.ktor:ktor-server-sessions" }
+ktor-server-html-builder = { module = "io.ktor:ktor-server-html-builder" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages" }
+ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit" }
+ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging" }
+ktor-server-sse = { module = "io.ktor:ktor-server-sse" }
+ktor-server-partial-content = { module = "io.ktor:ktor-server-partial-content" }
+ktor-server-auto-head-response = { module = "io.ktor:ktor-server-auto-head-response" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

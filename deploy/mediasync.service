@@ -1,0 +1,48 @@
+[Unit]
+Description=MediaSync server
+After=network.target
+
+[Service]
+ExecStart=/opt/mediasync/bin/mediasync-server serve
+# install.sh adds a drop-in (mediasync.service.d/repo.conf) setting MEDIASYNC_REPO and making that
+# folder writable; it defaults to /var/lib/mediasync.
+Environment=MEDIASYNC_HOST=127.0.0.1
+Environment=MEDIASYNC_PORT=8766
+Restart=on-failure
+
+# Its own system user, so it can't read or change anyone's files; only the repository is writable.
+# A fixed user (unlike Remind's DynamicUser) keeps ownership stable if the repository moves disks.
+User=mediasync
+Group=mediasync
+UMask=0077
+
+# Network: loopback only. Even a bug can't make it talk to (or listen on) anything else;
+# `tailscale serve` reaches it over loopback.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Sandboxing
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# MemoryDenyWriteExecute is left off: the JVM's JIT compiler needs writable+executable memory.
+
+[Install]
+WantedBy=multi-user.target

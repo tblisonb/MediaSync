@@ -1,0 +1,247 @@
+package com.tlisonbee.mediasync.server
+
+import com.tlisonbee.mediasync.api.ApiJson
+import com.tlisonbee.mediasync.api.HeadEvent
+import com.tlisonbee.mediasync.api.PairRequest
+import com.tlisonbee.mediasync.api.PushRequest
+import com.tlisonbee.mediasync.api.ResolveRequest
+import com.tlisonbee.mediasync.api.RevertRequest
+import com.tlisonbee.mediasync.api.UploadRequest
+import com.tlisonbee.mediasync.api.UploadResponse
+import com.tlisonbee.mediasync.library.Subscription
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.application.install
+import io.ktor.server.auth.Authentication
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.bearer
+import io.ktor.server.auth.principal
+import io.ktor.server.auth.session
+import io.ktor.server.http.content.LocalPathContent
+import io.ktor.server.http.content.staticResources
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.autohead.AutoHeadResponse
+import io.ktor.server.plugins.calllogging.CallLogging
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.partialcontent.PartialContent
+import io.ktor.server.plugins.ratelimit.RateLimit
+import io.ktor.server.plugins.ratelimit.RateLimitName
+import io.ktor.server.plugins.ratelimit.rateLimit
+import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.header
+import io.ktor.server.request.receive
+import io.ktor.server.request.receiveStream
+import io.ktor.server.response.header
+import io.ktor.server.response.respond
+import io.ktor.server.response.respondRedirect
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
+import io.ktor.server.routing.post
+import io.ktor.server.routing.put
+import io.ktor.server.routing.route
+import io.ktor.server.routing.routing
+import io.ktor.server.sessions.SessionTransportTransformerMessageAuthentication
+import io.ktor.server.sessions.Sessions
+import io.ktor.server.sessions.cookie
+import io.ktor.server.sse.SSE
+import io.ktor.server.sse.heartbeat
+import io.ktor.server.sse.sse
+import io.ktor.sse.ServerSentEvent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import java.nio.file.Files
+import java.util.Base64
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+
+/** Signed (not encrypted) browser session; it holds nothing secret, only an expiry. */
+@Serializable
+data class WebSession(val expiresAt: Long)
+
+class DevicePrincipal(val device: Device)
+
+val SESSION_LIFETIME = 30.days
+val LOGIN_RATE_LIMIT = RateLimitName("login")
+val PAIR_RATE_LIMIT = RateLimitName("pair")
+
+fun Application.mediaSyncModule(repo: Repository) {
+    install(ContentNegotiation) { json(ApiJson) }
+    install(CallLogging)
+    install(StatusPages) {
+        exception<RequestException> { call, e ->
+            call.respondText(e.message ?: "Bad request", status = HttpStatusCode.fromValue(e.status))
+        }
+        exception<BadRequestException> { call, e ->
+            call.respondText(e.message ?: "Bad request", status = HttpStatusCode.BadRequest)
+        }
+    }
+    install(SecurityHeaders)
+    install(PartialContent)
+    install(AutoHeadResponse)
+    install(SSE)
+    install(RateLimit) {
+        register(LOGIN_RATE_LIMIT) { rateLimiter(limit = 10, refillPeriod = 1.minutes) }
+        register(PAIR_RATE_LIMIT) { rateLimiter(limit = 10, refillPeriod = 1.minutes) }
+    }
+    val secrets = repo.dir.readSecrets()
+    install(Sessions) {
+        cookie<WebSession>("mediasync_session") {
+            cookie.path = "/"
+            cookie.httpOnly = true
+            cookie.maxAgeInSeconds = SESSION_LIFETIME.inWholeSeconds
+            // Strict keeps the cookie off cross-site requests, which is our CSRF protection. Not
+            // marked Secure: the server speaks plain HTTP on loopback behind `tailscale serve`.
+            cookie.extensions["SameSite"] = "Strict"
+            transform(SessionTransportTransformerMessageAuthentication(Base64.getDecoder().decode(secrets.sessionKey)))
+        }
+    }
+    install(Authentication) {
+        bearer("api") {
+            authenticate { credential -> io { repo.authenticate(credential.token) }?.let(::DevicePrincipal) }
+        }
+        session<WebSession>("web") {
+            validate { session -> session.takeIf { it.expiresAt > System.currentTimeMillis() } }
+            challenge { call.respondRedirect("/login") }
+        }
+    }
+
+    routing {
+        staticResources("/static", "static")
+        route("/api/v1") {
+            get("/health") { call.respond(mapOf("ok" to true)) }
+            rateLimit(PAIR_RATE_LIMIT) {
+                post("/pair") {
+                    val request = call.receive<PairRequest>()
+                    call.respond(io { repo.pair(request) })
+                }
+            }
+            authenticate("api") { apiRoutes(repo) }
+        }
+        webRoutes(repo)
+    }
+}
+
+private fun Route.apiRoutes(repo: Repository) {
+    get("/changes") {
+        val since = call.parameters["since"]?.toLongOrNull() ?: badRequest("since is required")
+        val limit = call.parameters["limit"]?.toIntOrNull() ?: 500
+        call.respond(io { repo.changes(call.device(), since, call.parameters["after"], limit) })
+    }
+    get("/assets/{id}/history") { call.respond(io { repo.history(call.parameters["id"]!!) }) }
+    get("/revisions") {
+        val before = call.parameters["before"]?.toLongOrNull()
+        val limit = call.parameters["limit"]?.toIntOrNull() ?: 50
+        call.respond(io { repo.revisions(before, limit) })
+    }
+    get("/revisions/{rev}") {
+        val rev = call.parameters["rev"]?.toLongOrNull() ?: badRequest("bad revision")
+        call.respond(io { repo.diff(rev) })
+    }
+
+    get("/blobs/{hash}") {
+        val hash = call.parameters["hash"]!!
+        BlobStore.requireHash(hash)
+        val blob = io { repo.blob(hash) } ?: notFound("no blob $hash")
+        call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+        call.respond(LocalPathContent(repo.dir.blob(hash), ContentType.parse(blob.mime)))
+    }
+    get("/media/{hash}") {
+        val hash = call.parameters["hash"]!!
+        BlobStore.requireHash(hash)
+        call.respond(io { repo.media(hash) }?.toDto() ?: notFound("no media $hash"))
+    }
+    post("/uploads") {
+        val request = call.receive<UploadRequest>()
+        call.respond(io { repo.blobs.startUpload(call.device().id, request) })
+    }
+    // Where an interrupted upload resumes; HEAD gives the same Upload-Offset header without a body.
+    get("/uploads/{id}") {
+        val id = call.parameters["id"]!!
+        val offset = io { repo.blobs.offset(call.device().id, id) }
+        call.response.header("Upload-Offset", offset.toString())
+        call.respond(UploadResponse(id, offset, done = false))
+    }
+    patch("/uploads/{id}") {
+        val offset = call.request.header("Upload-Offset")?.toLongOrNull() ?: badRequest("Upload-Offset header is required")
+        val result = withContext(Dispatchers.IO) {
+            call.receiveStream().use { repo.blobs.append(call.device().id, call.parameters["id"]!!, offset, it) }
+        }
+        call.response.header("Upload-Offset", result.offset.toString())
+        call.respond(result)
+    }
+
+    post("/push") {
+        val request = call.receive<PushRequest>()
+        call.respond(io { repo.push(call.device(), request) })
+    }
+    post("/revert") {
+        val request = call.receive<RevertRequest>()
+        call.respond(io { repo.revert(call.device().id, request) })
+    }
+    get("/resolve") { call.respond(io { repo.openIssues() }) }
+    post("/resolve/{id}") {
+        val id = call.parameters["id"]?.toLongOrNull() ?: badRequest("bad issue id")
+        val request = call.receive<ResolveRequest>()
+        call.respond(io { repo.resolve(call.device().id, id, request) })
+    }
+
+    get("/devices/me") { call.respond(call.device().toDto()) }
+    get("/devices/{id}/subscription") { call.respond(call.ownDevice().subscription) }
+    put("/devices/{id}/subscription") {
+        val device = call.ownDevice()
+        val subscription = call.receive<Subscription>()
+        io { repo.setSubscription(device.id, subscription) }
+        call.respond(subscription)
+    }
+
+    // Only a hint to sync now; devices still ask GET /changes for the facts.
+    sse("/events") {
+        heartbeat { period = 30.seconds }
+        repo.headFlow.collect { send(ServerSentEvent(data = ApiJson.encodeToString(HeadEvent.serializer(), HeadEvent(it)))) }
+    }
+}
+
+private fun ApplicationCall.device(): Device = principal<DevicePrincipal>()!!.device
+
+/** A device may read and change only its own settings; "me" names itself. */
+private fun ApplicationCall.ownDevice(): Device {
+    val device = device()
+    val id = parameters["id"]
+    if (id != "me" && id != device.id) throw RequestException("a device can only change its own subscription", 403)
+    return device
+}
+
+suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
+
+private val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
+    onCall { call ->
+        with(call.response.headers) {
+            append(
+                "Content-Security-Policy",
+                "default-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'self'; " +
+                    "frame-ancestors 'none'; base-uri 'none'",
+            )
+            append("X-Content-Type-Options", "nosniff")
+            append("Referrer-Policy", "no-referrer")
+        }
+    }
+}
+
+/** Startup housekeeping: partial uploads abandoned for a week are removed. */
+fun Repository.startup() {
+    blobs.cleanStaleUploads()
+    // Leftover partial files without a database row (a crash between the two).
+    Files.list(dir.uploads).use { files ->
+        val known = db.read { db.query("SELECT id FROM upload") { it.getString(1) }.toSet() }
+        files.filter { it.fileName.toString() !in known }.forEach { Files.deleteIfExists(it) }
+    }
+}
