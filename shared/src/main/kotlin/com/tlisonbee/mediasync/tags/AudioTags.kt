@@ -1,11 +1,17 @@
 package com.tlisonbee.mediasync.tags
 
 import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.Tag
 import org.jaudiotagger.tag.TagOptionSingleton
+import org.jaudiotagger.tag.flac.FlacTag
 import org.jaudiotagger.tag.images.ArtworkFactory
 import org.jaudiotagger.tag.reference.PictureTypes
+import org.jaudiotagger.tag.vorbiscomment.VorbisCommentFieldKey
+import org.jaudiotagger.tag.vorbiscomment.VorbisCommentTag
 import java.nio.file.Path
+import java.util.Base64
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -87,13 +93,31 @@ object AudioTags {
             val key = keys[name] ?: throw IllegalArgumentException("'$name' is not an allowed tag field")
             values.forEachIndexed { i, value -> if (i == 0) tag.setField(key, value) else tag.addField(key, value) }
         }
-        tags.frontCover?.let { cover ->
-            val artwork = ArtworkFactory.getNew()
-            artwork.binaryData = cover.data
-            artwork.mimeType = cover.mimeType
-            artwork.pictureType = PictureTypes.DEFAULT_ID
-            tag.setField(artwork)
-        }
+        tags.frontCover?.let { cover -> setCover(tag, cover) }
         audio.commit()
+    }
+
+    /**
+     * FLAC and Vorbis comments store a cover with its width and height. jaudiotagger gets those by
+     * decoding the image, which its Android mode can't do, so for them the picture block is built
+     * here from the image header instead. Found by M0's run on a phone.
+     */
+    private fun setCover(tag: Tag, cover: Picture) {
+        val (width, height) = ImageSize.of(cover.data) ?: (0 to 0)
+        when (tag) {
+            is FlacTag -> tag.setField(tag.createArtworkField(cover.data, PictureTypes.DEFAULT_ID, cover.mimeType, "", width, height, 24, 0))
+            is VorbisCommentTag -> {
+                val block = MetadataBlockDataPicture(cover.data, PictureTypes.DEFAULT_ID, cover.mimeType, "", width, height, 24, 0)
+                val bytes = block.bytes.let { buffer -> ByteArray(buffer.remaining()).also { buffer.get(it) } }
+                tag.setField(tag.createField(VorbisCommentFieldKey.METADATA_BLOCK_PICTURE, Base64.getEncoder().encodeToString(bytes)))
+            }
+            else -> {
+                val artwork = ArtworkFactory.getNew()
+                artwork.binaryData = cover.data
+                artwork.mimeType = cover.mimeType
+                artwork.pictureType = PictureTypes.DEFAULT_ID
+                tag.setField(artwork)
+            }
+        }
     }
 }
