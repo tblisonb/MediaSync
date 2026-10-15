@@ -17,8 +17,9 @@ Design: [MediaSync design](https://claude.ai/code/artifact/6e772e9f-ebc6-411c-93
 ## Toolchain
 
 The same as Remind: Temurin JDK 21 in `~/Android/jdk-21` and the Android SDK in `~/Android/Sdk`
-(`local.properties` points Gradle at it). `export JAVA_HOME=$HOME/Android/jdk-21` if your shell
-doesn't already.
+(`local.properties` points Gradle at it). Gradle needs a full JDK, and this PC's system Java
+(`/usr/lib/jvm/java-21-openjdk-amd64`) is only a runtime, so `export JAVA_HOME=$HOME/Android/jdk-21`
+first, or install the JDK package once: `sudo apt install openjdk-21-jdk-headless`.
 
 ## Milestone 0: can tags be rewritten without touching the media?
 
@@ -48,7 +49,7 @@ minus the comment packet. Anything unrecognised is hashed whole and is never wri
 
 ```sh
 ./gradlew :server:test                                # sync API, web UI and maintenance tests
-./gradlew :server:installDist && sudo deploy/install.sh   # install or update the service
+./gradlew :server:installDist && sudo deploy/install.sh   # install or update the service (needs a JDK; see Toolchain)
 deploy/smoke-test.sh https://<server>.<tailnet>.ts.net:8443 ABCD-EFGH   # check it over the tailnet
 ```
 

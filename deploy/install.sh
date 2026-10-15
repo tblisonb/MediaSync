@@ -14,6 +14,10 @@ HTTPS_PORT=8443
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 [[ -x $DIST/bin/mediasync-server ]] || { echo "Build first: ./gradlew :server:installDist" >&2; exit 1; }
+# A failed build leaves the previous one in place; don't install that by mistake.
+STALE=$(find server/src shared/src server/build.gradle.kts shared/build.gradle.kts gradle/libs.versions.toml \
+    -type f -newer "$DIST/lib/server.jar" -print -quit)
+[[ -z $STALE ]] || { echo "The build is older than the code ($STALE changed since). Build again: ./gradlew :server:installDist" >&2; exit 1; }
 command -v java >/dev/null || { echo "Install a Java runtime first: apt install openjdk-21-jre-headless" >&2; exit 1; }
 
 REPO=""
