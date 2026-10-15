@@ -1,15 +1,11 @@
 package com.tlisonbee.mediasync.desktop
 
 import com.tlisonbee.mediasync.api.ApiJson
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
+import com.tlisonbee.mediasync.sync.ApiClient
+import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.SyncReport
+import com.tlisonbee.mediasync.sync.bytes
 import java.io.IOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -27,6 +23,15 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 
 /** A sync someone asked for; [reply] gets the outcome when it's done. */
 private class SyncRequest(val allowDeletes: Boolean, val reply: CompletableDeferred<String>? = null)
@@ -35,7 +40,7 @@ private class SyncRequest(val allowDeletes: Boolean, val reply: CompletableDefer
  * `mediasync-desktop run`: syncs after local changes (once they've been quiet for 10 s), every 15
  * minutes, whenever the server announces a new revision, and when the CLI asks.
  */
-class Service(private val dirs: Dirs, private val config: DesktopConfig, private val token: String) {
+class Service(private val dirs: Dirs, private val config: ClientConfig, private val token: String) {
     private val requests = Channel<SyncRequest>(Channel.UNLIMITED)
     private val lastLocalChange = AtomicLong(0)
 
@@ -46,7 +51,7 @@ class Service(private val dirs: Dirs, private val config: DesktopConfig, private
         }
         val index = Index(dirs.index)
         val api = ApiClient(config.serverUrl, token)
-        val engine = SyncEngine(config, api, index, dirs)
+        val engine = SyncEngine(config, api, index, dirs.pictures)
         val notifier = desktopNotifier()
         println("MediaSync desktop started: ${config.folders.joinToString { "${it.folder} → ${it.prefix}" }} with ${config.serverUrl}")
 
@@ -165,7 +170,7 @@ class Service(private val dirs: Dirs, private val config: DesktopConfig, private
 }
 
 /** Turns sync outcomes into log lines and the notifications the design promises. */
-private class Tracker(private val index: Index, private val notifier: Notifier, private val config: DesktopConfig, private val api: ApiClient) {
+private class Tracker(private val index: Index, private val notifier: Notifier, private val config: ClientConfig, private val api: ApiClient) {
     private var lastError: String? = null
 
     fun succeeded(report: SyncReport) {

@@ -1,0 +1,16 @@
+<!-- 108dp adaptive icon canvas; the note (the web UI's icon) is scaled into the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="2.25"
+        android:scaleY="2.25"
+        android:translateX="27"
+        android:translateY="27">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M15,5v8.6a2.8,2.8 0,1 1,-1.6 -2.5V7.4L9,8.6v6.9a2.8,2.8 0,1 1,-1.6 -2.5V7.4z" />
+    </group>
+</vector>

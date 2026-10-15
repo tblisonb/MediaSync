@@ -1,4 +1,4 @@
-package com.tlisonbee.mediasync.desktop
+package com.tlisonbee.mediasync.sync
 
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
@@ -20,6 +20,20 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
+
+enum class SyncStage { SCANNING, PULLING, DOWNLOADING, UPLOADING }
+
+/** Hooks for a client's UI: progress, and the files a sync wrote (Android tells MediaStore about those). */
+interface SyncListener {
+    /** [done] and [total] count files; -1 means unchanged. [bytes] counts the stage's transfer so far. */
+    fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long = 0) {}
+
+    fun filesChanged(paths: List<Path>) {}
+
+    companion object {
+        val NONE = object : SyncListener {}
+    }
+}
 
 /** What one sync did, for the log, the CLI and notifications. */
 class SyncReport {
@@ -63,24 +77,35 @@ class SyncReport {
  * side only works out what changed locally and writes the results into files.
  */
 class SyncEngine(
-    private val config: DesktopConfig,
+    private val config: ClientConfig,
     private val api: ApiClient,
-    private val index: Index,
-    private val dirs: Dirs,
+    private val index: FileIndex,
+    /** Cache for cover art, which many tracks share. */
+    private val picturesDir: Path,
     private val log: (String) -> Unit = ::println,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val listener: SyncListener = SyncListener.NONE,
 ) {
     private val knownMedia = HashSet<String>()
     private var policy = TagPolicy()
 
+    /** Files this sync wrote, moved or deleted, both old and new paths. */
+    private val touched = LinkedHashSet<Path>()
+
     fun sync(allowDeletes: Boolean = false): SyncReport {
         val report = SyncReport()
-        policy = api.policy()
-        scan(report, allowDeletes)
-        pull(report, allowDeletes)
-        push(report)
-        clean(report)
-        index.setState(LAST_SUCCESS, clock().toString())
+        touched.clear()
+        try {
+            policy = api.policy()
+            scan(report, allowDeletes)
+            listener.progress(SyncStage.PULLING, 0, 0)
+            pull(report, allowDeletes)
+            push(report)
+            clean(report)
+            index.setState(LAST_SUCCESS, clock().toString())
+        } finally {
+            if (touched.isNotEmpty()) listener.filesChanged(touched.toList())
+        }
         return report
     }
 
@@ -97,7 +122,9 @@ class SyncEngine(
             val known = index.inFolder(folder.prefix).associateBy { it.path }
             val seen = HashSet<String>()
             val fresh = mutableListOf<Row>()
-            for (file in walk(root)) {
+            val files = walk(root)
+            for ((i, file) in files.withIndex()) {
+                if (i % 50 == 0) listener.progress(SyncStage.SCANNING, i, files.size)
                 val path = file.toString()
                 seen += path
                 val (size, mtime) = try {
@@ -157,6 +184,8 @@ class SyncEngine(
         val expected = LocalFiles.localPath(folder, base.path, row.extension)
         if (expected == row.file || Files.exists(expected)) return
         LocalFiles.move(row.file, expected)
+        touched.add(row.file)
+        touched.add(expected)
         LocalFiles.pruneEmpty(row.file.parent, folder.root)
         val (size, mtime) = LocalFiles.stat(expected)
         index.replace(row.path, row.copy(path = expected.toString(), size = size, mtime = mtime))
@@ -265,11 +294,14 @@ class SyncEngine(
                 (onFile == null || row.extras || LocalFiles.writable(onFile.first) != LocalFiles.writable(asset.tags) || onFile.second != coverBlob)
             if (retag) {
                 LocalFiles.writeTags(file, asset.tags, cover(asset))
+                touched.add(file)
                 report.retagged++
             }
             val target = LocalFiles.localPath(folder, asset.path, row.extension)
             if (target != file) {
                 LocalFiles.move(file, target)
+                touched.add(file)
+                touched.add(target)
                 LocalFiles.pruneEmpty(file.parent, folder.root)
                 report.renamed++
                 file = target
@@ -297,11 +329,15 @@ class SyncEngine(
         }
         Files.createDirectories(target.parent)
         val tmp = target.resolveSibling(".mediasync-${rendition.blob.take(16)}.${rendition.format}")
-        report.downloadedBytes += api.download(rendition.blob, tmp)
+        report.downloadedBytes += api.download(rendition.blob, tmp) { listener.progress(SyncStage.DOWNLOADING, report.downloadedFiles, 0, report.downloadedBytes + it) }
         report.downloadedFiles++
         if (asset.kind == AssetKind.AUDIO && LocalFiles.isTagged(rendition.format)) LocalFiles.writeTags(tmp, asset.tags, cover(asset))
         Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        if (row != null && row.file != target) LocalFiles.delete(row.file, folder.root)
+        touched.add(target)
+        if (row != null && row.file != target) {
+            LocalFiles.delete(row.file, folder.root)
+            touched.add(row.file)
+        }
         val state = LocalFiles.read(target)
         val (size, mtime) = LocalFiles.stat(target)
         val fresh = Row(
@@ -330,6 +366,7 @@ class SyncEngine(
                 return
             }
             LocalFiles.delete(row.file, folder?.root ?: row.file.parent)
+            touched.add(row.file)
         }
         index.delete(row.path)
         report.deleted++
@@ -345,7 +382,8 @@ class SyncEngine(
         log("Pushing ${pending.size} local change(s)…")
         var done = 0
         for (batch in pending.chunked(BATCH)) {
-            val prepared = batch.mapNotNull { row ->
+            val prepared = batch.mapIndexedNotNull { i, row ->
+                listener.progress(SyncStage.UPLOADING, done + i, pending.size, report.uploadedBytes)
                 try {
                     row to prepare(row, report)
                 } catch (e: IOException) {
@@ -424,7 +462,10 @@ class SyncEngine(
         if (row.media in knownMedia) return
         if (api.media(row.media) == null) {
             val hash = sha256Hex(row.file)
-            val result = api.upload(row.file, hash, row.file.fileName.toString()) { report.uploadedBytes += it }
+            val result = api.upload(row.file, hash, row.file.fileName.toString()) {
+                report.uploadedBytes += it
+                listener.progress(SyncStage.UPLOADING, -1, -1, report.uploadedBytes)
+            }
             report.uploadedFiles++
             val served = result.media?.mediaHash
             if (served != row.media) throw IOException("the server read this file's media as $served, not ${row.media}")
@@ -498,16 +539,16 @@ class SyncEngine(
     }
 
     private fun pictureBytes(hash: String): ByteArray {
-        val cached = dirs.pictures.resolve(hash)
+        val cached = picturesDir.resolve(hash)
         if (Files.exists(cached)) return Files.readAllBytes(cached)
         return api.downloadBytes(hash).also { cachePicture(hash, it) }
     }
 
     private fun cachePicture(hash: String, bytes: ByteArray) {
-        Files.createDirectories(dirs.pictures)
-        val tmp = Files.createTempFile(dirs.pictures, hash, ".tmp")
+        Files.createDirectories(picturesDir)
+        val tmp = Files.createTempFile(picturesDir, hash, ".tmp")
         Files.write(tmp, bytes)
-        Files.move(tmp, dirs.pictures.resolve(hash), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        Files.move(tmp, picturesDir.resolve(hash), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
     private fun folderOf(row: Row): FolderConfig =

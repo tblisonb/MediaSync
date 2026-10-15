@@ -7,16 +7,21 @@ import com.tlisonbee.mediasync.server.Repository
 import com.tlisonbee.mediasync.server.Setup
 import com.tlisonbee.mediasync.server.mediaSyncModule
 import com.tlisonbee.mediasync.server.newPairingCode
+import com.tlisonbee.mediasync.sync.ApiClient
+import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.FolderConfig
+import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.SyncReport
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
-import kotlinx.coroutines.runBlocking
-import org.jaudiotagger.audio.AudioFileIO
-import org.jaudiotagger.tag.FieldKey
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.name
+import kotlinx.coroutines.runBlocking
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 
 /** A real server on loopback plus any number of desktop clients, each with its own folders. */
 class TestWorld : AutoCloseable {
@@ -38,12 +43,12 @@ class TestWorld : AutoCloseable {
         val home = root.resolve(name)
         val music = Files.createDirectories(home.resolve("Music"))
         val dirs = Dirs(home.resolve("config"), home.resolve("state"), home.resolve("cache"), home.resolve("run"))
-        val config = DesktopConfig(url, pairing.deviceId, name, listOf(FolderConfig("music/", music.toString())))
+        val config = ClientConfig(url, pairing.deviceId, name, listOf(FolderConfig("music/", music.toString())))
         val api = ApiClient(url, pairing.token)
         api.putSubscription(config.subscription())
         val index = Index(dirs.index)
         // A minute ahead, so files the test just wrote count as settled.
-        val engine = SyncEngine(config, api, index, dirs, log = {}, clock = { System.currentTimeMillis() + 60_000 })
+        val engine = SyncEngine(config, api, index, dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 })
         return TestClient(name, music, index, engine, api)
     }
 

@@ -15,6 +15,9 @@ logback = "1.6.5"
 zxing = "3.5.4"
 dbusJava = "5.2.2"
 slf4j = "2.0.20"
+okhttp = "5.5.0"
+work = "2.12.0"
+codeScanner = "16.1.0"
 androidxTestRunner = "1.7.0"
 androidxTestExtJunit = "1.3.0"
 
@@ -58,6 +61,9 @@ zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 dbus-java-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbusJava" }
 dbus-java-transport-unixsocket = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbusJava" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+play-services-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "codeScanner" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -5,6 +5,13 @@ import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.api.RevertRequest
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.SyncMode
+import com.tlisonbee.mediasync.sync.ApiClient
+import com.tlisonbee.mediasync.sync.ApiException
+import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.FolderConfig
+import com.tlisonbee.mediasync.sync.Preview
+import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.label
 import java.net.InetAddress
 import java.net.URI
 import java.nio.file.Files
@@ -57,7 +64,7 @@ private fun usage(): Nothing {
     exitProcess(2)
 }
 
-private fun <T> withConfig(dirs: Dirs, block: (DesktopConfig, String) -> T): T {
+private fun <T> withConfig(dirs: Dirs, block: (ClientConfig, String) -> T): T {
     val (config, token) = ConfigStore(dirs).load() ?: run {
         System.err.println("Not set up yet; run `mediasync-desktop setup` first.")
         exitProcess(1)
@@ -99,7 +106,7 @@ private fun setup(dirs: Dirs) {
     }
 
     val pairing = ApiClient(url, null).pair(PairRequest(code, name, DeviceKind.DESKTOP))
-    val config = DesktopConfig(url, pairing.deviceId, name, listOf(FolderConfig(RepoPaths.MUSIC, music.toString(), mode)))
+    val config = ClientConfig(url, pairing.deviceId, name, listOf(FolderConfig(RepoPaths.MUSIC, music.toString(), mode)))
     ApiClient(url, pairing.token).putSubscription(config.subscription())
     ConfigStore(dirs).save(config, pairing.token)
     // A new pairing is a new device: what the old one synced is no base for this one.
@@ -111,7 +118,7 @@ private fun setup(dirs: Dirs) {
 }
 
 /** The service may write only to its state and to the synced folders; tell systemd which those are. */
-private fun writeSandboxDropIn(config: DesktopConfig) {
+private fun writeSandboxDropIn(config: ClientConfig) {
     val unitDir = Path.of(System.getenv("XDG_CONFIG_HOME") ?: (System.getProperty("user.home") + "/.config"), "systemd/user/mediasync-desktop.service.d")
     Files.createDirectories(unitDir)
     val paths = config.folders.joinToString(" ") { "\"${it.folder}\"" }
@@ -138,7 +145,20 @@ private fun fail(message: String): Nothing {
 }
 
 private fun preview(dirs: Dirs) = withConfig(dirs) { config, token ->
-    Preview.run(config, ApiClient(config.serverUrl, token).policy(), dirs.state.resolve("preview.tsv"))
+    val policy = ApiClient(config.serverUrl, token).policy()
+    config.folders.forEach { println("Reading ${it.folder}…") }
+    val result = Preview.compute(config, policy)
+    for (folder in result.folders) {
+        println("${folder.folder} → ${folder.prefix}")
+        folder.examples.forEach { (from, to) -> println("  $from  →  $to") }
+        folder.describe().forEach { println("  $it") }
+    }
+    val report = dirs.state.resolve("preview.tsv")
+    Files.createDirectories(report.parent)
+    Files.write(report, result.lines)
+    println()
+    println("Every file, one per line: $report")
+    println("Files the server already has are matched up, so nothing is uploaded twice. Nothing has been changed yet.")
 }
 
 private fun sync(dirs: Dirs, allowDeletes: Boolean) = withConfig(dirs) { config, token ->
@@ -148,7 +168,7 @@ private fun sync(dirs: Dirs, allowDeletes: Boolean) = withConfig(dirs) { config,
     }
     val lock = Service.acquireLock(dirs) ?: fail("Another mediasync-desktop holds the index and doesn't answer; try again shortly.")
     Index(dirs.index).use { index ->
-        val report = SyncEngine(config, ApiClient(config.serverUrl, token), index, dirs).sync(allowDeletes)
+        val report = SyncEngine(config, ApiClient(config.serverUrl, token), index, dirs.pictures).sync(allowDeletes)
         report.warnings.forEach { System.err.println("Warning: $it") }
         println(report.summary())
     }
@@ -201,8 +221,6 @@ private fun revert(dirs: Dirs, rev: Long) = withConfig(dirs) { config, token ->
     result.skipped.forEach { println("  skipped ${it.field} of ${it.assetId}: it changed again after r$rev") }
     Service.requestSync(dirs, allowDeletes = false)?.let(::println)
 }
-
-private val SyncMode.label get() = name.lowercase().replace('_', '-')
 
 private val TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 

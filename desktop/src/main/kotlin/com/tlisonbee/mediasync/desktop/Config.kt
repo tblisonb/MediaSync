@@ -1,10 +1,7 @@
 package com.tlisonbee.mediasync.desktop
 
 import com.tlisonbee.mediasync.api.ApiJson
-import com.tlisonbee.mediasync.library.Subscription
-import com.tlisonbee.mediasync.library.SubscriptionRule
-import com.tlisonbee.mediasync.library.SyncMode
-import kotlinx.serialization.Serializable
+import com.tlisonbee.mediasync.sync.ClientConfig
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -34,43 +31,15 @@ class Dirs(val config: Path, val state: Path, val cache: Path, val runtime: Path
     }
 }
 
-/** One synced folder: a repository prefix kept in a local folder. */
-@Serializable
-data class FolderConfig(
-    val prefix: String,
-    val folder: String,
-    val mode: SyncMode = SyncMode.TWO_WAY,
-    val filter: List<String> = emptyList(),
-    val prefer: List<String> = emptyList(),
-) {
-    val root: Path get() = Path.of(folder)
-
-    fun rule() = SubscriptionRule(prefix, folder, mode, filter, prefer)
-}
-
-@Serializable
-data class DesktopConfig(
-    val serverUrl: String,
-    val deviceId: String,
-    val deviceName: String,
-    val folders: List<FolderConfig>,
-) {
-    fun subscription() = Subscription(folders.map { it.rule() })
-
-    /** The folder rule a repository path belongs to: the longest matching prefix. */
-    fun folderFor(repoPath: String): FolderConfig? =
-        folders.filter { repoPath.startsWith(it.prefix) }.maxByOrNull { it.prefix.length }
-}
-
 class ConfigStore(private val dirs: Dirs) {
-    fun load(): Pair<DesktopConfig, String>? {
+    fun load(): Pair<ClientConfig, String>? {
         if (!dirs.configFile.exists() || !dirs.token.exists()) return null
-        val config = ApiJson.decodeFromString(DesktopConfig.serializer(), dirs.configFile.readText())
+        val config = ApiJson.decodeFromString(ClientConfig.serializer(), dirs.configFile.readText())
         return config to dirs.token.readText().trim()
     }
 
-    fun save(config: DesktopConfig, token: String) {
-        writePrivate(dirs.configFile, prettyJson.encodeToString(DesktopConfig.serializer(), config) + "\n")
+    fun save(config: ClientConfig, token: String) {
+        writePrivate(dirs.configFile, prettyJson.encodeToString(ClientConfig.serializer(), config) + "\n")
         writePrivate(dirs.token, token + "\n")
     }
 

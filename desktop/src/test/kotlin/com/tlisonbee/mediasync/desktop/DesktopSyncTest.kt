@@ -1,15 +1,18 @@
 package com.tlisonbee.mediasync.desktop
 
 import com.tlisonbee.mediasync.api.ChangeType
-import com.tlisonbee.mediasync.server.diff
 import com.tlisonbee.mediasync.media.MediaHasher
+import com.tlisonbee.mediasync.server.diff
+import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.FolderConfig
+import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.tags.AudioTags
-import org.jaudiotagger.tag.FieldKey
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.jaudiotagger.tag.FieldKey
 
 class DesktopSyncTest {
     private val okComputer = Fixtures.album("Radiohead", "OK Computer", "Airbag", "Paranoid Android", "Subterranean Homesick Alien")
@@ -144,6 +147,18 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun windowsClutterStaysBehind() = TestWorld().use { world ->
+        val desktop = world.client("Desktop")
+        Fixtures.track(desktop.file("Album/01.flac"), okComputer[0], variant = 0)
+        for (name in listOf("desktop.ini", "AlbumArtSmall.jpg", "AlbumArt_{6A1E2E5D-1C4B-4A8E-9F2B-2B9C7D3E4F10}_Large.jpg", "Folder.jpg")) {
+            Files.writeString(desktop.file("Album/$name"), "x")
+        }
+        assertEquals(2, desktop.sync().pushed, "the track and Folder.jpg; Windows Media Player's files stay out")
+        val laptop = world.client("Laptop").apply { sync() }
+        assertEquals(listOf("Album/Folder.jpg", "Radiohead/OK Computer/01 Airbag.flac"), laptop.files())
+    }
+
+    @Test
     fun aMissingFolderIsNotADeletion() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         desktop.music.toFile().deleteRecursively()
@@ -180,8 +195,8 @@ class DesktopSyncTest {
     fun filesStillBeingWrittenWait() = TestWorld().use { world ->
         val desktop = world.client("Desktop")
         val engine = SyncEngine(
-            DesktopConfig(world.url, "x", "x", listOf(FolderConfig("music/", desktop.music.toString()))),
-            desktop.api, desktop.index, Dirs(world.root.resolve("d/c"), world.root.resolve("d/s"), world.root.resolve("d/k"), world.root.resolve("d/r")),
+            ClientConfig(world.url, "x", "x", listOf(FolderConfig("music/", desktop.music.toString()))),
+            desktop.api, desktop.index, world.root.resolve("pictures"),
             log = {},
         )
         Fixtures.track(desktop.file("new.flac"), okComputer[0], variant = 0)

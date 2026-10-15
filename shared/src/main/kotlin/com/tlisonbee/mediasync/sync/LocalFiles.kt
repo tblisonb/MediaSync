@@ -1,4 +1,4 @@
-package com.tlisonbee.mediasync.desktop
+package com.tlisonbee.mediasync.sync
 
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
@@ -41,8 +41,11 @@ object LocalFiles {
 
     fun isTagged(format: String) = format.lowercase() in TAGGED
 
-    /** Our own temporary files, and the dotfiles other programs leave around. */
-    fun skipped(name: String) = name.startsWith(".")
+    /** What Windows (Media Player, Explorer) leaves in music folders; never synced. */
+    private val CLUTTER = Regex("""(?i)desktop\.ini|thumbs\.db|albumartsmall\.jpg|albumart_\{[0-9a-f-]+\}_(small|large)\.jpg""")
+
+    /** Our own temporary files, the dotfiles other programs leave around, and Windows clutter. */
+    fun skipped(name: String) = name.startsWith(".") || CLUTTER.matches(name)
 
     fun stat(path: Path): Pair<Long, Long> {
         val size = Files.size(path)

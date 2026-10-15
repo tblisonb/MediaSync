@@ -6,11 +6,11 @@ Design: [MediaSync design](https://claude.ai/code/artifact/6e772e9f-ebc6-411c-93
 
 | Module | What |
 | --- | --- |
-| `shared/` | Plain Kotlin used everywhere: media hashing (`media/`), tag reading and writing with jaudiotagger (`tags/`), the sync API types (`api/`), tag policy, path rules, subscriptions and the three-way merge (`library/`) |
+| `shared/` | Plain Kotlin used everywhere: media hashing (`media/`), tag reading and writing with jaudiotagger (`tags/`), the sync API types (`api/`), tag policy, path rules, subscriptions and the three-way merge (`library/`), and the sync engine both clients run (`sync/`) |
 | `server/` | Ktor server: repository, sync API, web UI, and the `setup`, `fsck`, `prune` and `snapshot` commands |
 | `spike/` | Milestone 0 command-line check, run on the PC |
 | `desktop/` | Desktop client: a systemd user service that keeps `~/Music` in sync, Plasma notifications, and a CLI |
-| `app/` | Android app; for now just the Milestone 0 check screen |
+| `app/` | Android app: pairing, a preview of the first sync, and background two-way sync of `Music/` |
 | `deploy/` | systemd unit, install script and an end-to-end smoke test |
 
 ## Toolchain
@@ -108,3 +108,18 @@ journalctl --user -u mediasync-desktop -f
 
 Config is in `~/.config/mediasync/` (the token is owner-only), the index in
 `~/.local/state/mediasync/`. The service can write only to the synced folders and its own state and cache folders.
+
+## The Android app
+
+```sh
+./gradlew installDebug                # with the phone plugged in and USB debugging on
+./gradlew connectedDebugAndroidTest   # tag round trip and file handling, on the phone
+```
+
+It runs the same sync engine as the desktop client (`shared/.../sync/`). Open it, allow All files
+access, then pair: in the web UI choose Devices > Pair a device and scan the QR code (or type the
+server address, `https://<server>.ts.net:8443`, and the code). It previews what the first sync does to
+`Music/`, and starts only when you tap Start syncing. Syncs run in the background every 15 minutes
+on Wi-Fi, whenever the app is opened, and on Sync now; long ones show a progress notification.
+Music players see the changes through MediaStore. The tag editor, history and the resolve queue
+are in the web UI for now.

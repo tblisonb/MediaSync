@@ -56,10 +56,17 @@ if [[ ! -f $REPO/admin.json ]]; then
     runuser -u mediasync -- /opt/mediasync/bin/mediasync-server setup --repo "$REPO"
 fi
 
+# The address devices use, for the pairing QR code: this machine's tailnet name.
+PUBLIC_URL=""
+if command -v tailscale >/dev/null; then
+    PUBLIC_URL="https://$(tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'):$HTTPS_PORT"
+fi
+
 install -d -m 755 "$DROPIN_DIR"
 cat > "$DROPIN" <<CONF
 [Service]
 Environment=MEDIASYNC_REPO=$REPO
+Environment=MEDIASYNC_PUBLIC_URL=$PUBLIC_URL
 ReadWritePaths=$REPO
 CONF
 
@@ -71,8 +78,7 @@ systemctl restart mediasync.service
 # Publish it on the tailnet, beside Remind (which has port 443).
 if command -v tailscale >/dev/null; then
     tailscale serve --bg --https=$HTTPS_PORT http://127.0.0.1:8766 >/dev/null
-    URL="https://$(tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'):$HTTPS_PORT"
-    echo "On the tailnet at $URL"
+    echo "On the tailnet at $PUBLIC_URL"
 fi
 
 sleep 3

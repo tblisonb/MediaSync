@@ -36,6 +36,10 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.kotlinx.coroutines.core)
+    // Google's code scanner: scans the pairing QR code without a camera permission.
+    implementation(libs.play.services.code.scanner)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

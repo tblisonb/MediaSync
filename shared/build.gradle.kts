@@ -18,6 +18,7 @@ kotlin {
 dependencies {
     api(libs.jaudiotagger)
     api(libs.kotlinx.serialization.json)
+    api(libs.okhttp)
     testImplementation(libs.kotlin.test)
 }
 

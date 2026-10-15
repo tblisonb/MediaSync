@@ -218,8 +218,13 @@ fun Route.webRoutes(repo: Repository) {
 
 private data class Pairing(val server: String, val code: String)
 
-/** How devices reach this server: through `tailscale serve`, so HTTPS on the tailnet name. */
+/**
+ * How devices reach this server: through `tailscale serve`, so HTTPS on the tailnet name. The
+ * install script sets MEDIASYNC_PUBLIC_URL to that, so the pairing code is right even when the web
+ * UI itself was opened on localhost.
+ */
 private fun ApplicationCall.publicUrl(): String {
+    System.getenv("MEDIASYNC_PUBLIC_URL")?.takeIf { it.isNotBlank() }?.let { return it.trimEnd('/') }
     val host = request.headers["X-Forwarded-Host"] ?: request.headers[HttpHeaders.Host] ?: "localhost"
     val proto = request.headers["X-Forwarded-Proto"] ?: if (host.substringBefore(':').endsWith(".ts.net")) "https" else "http"
     return "$proto://$host"

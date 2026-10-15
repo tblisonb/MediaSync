@@ -1,5 +1,6 @@
 package com.tlisonbee.mediasync.desktop
 
+import com.tlisonbee.mediasync.sync.LocalFiles
 import java.io.IOException
 import java.nio.file.ClosedWatchServiceException
 import java.nio.file.FileSystems
