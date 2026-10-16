@@ -448,6 +448,8 @@ class SyncEngine(
      * is what the file's tags already represent (tags, cover blob); null means rewrite them.
      */
     private fun materialize(folder: FolderConfig, asset: AssetDto, row: Row?, onFile: Pair<Tags, String?>?, report: SyncReport) {
+        // An unmounted drive leaves an empty mount point: never fill the disk underneath it.
+        if (!Files.isDirectory(folder.root)) throw IOException("${folder.root} isn't there (a drive not mounted?); it's tried again later")
         val hashes = asset.renditions.map { it.mediaHash }
         if (row != null && row.media in hashes && Files.exists(row.file)) {
             if (LocalFiles.stat(row.file) != (row.size to row.mtime)) {

@@ -99,6 +99,19 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun nothingIsWrittenWhereAFolderIsMissing() = TestWorld().use { world ->
+        world.importedDesktop()
+        val laptop = world.client("Laptop")
+        // The music folder lives on a drive that isn't mounted.
+        Files.delete(laptop.music)
+        val report = laptop.sync()
+        assertTrue(report.warnings.any { "isn't there" in it }, report.warnings.joinToString())
+        assertFalse(Files.exists(laptop.music), "nothing created where the drive should be")
+        Files.createDirectories(laptop.music)
+        assertEquals(5, laptop.sync().downloadedFiles, "all of it once the drive is back")
+    }
+
+    @Test
     fun aRetagInAnotherAppIsATagOnlyRevision() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         val laptop = world.client("Laptop").apply { sync() }
