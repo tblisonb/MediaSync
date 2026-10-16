@@ -38,7 +38,7 @@ class TestWorld : AutoCloseable {
         url = "http://127.0.0.1:" + runBlocking { server.engine.resolvedConnectors().first().port }
     }
 
-    fun client(name: String): TestClient {
+    fun client(name: String, ignoresCase: Boolean? = null): TestClient {
         val pairing = ApiClient(url, null).pair(PairRequest(repo.newPairingCode(), name, DeviceKind.DESKTOP))
         val home = root.resolve(name)
         val music = Files.createDirectories(home.resolve("Music"))
@@ -48,7 +48,7 @@ class TestWorld : AutoCloseable {
         api.putSubscription(config.subscription())
         val index = Index(dirs.index)
         // A minute ahead, so files the test just wrote count as settled.
-        val engine = SyncEngine(config, api, index, dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 })
+        val engine = SyncEngine(config, api, index, dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 }, ignoresCase = ignoresCase)
         return TestClient(name, music, index, engine, api)
     }
 

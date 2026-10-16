@@ -85,8 +85,11 @@ class SyncEngine(
     private val log: (String) -> Unit = ::println,
     private val clock: () -> Long = System::currentTimeMillis,
     private val listener: SyncListener = SyncListener.NONE,
+    /** Overrides the check of whether a folder's file system ignores case; for tests. */
+    private val ignoresCase: Boolean? = null,
 ) {
     private val knownMedia = HashSet<String>()
+    private val caseless = HashMap<String, Boolean>()
     private var policy = TagPolicy()
 
     /** Files this sync wrote, moved or deleted, both old and new paths. */
@@ -119,20 +122,22 @@ class SyncEngine(
                 report.warn("$root isn't there, so it was skipped")
                 continue
             }
-            val known = index.inFolder(folder.prefix).associateBy { it.path }
+            val known = index.inFolder(folder.prefix).associateBy { pathKey(folder, it.path) }
             val seen = HashSet<String>()
             val fresh = mutableListOf<Row>()
             val files = walk(root)
             for ((i, file) in files.withIndex()) {
                 if (i % 50 == 0) listener.progress(SyncStage.SCANNING, i, files.size)
                 val path = file.toString()
-                seen += path
+                seen += pathKey(folder, path)
                 val (size, mtime) = try {
                     LocalFiles.stat(file)
                 } catch (e: IOException) {
                     continue
                 }
-                val row = known[path]
+                // Where case doesn't count, a folder keeps the case it was made with: "IRON MAIDEN/x"
+                // may be on disk as "Iron Maiden/x". That is the same file, not a move.
+                val row = known[pathKey(folder, path)]?.let { if (it.path == path) it else it.copy(path = path).also { moved -> index.replace(it.path, moved) } }
                 if (row != null && !row.missing && row.size == size && row.mtime == mtime) continue
                 if (clock() - mtime / 1000 < SETTLE_MS) {
                     report.unsettled = true // still being written; it's picked up next time
@@ -156,7 +161,7 @@ class SyncEngine(
             }
 
             // Files that vanished. A vanished file whose media turned up elsewhere was moved.
-            val gone = known.values.filter { it.path !in seen && !it.missing }.toMutableList()
+            val gone = known.values.filter { pathKey(folder, it.path) !in seen && !it.missing }.toMutableList()
             for (row in fresh) {
                 val moved = gone.firstOrNull { it.assetId != null && it.media == row.media } ?: continue
                 gone -= moved
@@ -298,7 +303,7 @@ class SyncEngine(
                 report.retagged++
             }
             val target = LocalFiles.localPath(folder, asset.path, row.extension)
-            if (target != file) {
+            if (!samePath(folder, target, file)) {
                 LocalFiles.move(file, target)
                 touched.add(file)
                 touched.add(target)
@@ -323,7 +328,7 @@ class SyncEngine(
         // This device has none of the asset's renditions (or the media was replaced): download one.
         val rendition = pick(asset, folder, row) ?: return report.warn("${asset.path} has no renditions")
         val target = LocalFiles.localPath(folder, asset.path, rendition.format)
-        if (Files.exists(target) && (row == null || target != row.file)) {
+        if (Files.exists(target) && (row == null || !samePath(folder, target, row.file))) {
             report.warn("$target already exists and isn't MediaSync's, so ${asset.path} wasn't downloaded")
             return
         }
@@ -514,7 +519,7 @@ class SyncEngine(
         val base = row.base ?: return false
         if (row.missing || (base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path))) return false
         val folder = config.folders.firstOrNull { it.prefix == row.prefix } ?: return false
-        return LocalFiles.repoPath(folder, row.file) != base.path
+        return pathKey(folder, LocalFiles.repoPath(folder, row.file)) != pathKey(folder, base.path)
     }
 
     /** Removes tags outside the policy from files that are otherwise in sync, such as a comment some app added. */
@@ -532,6 +537,23 @@ class SyncEngine(
     }
 
     // ---- Helpers ----
+
+    /**
+     * Whether [folder]'s file system ignores case, as Android's shared storage does: the folder is
+     * also reachable under its name with the case swapped. Paths there that differ only in case are
+     * one file, and the server never holds two such paths at once.
+     */
+    private fun ignoresCase(folder: FolderConfig): Boolean = ignoresCase ?: caseless.getOrPut(folder.prefix) {
+        val root = folder.root
+        val name = root.fileName?.toString() ?: return@getOrPut false
+        val swapped = name.map { if (it.isUpperCase()) it.lowercaseChar() else it.uppercaseChar() }.joinToString("")
+        val other = root.resolveSibling(swapped)
+        swapped != name && Files.exists(other) && runCatching { Files.isSameFile(root, other) }.getOrDefault(false)
+    }
+
+    private fun pathKey(folder: FolderConfig, path: String) = if (ignoresCase(folder)) path.lowercase() else path
+
+    private fun samePath(folder: FolderConfig, a: Path, b: Path) = pathKey(folder, a.toString()) == pathKey(folder, b.toString())
 
     private fun cover(asset: AssetDto): Picture? {
         val ref = LocalFiles.coverOf(asset) ?: return null

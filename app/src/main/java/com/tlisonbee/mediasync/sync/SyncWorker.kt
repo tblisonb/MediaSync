@@ -127,7 +127,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             }
         }
         val pictures = applicationContext.cacheDir.toPath().resolve("pictures")
-        return SyncEngine(config, ApiClient(config.serverUrl, token), applicationContext.app.index, pictures, log = { Log.i(TAG, it) }, listener = listener)
+        return SyncEngine(config, ApiClient(config.serverUrl, token), applicationContext.app.index, pictures, log = { Log.i(TAG, it) }, listener = listener,
+            // Shared storage ignores case: "IRON MAIDEN/x" lands in an existing "Iron Maiden" folder.
+            ignoresCase = true,
+        )
     }
 
     /** Notifications for what needs a person: held-back deletions and new resolve-queue entries. */

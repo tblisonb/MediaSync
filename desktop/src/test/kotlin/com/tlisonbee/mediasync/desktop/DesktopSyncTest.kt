@@ -62,6 +62,29 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun whereCaseDoesNotCountACaseOnlyMoveIsNoChange() = TestWorld().use { world ->
+        val desktop = world.importedDesktop()
+        // Android's shared storage ignores case, like this client.
+        val phone = world.client("Phone", ignoresCase = true).apply { sync() }
+        val notes = world.repo.liveAssetAt("music/rips/ok computer/notes")!!
+
+        // A case-only move from elsewhere: on the phone the file is already there.
+        Files.move(desktop.file("rips"), desktop.file("Rips"))
+        assertEquals(2, desktop.sync().pushed)
+        val received = phone.sync()
+        assertEquals(0, received.renamed)
+        assertEquals(0, received.pushed, "nothing to push back")
+        assertTrue("rips/ok computer/notes.txt" in phone.files())
+
+        // The disk shows a folder in another case than the phone recorded: still the same file.
+        Files.move(phone.file("rips"), phone.file("RIPS"))
+        val again = phone.sync()
+        assertEquals(0, again.pushed)
+        assertEquals(0, again.filesRead, "not even read again")
+        assertEquals("music/Rips/ok computer/notes", world.repo.headVersion(notes)!!.path)
+    }
+
+    @Test
     fun aRetagInAnotherAppIsATagOnlyRevision() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         val laptop = world.client("Laptop").apply { sync() }
