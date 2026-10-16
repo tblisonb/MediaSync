@@ -143,3 +143,21 @@ asking turned off, syncs run every 15 minutes on Wi-Fi, whenever the app is open
 now. Long ones show a progress notification.
 Music players see the changes through MediaStore. The tag editor, history and the resolve queue
 are in the web UI for now.
+
+## Videos
+
+Movies and episodes have fields of their own (title, year, show, season, episode) and a kind.
+Movies are filed as `videos/movies/Title (Year)/Title (Year)`, episodes as
+`videos/shows/Show/Season NN/Show - SnnEnn - Title`, and other videos keep their path. On import,
+the fields are guessed from the file name; fix them in the web UI (Library > a folder > Edit these
+videos' details). Subtitles and posters sit beside their video as `{video}.en.srt` and
+`{video}-poster.jpg`, follow it when it moves, and can be added on the video's page.
+
+A folder rule can be pick-only: that device keeps just the videos picked for it, with their
+subtitles and posters. Pick them on the video's page in the web UI, a whole folder at once, or
+on the phone (Videos > Choose videos…).
+
+```sh
+mediasync-desktop add-folder videos/ /mnt/other/media/videos            # everything
+mediasync-desktop add-folder videos/ ~/Videos --pick                     # only what's picked
+```
