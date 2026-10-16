@@ -1,0 +1,56 @@
+[Unit]
+Description=Back up the MediaSync repository to the Pi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# install.sh adds a drop-in (repo.conf) setting MEDIASYNC_REPO, the folder to back up.
+User=mediasync
+Group=mediasync
+UMask=0077
+LoadCredential=repository:/etc/mediasync/backup/repository
+LoadCredential=password:/etc/mediasync/backup/password
+Environment=RESTIC_REPOSITORY_FILE=%d/repository
+Environment=RESTIC_PASSWORD_FILE=%d/password
+Environment=RESTIC_CACHE_DIR=%C/mediasync-backup
+# A progress line in the journal every minute (the first backup takes a while).
+Environment=RESTIC_PROGRESS_FPS=0.0167
+CacheDirectory=mediasync-backup
+
+# The live database changes while restic reads it; back up a consistent copy instead.
+# Blobs never change once written, so they can be read as they are.
+ExecStartPre=/opt/mediasync/bin/mediasync-server snapshot
+ExecStart=/usr/bin/restic backup --retry-lock 2h --tag nightly \
+    --exclude ${MEDIASYNC_REPO}/repo.db --exclude ${MEDIASYNC_REPO}/repo.db-wal \
+    --exclude ${MEDIASYNC_REPO}/repo.db-shm --exclude ${MEDIASYNC_REPO}/uploads \
+    ${MEDIASYNC_REPO}
+Nice=10
+IOSchedulingClass=idle
+
+# Network: only the tailnet (where the Pi and MagicDNS are).
+IPAddressDeny=any
+IPAddressAllow=localhost 100.64.0.0/10 fd7a:115c:a1e0::/48
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Sandboxing. Writable: the repository (for the snapshot) and restic's cache.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# MemoryDenyWriteExecute is left off: the snapshot runs on the JVM.

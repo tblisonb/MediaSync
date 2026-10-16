@@ -1,0 +1,46 @@
+[Unit]
+Description=Verify the MediaSync backup on the Pi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mediasync
+Group=mediasync
+UMask=0077
+LoadCredential=repository:/etc/mediasync/backup/repository
+LoadCredential=password:/etc/mediasync/backup/password
+Environment=RESTIC_REPOSITORY_FILE=%d/repository
+Environment=RESTIC_PASSWORD_FILE=%d/password
+Environment=RESTIC_CACHE_DIR=%C/mediasync-backup
+CacheDirectory=mediasync-backup
+
+# Checks the structure, and reads back a random 5% of the data each week.
+ExecStart=/usr/bin/restic check --retry-lock 2h --read-data-subset 5%
+Nice=10
+IOSchedulingClass=idle
+
+IPAddressDeny=any
+IPAddressAllow=localhost 100.64.0.0/10 fd7a:115c:a1e0::/48
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

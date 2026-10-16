@@ -1,0 +1,47 @@
+[Unit]
+Description=restic rest-server (MediaSync backups)
+After=network.target
+# Never write backups onto the SD card when the drive is missing: no drive, no service.
+RequiresMountsFor=/mnt/storage
+
+[Service]
+# Append-only: clients can add snapshots but not delete or rewrite them, so a mistake (or malware)
+# on the server PC can't destroy its backups. Each login only reaches the repository of its name.
+ExecStart=/usr/local/bin/rest-server --path /mnt/storage/restic --listen 127.0.0.1:8000 \
+    --append-only --private-repos --htpasswd-file /etc/rest-server/htpasswd
+Restart=on-failure
+
+User=restic
+Group=restic
+UMask=0077
+
+# Network: loopback only; `tailscale serve` publishes it on the tailnet with HTTPS.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Sandboxing
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/mnt/storage/restic
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
