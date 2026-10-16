@@ -6,6 +6,9 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,12 +21,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -39,11 +45,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.tlisonbee.mediasync.sync.ReviewAction
+import com.tlisonbee.mediasync.sync.ReviewGroup
+import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.label
 import java.text.DateFormat
 import java.util.Date
@@ -197,14 +207,17 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         }
     }
 
+    if (state.review.enabled) ReviewSection(state, viewModel)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { viewModel.syncNow() }, enabled = progress == null) { Text("Sync now") }
+        // With review on, syncing everything at once would skip the asking.
+        if (!state.review.enabled) Button(onClick = { viewModel.syncNow() }, enabled = progress == null) { Text("Sync now") }
         OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, config.serverUrl.toUri())) }) { Text("Open web UI") }
     }
     Text(
         "The resolve queue, history and undo are in the web UI for now.",
         style = MaterialTheme.typography.bodySmall,
     )
+    ReviewSettingsCard(state, viewModel)
     if (confirmUnpair) {
         Text("Unpair this phone? Its files stay; it stops syncing until paired again.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -213,5 +226,130 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         }
     } else {
         TextButton(onClick = { confirmUnpair = true }) { Text("Unpair…") }
+    }
+}
+
+/** What waits for approval, with a card per group of changes. */
+@Composable
+private fun ReviewSection(state: UiState, viewModel: MainViewModel) {
+    val review = state.review.review
+    val busy = state.progress != null
+    Text(
+        if (review.isEmpty) "Nothing waiting" else review.summary("this phone").replaceFirstChar { it.uppercase() },
+        style = MaterialTheme.typography.titleMedium,
+    )
+    Text(
+        "Last checked " + (state.review.lastCheck?.let { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "never") +
+            " · checks " + ReviewSettings.describe(state.review.checkMinutes),
+        style = MaterialTheme.typography.bodySmall,
+    )
+    review.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = viewModel::checkNow, enabled = !busy) { Text("Check now") }
+        if (!review.isEmpty) Button(onClick = viewModel::acceptAll, enabled = !busy) { Text("Accept all") }
+    }
+    if (review.incoming.isNotEmpty()) {
+        Text("From the server", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Accept writes a change into your files. To leave it for later, do nothing. Revert undoes it on the server, for every device.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        review.incoming.forEach { ReviewGroupCard(it, busy, viewModel) }
+    }
+    if (review.outgoing.isNotEmpty()) {
+        Text("Made on this phone", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Accept sends a change to the server. Undo here puts the files back as the server has them; an undone new file stays, but isn't synced.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        review.outgoing.forEach { ReviewGroupCard(it, busy, viewModel) }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReviewGroupCard(group: ReviewGroup, busy: Boolean, viewModel: MainViewModel) {
+    var expanded by remember(group.key) { mutableStateOf(false) }
+    var confirm by remember(group.key, group.version) { mutableStateOf<ReviewAction?>(null) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(group.title, style = MaterialTheme.typography.titleSmall)
+            val conflicts = group.items.count { it.conflict }
+            Text(
+                listOfNotNull(group.subtitle, "${group.items.size} ${if (group.items.size == 1) "file" else "files"}", conflicts.takeIf { it > 0 }?.let { "$it changed on both sides" })
+                    .joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            when (confirm) {
+                ReviewAction.REVERT -> {
+                    Text("Revert r${group.rev} on the server? Every device gets the old values back. History in the web UI can undo this too.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { confirm = null; viewModel.decide(group, ReviewAction.REVERT) }) { Text("Revert") }
+                        TextButton(onClick = { confirm = null }) { Text("Cancel") }
+                    }
+                }
+                ReviewAction.UNDO -> {
+                    Text("Put these files back as the server has them? What changed here is lost.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { confirm = null; viewModel.decide(group, ReviewAction.UNDO) }) { Text("Undo here") }
+                        TextButton(onClick = { confirm = null }) { Text("Cancel") }
+                    }
+                }
+                else -> FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { viewModel.decide(group, ReviewAction.ACCEPT) }, enabled = !busy) { Text("Accept") }
+                    if (!group.incoming) OutlinedButton(onClick = { confirm = ReviewAction.UNDO }, enabled = !busy) { Text("Undo here") }
+                    if (group.incoming && group.rev != null) TextButton(onClick = { confirm = ReviewAction.REVERT }, enabled = !busy) { Text("Revert…") }
+                }
+            }
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide the files" else "Show the files") }
+            if (expanded) {
+                group.items.take(MAX_ITEMS).forEach { item ->
+                    Column {
+                        Text(item.path, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                        Text(
+                            item.detail + if (item.conflict) " · changed on both sides" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (group.items.size > MAX_ITEMS) Text("And ${group.items.size - MAX_ITEMS} more.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+private const val MAX_ITEMS = 200
+
+@Composable
+private fun ReviewSettingsCard(state: UiState, viewModel: MainViewModel) {
+    var menu by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Ask before syncing", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (state.review.enabled) {
+                            "MediaSync checks for changes and asks before it changes your files or the server."
+                        } else {
+                            "MediaSync syncs as soon as anything changes, here or on the server."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = state.review.enabled, onCheckedChange = { viewModel.setReview(enabled = it) })
+            }
+            if (state.review.enabled) {
+                Box {
+                    TextButton(onClick = { menu = true }) { Text("Check " + ReviewSettings.describe(state.review.checkMinutes)) }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        ReviewSettings.CHOICES.forEach { minutes ->
+                            DropdownMenuItem(text = { Text(ReviewSettings.describe(minutes)) }, onClick = { menu = false; viewModel.setReview(minutes = minutes) })
+                        }
+                    }
+                }
+            }
+        }
     }
 }

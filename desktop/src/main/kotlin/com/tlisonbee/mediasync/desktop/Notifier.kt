@@ -31,9 +31,15 @@ interface Notifications : DBusInterface {
     class NotificationClosed(path: String, val id: UInt32, val reason: UInt32) : DBusSignal(path, id, reason)
 }
 
+/** A button on a notification. */
+class NotificationAction(val label: String, val run: () -> Unit)
+
 interface Notifier : AutoCloseable {
-    /** Shows a notification; clicking it runs [onClick]. [key] lets a newer one replace an older one. */
-    fun show(key: String, summary: String, body: String, onClick: (() -> Unit)? = null)
+    /**
+     * Shows a notification; clicking it runs [onClick], and each of [actions] is a button. [key]
+     * lets a newer one replace an older one.
+     */
+    fun show(key: String, summary: String, body: String, onClick: (() -> Unit)? = null, actions: List<NotificationAction> = emptyList())
 
     override fun close() {}
 }
@@ -43,27 +49,31 @@ class PlasmaNotifier : Notifier {
     private val connection: DBusConnection = DBusConnectionBuilder.forSessionBus().build()
     private val service = connection.getRemoteObject("org.freedesktop.Notifications", "/org/freedesktop/Notifications", Notifications::class.java)
     private val byKey = ConcurrentHashMap<String, UInt32>()
-    private val clicks = ConcurrentHashMap<UInt32, () -> Unit>()
+    private val handlers = ConcurrentHashMap<UInt32, Map<String, () -> Unit>>()
 
     init {
         // These signals are broadcast for every app's notifications; only ours are in the map.
-        connection.addSigHandler(Notifications.ActionInvoked::class.java) { signal -> clicks[signal.id]?.invoke() }
-        connection.addSigHandler(Notifications.NotificationClosed::class.java) { signal -> clicks.remove(signal.id) }
+        connection.addSigHandler(Notifications.ActionInvoked::class.java) { signal -> handlers[signal.id]?.get(signal.actionKey)?.invoke() }
+        connection.addSigHandler(Notifications.NotificationClosed::class.java) { signal -> handlers.remove(signal.id) }
     }
 
-    override fun show(key: String, summary: String, body: String, onClick: (() -> Unit)?) {
+    override fun show(key: String, summary: String, body: String, onClick: (() -> Unit)?, actions: List<NotificationAction>) {
+        val keyed = buildMap {
+            onClick?.let { put("default", "Open" to it) }
+            actions.forEachIndexed { i, action -> put("action$i", action.label to action.run) }
+        }
         val id = service.sendNotification(
             "MediaSync",
             byKey[key] ?: UInt32(0),
             "mediasync",
             summary,
             body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
-            if (onClick != null) arrayOf("default", "Open") else emptyArray(),
+            keyed.flatMap { (k, v) -> listOf(k, v.first) }.toTypedArray(),
             mapOf("desktop-entry" to Variant("mediasync")),
             -1,
         )
         byKey[key] = id
-        if (onClick != null) clicks[id] = onClick
+        if (keyed.isNotEmpty()) handlers[id] = keyed.mapValues { it.value.second }
     }
 
     override fun close() = connection.close()
@@ -71,7 +81,7 @@ class PlasmaNotifier : Notifier {
 
 /** Without a desktop session (or D-Bus), notifications only go to the log. */
 class LogNotifier : Notifier {
-    override fun show(key: String, summary: String, body: String, onClick: (() -> Unit)?) = println("$summary: $body")
+    override fun show(key: String, summary: String, body: String, onClick: (() -> Unit)?, actions: List<NotificationAction>) = println("$summary: $body")
 }
 
 fun desktopNotifier(): Notifier = try {

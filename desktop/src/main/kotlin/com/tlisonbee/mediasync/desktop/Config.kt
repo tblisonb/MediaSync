@@ -18,6 +18,9 @@ class Dirs(val config: Path, val state: Path, val cache: Path, val runtime: Path
     val pictures: Path = cache.resolve("pictures")
     val socket: Path = runtime.resolve("desktop.sock")
 
+    /** The running service's review page, with its secret; readable only by this user. */
+    val reviewUrl: Path = runtime.resolve("review-url")
+
     companion object {
         fun xdg(env: Map<String, String> = System.getenv()): Dirs {
             val home = System.getProperty("user.home")

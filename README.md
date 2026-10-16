@@ -100,8 +100,13 @@ How it behaves:
 - Music files are named by their tags; a file renamed by hand moves back. Tags outside the policy
   (ripper comments and the like) are removed from the files; the server keeps the originals.
 - Files whose tags MediaSync can't manage (Opus, WAV, cover.jpg, .cue) sync as plain files, where they are.
-- A sync runs 10 s after local changes settle, every 15 minutes, and within a second or two of a
-  change pushed from elsewhere.
+- It asks before syncing (the default). Every hour (15 minutes to a day, a setting) it scans the
+  folders and asks the server what changed, without changing anything. When something waits, a
+  notification says so, with Review and Accept all. The review page (`mediasync-desktop review`, in
+  the browser) groups server changes by revision (Accept, or Revert on the server) and local ones
+  by kind (Accept, or Undo here); anything left alone waits for the next look.
+- With asking turned off on that page, a sync runs 10 s after local changes settle, every 15
+  minutes, and within a second or two of a change pushed from elsewhere.
 - More than 20 files (and over 10% of them) disappearing at once, or the server asking to delete
   that many, is held back until `mediasync-desktop sync --allow-deletes`. A missing folder (an
   unmounted disk) is never read as a deletion.
@@ -109,7 +114,9 @@ How it behaves:
 
 ```sh
 mediasync-desktop status          # folders, what's waiting, the resolve queue
-mediasync-desktop sync            # now (through the running service)
+mediasync-desktop review          # the review page, in the browser
+mediasync-desktop check           # look for changes now
+mediasync-desktop sync            # sync everything now, without asking (through the running service)
 mediasync-desktop log | diff <rev> | revert <rev> | open [resolve]
 journalctl --user -u mediasync-desktop -f
 ```
@@ -120,14 +127,19 @@ Config is in `~/.config/mediasync/` (the token is owner-only), the index in
 ## The Android app
 
 ```sh
-./gradlew installDebug                # with the phone plugged in and USB debugging on
+./gradlew installDebug                # with the phone plugged in and USB debugging on, or paired over Wi-Fi:
+adb pair <phone ip>:<pairing port>    # Developer options > Wireless debugging > Pair device with pairing code
+adb connect <phone ip>:<port>         # the port shown on the Wireless debugging screen
 ./gradlew connectedDebugAndroidTest   # tag round trip and file handling, on the phone
 ```
 
 It runs the same sync engine as the desktop client (`shared/.../sync/`). Open it, allow All files
 access, then pair: in the web UI choose Devices > Pair a device and scan the QR code (or type the
 server address, `https://<server>.ts.net:8443`, and the code). It previews what the first sync does to
-`Music/`, and starts only when you tap Start syncing. Syncs run in the background every 15 minutes
-on Wi-Fi, whenever the app is opened, and on Sync now; long ones show a progress notification.
+`Music/`, and starts only when you tap Start syncing. After that it asks before syncing, like the
+desktop client: it checks every hour (a setting) and when opened, notifies you when something
+waits, and applies what you accept on its main screen (or Accept all on the notification). With
+asking turned off, syncs run every 15 minutes on Wi-Fi, whenever the app is opened, and on Sync
+now. Long ones show a progress notification.
 Music players see the changes through MediaStore. The tag editor, history and the resolve queue
 are in the web UI for now.

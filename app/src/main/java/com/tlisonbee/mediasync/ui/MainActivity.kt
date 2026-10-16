@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         viewModel.refresh()
         // Pick up changes from elsewhere whenever the app comes to the front.
-        if (app.settings.ready) SyncScheduler.syncNow(this)
+        if (app.settings.ready) SyncScheduler.onOpen(this)
     }
 
     companion object {

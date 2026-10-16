@@ -7,6 +7,7 @@ import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.api.PushResult
 import com.tlisonbee.mediasync.api.RenditionDto
+import com.tlisonbee.mediasync.api.RevertRequest
 import com.tlisonbee.mediasync.api.Tags
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.SyncMode
@@ -90,6 +91,7 @@ class SyncEngine(
 ) {
     private val knownMedia = HashSet<String>()
     private val caseless = HashMap<String, Boolean>()
+    private val reviewer = ReviewBuilder(config, index, ::pathKey)
     private var policy = TagPolicy()
 
     /** Files this sync wrote, moved or deleted, both old and new paths. */
@@ -110,6 +112,158 @@ class SyncEngine(
             if (touched.isNotEmpty()) listener.filesChanged(touched.toList())
         }
         return report
+    }
+
+    // ---- Review: look first, then apply only what was approved ----
+
+    /**
+     * Scans the folders and stages what changed on the server, without writing a file or pushing
+     * anything. Returns what waits for approval.
+     */
+    fun check(allowDeletes: Boolean = false): Review {
+        val report = SyncReport()
+        policy = api.policy()
+        scan(report, allowDeletes)
+        listener.progress(SyncStage.PULLING, 0, 0)
+        fetch(report)
+        index.setState(CHECK_WARNINGS, report.warnings.joinToString("\n").ifEmpty { null })
+        index.setState(LAST_CHECK, clock().toString())
+        return review()
+    }
+
+    /** What waits for approval, as of the last check; reads only the index. */
+    fun review(): Review = reviewer.build(checkWarnings(index))
+
+    /**
+     * Applies what was approved: reverts on the server, pushes the accepted local changes, undoes
+     * the rejected ones, then writes the accepted server changes into the files. Everything else
+     * stays waiting.
+     */
+    fun apply(decisions: Decisions): SyncReport {
+        val report = SyncReport()
+        touched.clear()
+        try {
+            policy = api.policy()
+            scan(report, allowDeletes = false)
+            for (rev in decisions.revert) {
+                api.revert(RevertRequest(rev = rev))
+                // The revert comes back as a revision of its own; the next fetch stages what it changes here.
+                index.remote().filter { it.rev == rev && it.asset != null }.forEach { index.deleteRemote(it.assetId) }
+            }
+            push(report, only = decisions.acceptOutgoing)
+            undo(decisions.undo, report)
+            val removals = LinkedHashMap<String, Row>()
+            applyStaged(decisions.acceptIncoming, report, removals)
+            removals.values.filter { !it.changed }.forEach { removeLocal(it, report) }
+            clean(report)
+            fetch(report)
+            index.setState(LAST_SUCCESS, clock().toString())
+        } finally {
+            if (touched.isNotEmpty()) listener.filesChanged(touched.toList())
+        }
+        return report
+    }
+
+    /** Puts files back as the server has them; a file the server never had stays off it. */
+    private fun undo(paths: Set<String>, report: SyncReport) {
+        for (path in paths) {
+            val row = index.get(Path.of(path)) ?: continue
+            val base = row.base
+            try {
+                when {
+                    row.assetId == null -> index.put(row.copy(ignored = "kept off the server"))
+                    base == null || base.deleted -> continue
+                    row.missing -> {
+                        index.delete(row.path)
+                        materialize(folderOf(row), base, null, null, report)
+                    }
+                    else -> materialize(folderOf(row), base, row, null, report)
+                }
+            } catch (e: IOException) {
+                report.warn("$path: ${e.message}")
+            }
+        }
+    }
+
+    /** Stages what changed on the server since the last look, writing no file. */
+    private fun fetch(report: SyncReport) {
+        val since = index.state(SINCE)?.toLong() ?: 0
+        var after: String? = null
+        var reset = false
+        val listed = HashSet<String>()
+        val revisions = HashMap<Long, RevisionInfo?>()
+        do {
+            val page = api.changes(since, after)
+            reset = reset || page.reset
+            for (asset in page.assets) {
+                listed += asset.assetId
+                stage(asset, revisions)
+            }
+            for (id in page.left) {
+                if (index.byAsset(id).any { it.ignored == null }) index.putRemote(RemoteChange(id, page.head, null))
+            }
+            report.head = page.head
+            after = page.next
+        } while (page.more)
+        if (reset) {
+            index.all().filter { it.assetId != null && it.assetId !in listed && it.ignored == null && receives(it.prefix) }
+                .forEach { index.putRemote(RemoteChange(it.assetId!!, report.head, null)) }
+        }
+        index.setState(SINCE, report.head.toString())
+    }
+
+    private fun stage(asset: AssetDto, revisions: MutableMap<Long, RevisionInfo?>) {
+        val folder = config.folderFor(asset.path)
+        val row = index.byAsset(asset.assetId).firstOrNull { it.ignored == null }
+        if (folder == null || (row != null && row.base?.rev == asset.rev && !row.missing) || (row == null && asset.deleted)) {
+            index.deleteRemote(asset.assetId)
+            return
+        }
+        // Nothing on disk would change (a revert of something never applied here, a case-only
+        // move where case doesn't count): only the version this file is based on moves on.
+        val base = row?.base
+        if (row != null && base != null && !row.missing && !asset.deleted && sameOnDisk(folder, base, asset)) {
+            index.put(row.copy(base = asset))
+            index.deleteRemote(asset.assetId)
+            return
+        }
+        if (folder.mode == SyncMode.SEND_ONLY && !asset.deleted) return
+        val info = revisions.getOrPut(asset.rev) {
+            runCatching { api.revisions(before = asset.rev + 1, limit = 1).revisions.firstOrNull { it.rev == asset.rev } }.getOrNull()
+                ?.let { RevisionInfo(it.rev, it.deviceName, it.createdAt, it.message) }
+        }
+        index.putRemote(RemoteChange(asset.assetId, asset.rev, asset, info))
+    }
+
+    private fun sameOnDisk(folder: FolderConfig, old: AssetDto, new: AssetDto) =
+        old.tags == new.tags && old.pictures == new.pictures && old.deleted == new.deleted &&
+            old.renditions.map { it.mediaHash } == new.renditions.map { it.mediaHash } &&
+            pathKey(folder, old.path) == pathKey(folder, new.path)
+
+    /**
+     * Writes staged server changes into the files: [only] these assets, or all of them (a sync
+     * without review). A file changed here too is merged by pushing it instead.
+     */
+    private fun applyStaged(only: Set<String>?, report: SyncReport, removals: MutableMap<String, Row>) {
+        for (change in index.remote()) {
+            if (only != null && change.assetId !in only) continue
+            val row = index.byAsset(change.assetId).firstOrNull { it.ignored == null }
+            val asset = change.asset
+            if (row != null && asset != null && (row.base?.rev ?: 0) >= change.rev && !row.missing) {
+                index.deleteRemote(change.assetId) // already caught up, e.g. by pushing
+                continue
+            }
+            if (row != null && row.changed && modeOf(row.prefix) != SyncMode.RECEIVE_ONLY) {
+                if (only == null) index.deleteRemote(change.assetId) else report.warn("${row.path} changed here too; accept this device's change to merge the two")
+                continue
+            }
+            try {
+                if (asset == null) row?.let { removals[it.path] = it } else applyRemote(asset, report, removals)
+                index.deleteRemote(change.assetId)
+            } catch (e: IOException) {
+                report.warn("${asset?.path ?: change.assetId}: ${e.message}")
+            }
+        }
     }
 
     // ---- Scan: what changed on disk ----
@@ -233,6 +387,8 @@ class SyncEngine(
         var reset = false
         val listed = HashSet<String>()
         val removals = LinkedHashMap<String, Row>()
+        // Whatever an earlier review left waiting goes first, like any other change.
+        applyStaged(null, report, removals)
         do {
             val page = api.changes(since, after)
             reset = reset || page.reset
@@ -379,10 +535,11 @@ class SyncEngine(
 
     // ---- Push: local changes up ----
 
-    private fun push(report: SyncReport) {
+    /** Pushes local changes: all of them, or [only] the files at those paths. */
+    private fun push(report: SyncReport, only: Set<String>? = null) {
         val all = index.all()
         report.notPushed = all.count { it.changed && it.ignored == null && modeOf(it.prefix) == SyncMode.RECEIVE_ONLY }
-        val pending = all.filter { (it.changed || movedOutsideMusic(it)) && it.ignored == null && modeOf(it.prefix) != SyncMode.RECEIVE_ONLY }
+        val pending = all.filter { it.ignored == null && reviewer.pending(it) && (only == null || it.path in only) }
         if (pending.isEmpty()) return
         log("Pushing ${pending.size} local change(s)…")
         var done = 0
@@ -514,14 +671,6 @@ class SyncEngine(
         materialize(folder, asset, row, change.tags to change.pictures.firstOrNull { it.type == TagPolicy.FRONT_COVER }?.blob, report)
     }
 
-    /** Outside music, where paths follow tags, moving a file is a change like any other. */
-    private fun movedOutsideMusic(row: Row): Boolean {
-        val base = row.base ?: return false
-        if (row.missing || (base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path))) return false
-        val folder = config.folders.firstOrNull { it.prefix == row.prefix } ?: return false
-        return pathKey(folder, LocalFiles.repoPath(folder, row.file)) != pathKey(folder, base.path)
-    }
-
     /** Removes tags outside the policy from files that are otherwise in sync, such as a comment some app added. */
     private fun clean(report: SyncReport) {
         for (row in index.all()) {
@@ -587,6 +736,14 @@ class SyncEngine(
     companion object {
         const val SINCE = "since"
         const val LAST_SUCCESS = "lastSuccessAt"
+        const val LAST_CHECK = "lastCheckAt"
+        private const val CHECK_WARNINGS = "checkWarnings"
+
+        private fun checkWarnings(index: FileIndex) = index.state(CHECK_WARNINGS)?.lines()?.filter { it.isNotBlank() }.orEmpty()
+
+        /** What waits for approval, from the index alone: for a screen that has no engine. */
+        fun storedReview(config: ClientConfig, index: FileIndex, ignoresCase: Boolean): Review =
+            ReviewBuilder(config, index) { _, path -> if (ignoresCase) path.lowercase() else path }.build(checkWarnings(index))
 
         /** A file is recorded once it has gone this long without being written to. */
         const val SETTLE_MS = 10_000L

@@ -10,6 +10,7 @@ import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Tags
 import com.tlisonbee.mediasync.sync.FileIndex
+import com.tlisonbee.mediasync.sync.RemoteChange
 import com.tlisonbee.mediasync.sync.Row
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
@@ -17,7 +18,7 @@ import kotlinx.serialization.builtins.serializer
 import java.nio.file.Path
 
 /** The local index on Android: the same table as the desktop client's, through Android's SQLite. */
-class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 1), FileIndex {
+class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 2), FileIndex {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -46,9 +47,13 @@ class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 1
         db.execSQL("CREATE INDEX file_asset ON file(asset_id)")
         db.execSQL("CREATE INDEX file_prefix ON file(prefix)")
         db.execSQL("CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        onUpgrade(db, 1, 2)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // 2: server changes staged for review.
+        if (oldVersion < 2) db.execSQL("CREATE TABLE remote (asset_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, change TEXT NOT NULL)")
+    }
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.enableWriteAheadLogging()
@@ -114,10 +119,29 @@ class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 1
         }
     }
 
+    override fun remote(): List<RemoteChange> =
+        readableDatabase.rawQuery("SELECT change FROM remote ORDER BY rev, asset_id", null).use { c ->
+            buildList { while (c.moveToNext()) add(ApiJson.decodeFromString(RemoteChange.serializer(), c.getString(0))) }
+        }
+
+    override fun putRemote(change: RemoteChange) {
+        val values = ContentValues().apply {
+            put("asset_id", change.assetId)
+            put("rev", change.rev)
+            put("change", ApiJson.encodeToString(RemoteChange.serializer(), change))
+        }
+        writableDatabase.insertWithOnConflict("remote", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    override fun deleteRemote(assetId: String) {
+        writableDatabase.delete("remote", "asset_id = ?", arrayOf(assetId))
+    }
+
     /** Forgets everything, as when the phone is paired again. */
     fun clear() {
         writableDatabase.delete("file", null, null)
         writableDatabase.delete("state", null, null)
+        writableDatabase.delete("remote", null, null)
     }
 
     fun count(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM file WHERE missing = 0", null).use { it.moveToFirst(); it.getInt(0) }

@@ -10,6 +10,7 @@ import com.tlisonbee.mediasync.sync.ApiException
 import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.Preview
+import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.label
 import java.net.InetAddress
@@ -27,7 +28,9 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
-  sync [--allow-deletes] Sync now (through the running service, if there is one)
+  review                 Open the page where you approve or undo changes waiting to sync
+  check                  Look for changes now and say what waits (through the running service)
+  sync [--allow-deletes] Sync everything now, without asking (through the running service, if there is one)
   log [count]            The revision log, newest first
   diff <rev>             What one revision changed, field by field
   revert <rev>           Undo a revision (as a new revision)
@@ -43,6 +46,8 @@ fun main(args: Array<String>) {
             "run" -> withConfig(dirs) { config, token -> Service(dirs, config, token).run() }
             "status" -> status(dirs)
             "sync" -> sync(dirs, allowDeletes = "--allow-deletes" in args)
+            "review" -> review(dirs)
+            "check" -> println(Service.request(dirs, "check") ?: fail("The service isn't running: systemctl --user start mediasync-desktop"))
             "log" -> log(dirs, args.getOrNull(1)?.toIntOrNull() ?: 20)
             "diff" -> diff(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
             "revert" -> revert(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
@@ -175,6 +180,12 @@ private fun sync(dirs: Dirs, allowDeletes: Boolean) = withConfig(dirs) { config,
     lock.release()
 }
 
+private fun review(dirs: Dirs) {
+    val url = runCatching { Files.readString(dirs.reviewUrl).trim() }.getOrNull()
+    if (url == null || !Files.exists(dirs.socket)) fail("The service isn't running: systemctl --user start mediasync-desktop")
+    openInBrowser(url)
+}
+
 private fun status(dirs: Dirs) = withConfig(dirs) { config, token ->
     println("Server: ${config.serverUrl} (this PC is \"${config.deviceName}\")")
     val running = Files.exists(dirs.socket)
@@ -190,6 +201,13 @@ private fun status(dirs: Dirs) = withConfig(dirs) { config, token ->
         val since = index.state(SyncEngine.SINCE)
         val last = index.state(SyncEngine.LAST_SUCCESS)?.toLong()
         println("Synced up to: ${since?.let { "r$it" } ?: "never"}" + (last?.let { ", last sync ${time(it)}" } ?: ""))
+        val settings = ReviewSettings(index)
+        if (settings.enabled) {
+            val review = SyncEngine(config, ApiClient(config.serverUrl, token), index, dirs.pictures).review()
+            println("Asks before syncing, checking ${ReviewSettings.describe(settings.checkMinutes)}: ${review.summary("this PC")} (mediasync-desktop review)")
+        } else {
+            println("Syncs automatically, without asking")
+        }
     }
     runCatching { ApiClient(config.serverUrl, token).openIssues() }.getOrNull()?.let {
         if (it.isNotEmpty()) println("${it.size} ${if (it.size == 1) "entry waits" else "entries wait"} in the resolve queue: mediasync-desktop open resolve")

@@ -17,6 +17,13 @@ import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.Preview
 import com.tlisonbee.mediasync.sync.PreviewResult
 import com.tlisonbee.mediasync.sync.Progress
+import com.tlisonbee.mediasync.sync.Decisions
+import com.tlisonbee.mediasync.sync.Review
+import com.tlisonbee.mediasync.sync.ReviewAction
+import com.tlisonbee.mediasync.sync.ReviewGroup
+import com.tlisonbee.mediasync.sync.ReviewQueue
+import com.tlisonbee.mediasync.sync.ReviewSettings
+import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.SyncScheduler
 import com.tlisonbee.mediasync.sync.SyncState
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +42,9 @@ data class PairState(val busy: Boolean = false, val error: String? = null)
 
 data class PreviewState(val running: Boolean = false, val read: Int = 0, val total: Int = 0, val result: PreviewResult? = null, val error: String? = null)
 
+/** Whether syncs wait for approval, how often to check, and what waits. */
+data class ReviewState(val enabled: Boolean = true, val checkMinutes: Int = ReviewSettings.DEFAULT_MINUTES, val lastCheck: Long? = null, val review: Review = Review.EMPTY)
+
 data class UiState(
     val screen: Screen,
     val config: ClientConfig?,
@@ -43,6 +53,7 @@ data class UiState(
     val files: Int,
     val pairing: PairState,
     val preview: PreviewState,
+    val review: ReviewState = ReviewState(),
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -51,10 +62,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pairing = MutableStateFlow(PairState())
     private val preview = MutableStateFlow(PreviewState())
     private val files = MutableStateFlow(0)
+    private val review = MutableStateFlow(ReviewState())
+
+    private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState)
 
     val state: StateFlow<UiState> = combine(
-        app.settings.changes, SyncState.progress, allFilesAccess, combine(pairing, preview, files, ::Triple),
-    ) { _, progress, access, (pair, prev, count) ->
+        app.settings.changes, SyncState.progress, allFilesAccess, combine(pairing, preview, files, review, ::Extra),
+    ) { _, progress, access, (pair, prev, count, rev) ->
         val settings = app.settings
         val screen = when {
             !access -> Screen.PERMISSION
@@ -62,8 +76,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             !settings.approved -> Screen.PREVIEW
             else -> Screen.STATUS
         }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev)
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
+
+    init {
+        // A check or apply in the worker ends with a settings change: reload what waits.
+        viewModelScope.launch { app.settings.changes.collect { loadReview() } }
+    }
+
+    fun loadReview() {
+        val config = app.settings.config ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = ReviewSettings(app.index)
+            review.value = ReviewState(
+                enabled = settings.enabled,
+                checkMinutes = settings.checkMinutes,
+                lastCheck = app.index.state(SyncEngine.LAST_CHECK)?.toLong(),
+                review = SyncEngine.storedReview(config, app.index, ignoresCase = true),
+            )
+        }
+    }
+
+    /** A group's button. The review it acts on is the one on screen, so nothing newer slips in. */
+    fun decide(group: ReviewGroup, action: ReviewAction) = queue(review.value.review.decide(group, action))
+
+    fun acceptAll() = queue(review.value.review.acceptAll())
+
+    private fun queue(decisions: Decisions) {
+        if (decisions.isEmpty) return
+        ReviewQueue.add(app, decisions)
+        SyncScheduler.apply(app)
+    }
+
+    fun checkNow() = SyncScheduler.checkNow(app)
+
+    fun setReview(enabled: Boolean? = null, minutes: Int? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = ReviewSettings(app.index)
+            enabled?.let { settings.enabled = it }
+            minutes?.let { settings.checkMinutes = it }
+            SyncScheduler.schedulePeriodic(app)
+            // Without review, whatever was waiting syncs now.
+            if (enabled == false) SyncScheduler.syncNow(app)
+            loadReview()
+        }
+    }
 
     private fun initial() = UiState(Screen.PAIR, null, app.settings.lastSync, null, 0, PairState(), PreviewState())
 
@@ -71,6 +128,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         allFilesAccess.value = Environment.isExternalStorageManager()
         viewModelScope.launch(Dispatchers.IO) { files.value = app.index.count() }
+        loadReview()
         if (app.settings.config != null && !app.settings.approved && preview.value.result == null && !preview.value.running) runPreview()
     }
 

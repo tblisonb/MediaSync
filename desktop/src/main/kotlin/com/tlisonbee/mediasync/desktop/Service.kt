@@ -3,6 +3,9 @@ package com.tlisonbee.mediasync.desktop
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.sync.ApiClient
 import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.Decisions
+import com.tlisonbee.mediasync.sync.Review
+import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.SyncReport
 import com.tlisonbee.mediasync.sync.bytes
@@ -25,6 +28,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -33,51 +37,111 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 
-/** A sync someone asked for; [reply] gets the outcome when it's done. */
-private class SyncRequest(val allowDeletes: Boolean, val reply: CompletableDeferred<String>? = null)
+/** Something for the service's one engine to do; [reply] gets the outcome when it's done. */
+sealed class Job(val reply: CompletableDeferred<String>? = null) {
+    class Sync(val allowDeletes: Boolean, reply: CompletableDeferred<String>? = null) : Job(reply)
+
+    /** Scan and stage server changes for review, changing nothing. */
+    class Check(reply: CompletableDeferred<String>? = null) : Job(reply)
+
+    class Apply(val decisions: Decisions, reply: CompletableDeferred<String>? = null) : Job(reply)
+
+    fun describe() = when (this) {
+        is Sync -> "Syncing"
+        is Check -> "Checking for changes"
+        is Apply -> "Applying your choices"
+    }
+}
 
 /**
- * `mediasync-desktop run`: syncs after local changes (once they've been quiet for 10 s), every 15
- * minutes, whenever the server announces a new revision, and when the CLI asks.
+ * `mediasync-desktop run`. With review on (the default), it checks every hour or so and asks
+ * before changing anything: a notification, and a review page in the browser. With review off, it
+ * syncs after local changes (once they've been quiet for 10 s), every 15 minutes, whenever the
+ * server announces a new revision, and when the CLI asks.
  */
-class Service(private val dirs: Dirs, private val config: ClientConfig, private val token: String) {
-    private val requests = Channel<SyncRequest>(Channel.UNLIMITED)
+class Service(
+    private val dirs: Dirs,
+    val config: ClientConfig,
+    private val token: String,
+    private val makeNotifier: () -> Notifier = ::desktopNotifier,
+) {
+    private val jobs = Channel<Job>(Channel.UNLIMITED)
     private val lastLocalChange = AtomicLong(0)
+    private lateinit var index: Index
+    private lateinit var engine: SyncEngine
+    lateinit var settings: ReviewSettings
+        private set
+
+    /** What the engine is doing right now, for the review page. */
+    @Volatile
+    var busy: String? = null
+        private set
+
+    fun submit(job: Job) = jobs.trySend(job)
+
+    /** Ends [run] once the current job is done. */
+    fun stop() = jobs.close()
+
+    /** What waits for approval, as of the last check. */
+    fun review(): Review = engine.review()
+
+    fun lastCheck(): Long? = index.state(SyncEngine.LAST_CHECK)?.toLong()
 
     fun run() = runBlocking {
         val lock = acquireLock(dirs) ?: run {
             System.err.println("Another mediasync-desktop is already running.")
             return@runBlocking
         }
-        val index = Index(dirs.index)
+        index = Index(dirs.index)
+        settings = ReviewSettings(index)
         val api = ApiClient(config.serverUrl, token)
-        val engine = SyncEngine(config, api, index, dirs.pictures)
-        val notifier = desktopNotifier()
+        engine = SyncEngine(config, api, index, dirs.pictures)
+        val notifier = makeNotifier()
+        val page = ReviewPage(this@Service).apply { start() }
+        writePrivate(dirs.reviewUrl, page.url + "\n")
         println("MediaSync desktop started: ${config.folders.joinToString { "${it.folder} → ${it.prefix}" }} with ${config.serverUrl}")
+        println(if (settings.enabled) "Asking before syncing; checking every ${settings.checkMinutes} minutes. Review page: mediasync-desktop review" else "Syncing automatically.")
 
-        // Local changes: wait until the folders have been quiet for 10 s, so a save in several steps is one change.
         val watcher = Watcher(config.folders.map { it.root }) { lastLocalChange.set(System.currentTimeMillis()) }
         Thread(watcher::run, "watcher").apply { isDaemon = true }.start()
+
+        // What to do when: checks on a timer with review on; syncs after quiet local changes and every 15 minutes without.
         launch {
-            var handled = 0L
+            var handledLocal = 0L
+            var lastSync = 0L
+            var lastCheckQueued = 0L
             while (true) {
-                delay(2.seconds)
-                val last = lastLocalChange.get()
-                if (last > handled && System.currentTimeMillis() - last >= SyncEngine.SETTLE_MS) {
-                    handled = last
-                    requests.trySend(SyncRequest(allowDeletes = false))
+                val now = System.currentTimeMillis()
+                if (settings.enabled) {
+                    handledLocal = lastLocalChange.get()
+                    val last = maxOf(lastCheckQueued, lastCheck() ?: 0)
+                    if (now - last >= settings.checkMinutes * 60_000L) {
+                        lastCheckQueued = now
+                        submit(Job.Check())
+                    }
+                } else {
+                    val last = lastLocalChange.get()
+                    if (last > handledLocal && now - last >= SyncEngine.SETTLE_MS) {
+                        handledLocal = last
+                        submit(Job.Sync(allowDeletes = false))
+                    }
+                    if (now - lastSync >= PERIOD.inWholeMilliseconds) {
+                        lastSync = now
+                        submit(Job.Sync(allowDeletes = false))
+                    }
                 }
+                delay(2.seconds)
             }
         }
 
-        // The server's announcements: a hint to sync now. Reconnects with a growing pause.
+        // The server's announcements: a hint to sync now (without review). Reconnects with a growing pause.
         launch(Dispatchers.IO) {
             var pause = 5.seconds
             while (true) {
                 try {
                     api.events { head ->
                         pause = 5.seconds
-                        if (head > (index.state(SyncEngine.SINCE)?.toLong() ?: 0)) requests.trySend(SyncRequest(allowDeletes = false))
+                        if (!settings.enabled && head > (index.state(SyncEngine.SINCE)?.toLong() ?: 0)) submit(Job.Sync(allowDeletes = false))
                     }
                 } catch (e: Exception) {
                     // The periodic sync covers the gap; the failure shows up there if it persists.
@@ -87,33 +151,40 @@ class Service(private val dirs: Dirs, private val config: ClientConfig, private 
             }
         }
 
-        launch {
-            while (true) {
-                requests.trySend(SyncRequest(allowDeletes = false))
-                delay(PERIOD)
-            }
-        }
-
         launch(Dispatchers.IO) { serveControlSocket() }
 
-        val tracker = Tracker(index, notifier, config, api)
-        for (request in requests) {
+        val tracker = Tracker(index, notifier, config, api, openReview = { openInBrowser(page.url) }, apply = { submit(Job.Apply(it)) })
+        for (job in jobs) {
+            busy = job.describe()
             val outcome = try {
-                val report = withContext(Dispatchers.IO) { engine.sync(request.allowDeletes) }
-                tracker.succeeded(report)
-                if (report.unsettled) launch { delay(SyncEngine.SETTLE_MS + 2_000); requests.trySend(SyncRequest(false)) }
-                report.summary()
+                withContext(Dispatchers.IO) {
+                    when (job) {
+                        is Job.Sync -> engine.sync(job.allowDeletes).also { report ->
+                            tracker.succeeded(report)
+                            if (report.unsettled) launch { delay(SyncEngine.SETTLE_MS + 2_000); submit(Job.Sync(false)) }
+                        }.summary()
+                        is Job.Check -> engine.check().also { tracker.reviewed(it) }.summary("this PC")
+                        is Job.Apply -> engine.apply(job.decisions).also { report ->
+                            tracker.succeeded(report)
+                            tracker.reviewed(engine.review())
+                        }.summary()
+                    }
+                }
             } catch (e: Exception) {
                 val message = e.message ?: e.javaClass.simpleName
                 tracker.failed(message)
-                "Sync failed: $message"
+                "Failed: $message"
+            } finally {
+                busy = null
             }
-            request.reply?.complete(outcome)
+            job.reply?.complete(outcome)
         }
+        page.stop()
+        coroutineContext.cancelChildren()
         lock.release()
     }
 
-    /** Lets `mediasync-desktop sync` ask this process to sync instead of running a second one. */
+    /** Lets the CLI ask this process to sync or check instead of running a second one. */
     private suspend fun serveControlSocket() {
         Files.createDirectories(dirs.socket.parent)
         Files.deleteIfExists(dirs.socket)
@@ -125,7 +196,7 @@ class Service(private val dirs: Dirs, private val config: ClientConfig, private 
                 val reader = Channels.newReader(client, Charsets.UTF_8).buffered()
                 val command = reader.readLine().orEmpty()
                 val reply = CompletableDeferred<String>()
-                requests.send(SyncRequest(allowDeletes = "--allow-deletes" in command, reply = reply))
+                jobs.send(if (command.startsWith("check")) Job.Check(reply) else Job.Sync(allowDeletes = "--allow-deletes" in command, reply = reply))
                 val text = reply.await()
                 Channels.newWriter(client, Charsets.UTF_8).apply {
                     write(text + "\n")
@@ -143,12 +214,15 @@ class Service(private val dirs: Dirs, private val config: ClientConfig, private 
         val PERIOD = 15.minutes
 
         /** Asks a running service to sync; returns its reply, or null if no service is running. */
-        fun requestSync(dirs: Dirs, allowDeletes: Boolean): String? {
+        fun requestSync(dirs: Dirs, allowDeletes: Boolean): String? = request(dirs, if (allowDeletes) "sync --allow-deletes" else "sync")
+
+        /** Sends [command] ("sync", "check") to a running service; null if none is running. */
+        fun request(dirs: Dirs, command: String): String? {
             if (!Files.exists(dirs.socket)) return null
             return try {
                 SocketChannel.open(UnixDomainSocketAddress.of(dirs.socket)).use { channel ->
                     val writer = Channels.newWriter(channel, Charsets.UTF_8)
-                    writer.write(if (allowDeletes) "sync --allow-deletes\n" else "sync\n")
+                    writer.write(command + "\n")
                     writer.flush()
                     Channels.newReader(channel, Charsets.UTF_8).buffered().readText().trim()
                 }
@@ -170,8 +244,33 @@ class Service(private val dirs: Dirs, private val config: ClientConfig, private 
 }
 
 /** Turns sync outcomes into log lines and the notifications the design promises. */
-private class Tracker(private val index: Index, private val notifier: Notifier, private val config: ClientConfig, private val api: ApiClient) {
+private class Tracker(
+    private val index: Index,
+    private val notifier: Notifier,
+    private val config: ClientConfig,
+    private val api: ApiClient,
+    private val openReview: () -> Unit,
+    private val apply: (Decisions) -> Unit,
+) {
     private var lastError: String? = null
+
+    /** Says what waits for approval, once per distinct list. "Accept all" takes the list as notified, nothing newer. */
+    fun reviewed(review: Review) {
+        if (review.isEmpty) {
+            index.setState(NOTIFIED_REVIEW, null)
+            return
+        }
+        if (index.state(NOTIFIED_REVIEW) == review.version) return
+        index.setState(NOTIFIED_REVIEW, review.version)
+        println("Waiting for approval: ${review.summary("this PC")}")
+        val body = review.groups.take(4).joinToString("\n") { "${it.title} (${it.items.size})" } +
+            if (review.groups.size > 4) "\n…and ${review.groups.size - 4} more" else ""
+        val decisions = review.acceptAll()
+        notifier.show(
+            "review", review.summary("this PC").replaceFirstChar { it.uppercase() }, body, onClick = openReview,
+            actions = listOf(NotificationAction("Review", openReview), NotificationAction("Accept all") { apply(decisions) }),
+        )
+    }
 
     fun succeeded(report: SyncReport) {
         if (lastError != null) println("Sync working again.")
@@ -205,9 +304,9 @@ private class Tracker(private val index: Index, private val notifier: Notifier, 
         val fresh = open.filter { it.id !in notified }
         if (fresh.isNotEmpty()) {
             val n = open.size
-            notifier.show("issues", "$n ${if (n == 1) "file needs" else "files need"} a decision", fresh.take(3).joinToString("\n") { it.path }) {
+            notifier.show("issues", "$n ${if (n == 1) "file needs" else "files need"} a decision", fresh.take(3).joinToString("\n") { it.path }, onClick = {
                 openInBrowser(config.serverUrl + "/resolve")
-            }
+            })
         }
         index.setState(NOTIFIED_ISSUES, ApiJson.encodeToString(ids, open.map { it.id }))
     }
@@ -226,6 +325,7 @@ private class Tracker(private val index: Index, private val notifier: Notifier, 
 
     companion object {
         const val NOTIFIED_ISSUES = "notifiedIssues"
+        const val NOTIFIED_REVIEW = "notifiedReview"
         const val FAILING_NOTIFIED = "failingNotified"
         val FAILING_AFTER = 12.hours
         const val LARGE_FILES = 25

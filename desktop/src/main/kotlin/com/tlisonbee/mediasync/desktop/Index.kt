@@ -5,6 +5,7 @@ import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Tags
 import com.tlisonbee.mediasync.sync.FileIndex
+import com.tlisonbee.mediasync.sync.RemoteChange
 import com.tlisonbee.mediasync.sync.Row
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
@@ -52,6 +53,7 @@ class Index(path: Path) : FileIndex, AutoCloseable {
             st.execute("CREATE INDEX IF NOT EXISTS file_asset ON file(asset_id)")
             st.execute("CREATE INDEX IF NOT EXISTS file_media ON file(media)")
             st.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            st.execute("CREATE TABLE IF NOT EXISTS remote (asset_id TEXT PRIMARY KEY, rev INTEGER NOT NULL, change TEXT NOT NULL)")
         }
     }
 
@@ -124,12 +126,33 @@ class Index(path: Path) : FileIndex, AutoCloseable {
         }
     }
 
+    @Synchronized
+    override fun remote(): List<RemoteChange> = conn.prepareStatement("SELECT change FROM remote ORDER BY rev, asset_id").use { st ->
+        st.executeQuery().use { rs -> buildList { while (rs.next()) add(ApiJson.decodeFromString(RemoteChange.serializer(), rs.getString(1))) } }
+    }
+
+    @Synchronized
+    override fun putRemote(change: RemoteChange) {
+        conn.prepareStatement("INSERT OR REPLACE INTO remote (asset_id, rev, change) VALUES (?, ?, ?)").use {
+            it.setString(1, change.assetId)
+            it.setLong(2, change.rev)
+            it.setString(3, ApiJson.encodeToString(RemoteChange.serializer(), change))
+            it.executeUpdate()
+        }
+    }
+
+    @Synchronized
+    override fun deleteRemote(assetId: String) {
+        conn.prepareStatement("DELETE FROM remote WHERE asset_id = ?").use { it.setString(1, assetId); it.executeUpdate() }
+    }
+
     /** Forgets everything: used when the device is paired again, perhaps with another server. */
     @Synchronized
     fun clear() {
         conn.createStatement().use {
             it.execute("DELETE FROM file")
             it.execute("DELETE FROM state")
+            it.execute("DELETE FROM remote")
         }
     }
 

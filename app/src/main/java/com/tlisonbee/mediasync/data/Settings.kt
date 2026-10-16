@@ -66,6 +66,9 @@ class Settings(context: Context) {
 
     fun recordError(message: String) = update { putString(KEY_LAST_ERROR, message) }
 
+    /** A check went through: the review it staged is in the index. */
+    fun recordCheck() = update { remove(KEY_LAST_ERROR) }
+
     private fun update(block: android.content.SharedPreferences.Editor.() -> Unit) {
         prefs.edit(commit = true, action = block)
         _changes.value++

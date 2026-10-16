@@ -76,16 +76,40 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             settings.recordError("MediaSync needs All files access to read and write Music/. Open the app to grant it.")
             return Result.failure()
         }
+        // The periodic job checks or syncs, as the review setting says at the time it runs.
+        val mode = inputData.getString(MODE) ?: if (ReviewSettings(app.index).enabled) MODE_CHECK else MODE_SYNC
+        // A check only reads; a sync or apply may move the whole library and gets a progress notification.
         // Not allowed when started from the background on recent Android; then it runs as a plain job.
-        runCatching { setForeground(foregroundInfo(null)) }
-            .onFailure { Log.i(TAG, "Syncing without a foreground notification: ${it.message}") }
+        if (mode != MODE_CHECK) {
+            runCatching { setForeground(foregroundInfo(null)) }
+                .onFailure { Log.i(TAG, "Syncing without a foreground notification: ${it.message}") }
+        }
 
         return lock.withLock {
             withContext(Dispatchers.IO) {
                 try {
-                    val report = engine(config, token).sync(allowDeletes = inputData.getBoolean(ALLOW_DELETES, false))
-                    settings.recordSuccess(report.summary(), report.warnings)
-                    afterSync(report, ApiClient(config.serverUrl, token), config)
+                    val engine = engine(config, token)
+                    when (mode) {
+                        MODE_CHECK -> {
+                            val review = engine.check()
+                            settings.recordCheck()
+                            notifyReview(review)
+                        }
+                        MODE_APPLY -> {
+                            val decisions = ReviewQueue.take(applicationContext)
+                            if (decisions != null) {
+                                val report = engine.apply(decisions)
+                                settings.recordSuccess(report.summary(), report.warnings)
+                                afterSync(report, ApiClient(config.serverUrl, token), config)
+                            }
+                            notifyReview(engine.review())
+                        }
+                        else -> {
+                            val report = engine.sync(allowDeletes = inputData.getBoolean(ALLOW_DELETES, false))
+                            settings.recordSuccess(report.summary(), report.warnings)
+                            afterSync(report, ApiClient(config.serverUrl, token), config)
+                        }
+                    }
                     Result.success()
                 } catch (e: ApiException) {
                     settings.recordError(e.message ?: "The server refused the sync")
@@ -131,6 +155,39 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             // Shared storage ignores case: "IRON MAIDEN/x" lands in an existing "Iron Maiden" folder.
             ignoresCase = true,
         )
+    }
+
+    /**
+     * Says what waits for approval, once per distinct list; cleared when nothing does. Its Accept
+     * all applies the list as notified, not anything that turned up since.
+     */
+    private fun notifyReview(review: Review) {
+        val context = applicationContext
+        val index = context.app.index
+        if (review.isEmpty) {
+            index.setState(NOTIFIED_REVIEW, null)
+            NotificationManagerCompat.from(context).cancel(ID_REVIEW)
+            return
+        }
+        if (index.state(NOTIFIED_REVIEW) == review.version) return
+        index.setState(NOTIFIED_REVIEW, review.version)
+        ReviewQueue.rememberNotified(context, review.acceptAll())
+        val text = review.groups.take(4).joinToString("\n") { "${it.title} (${it.items.size})" } +
+            if (review.groups.size > 4) "\n…and ${review.groups.size - 4} more" else ""
+        val acceptAll = PendingIntent.getBroadcast(
+            context, ID_REVIEW, Intent(context, AcceptAllReceiver::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, MediaSyncApp.CHANNEL_ATTENTION)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(review.summary("this phone").replaceFirstChar { it.uppercase() })
+            .setContentText(text.lineSequence().first())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(PendingIntent.getActivity(context, ID_REVIEW, MainActivity.intent(context), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .addAction(0, "Accept all", acceptAll)
+            .setAutoCancel(true)
+            .build()
+        val allowed = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (allowed) NotificationManagerCompat.from(context).notify(ID_REVIEW, notification)
     }
 
     /** Notifications for what needs a person: held-back deletions and new resolve-queue entries. */
@@ -184,31 +241,63 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         private const val TAG = "MediaSync"
         const val ALLOW_DELETES = "allowDeletes"
+        const val MODE = "mode"
+        const val MODE_SYNC = "sync"
+        const val MODE_CHECK = "check"
+        const val MODE_APPLY = "apply"
         private const val ID_PROGRESS = 1
         private const val ID_ISSUES = 2
         private const val ID_DELETES = 3
+        const val ID_REVIEW = 4
+        private const val NOTIFIED_REVIEW = "notifiedReview"
 
         /** Periodic and on-demand syncs never run the engine at the same time. */
         private val lock = Mutex()
     }
 }
 
-/** Every 15 minutes on Wi-Fi (Android's minimum), and on demand on any network. */
+/**
+ * When to run the worker. Asking before syncing (the default): a check as often as the setting
+ * says, on any network, and applying what was approved right away. Otherwise a sync every 15
+ * minutes on Wi-Fi (Android's minimum).
+ */
 object SyncScheduler {
     private const val PERIODIC = "sync-periodic"
     private const val NOW = "sync-now"
+    private const val CHECK = "check-now"
+    private const val APPLY = "apply"
 
+    /** Also called after the review settings change: the new interval replaces the old one. */
     fun schedulePeriodic(context: Context) {
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build())
+        val review = ReviewSettings(context.app.index)
+        val minutes = if (review.enabled) review.checkMinutes.toLong() else 15L
+        val network = if (review.enabled) NetworkType.CONNECTED else NetworkType.UNMETERED
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(minutes, TimeUnit.MINUTES)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(network).build())
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
+    }
+
+    /** When the app comes to the front: check, or sync without review. */
+    fun onOpen(context: Context) = if (ReviewSettings(context.app.index).enabled) checkNow(context) else syncNow(context)
+
+    fun checkNow(context: Context) = oneTime(context, CHECK, ExistingWorkPolicy.KEEP, SyncWorker.MODE_CHECK)
+
+    /** Applies the decisions in [ReviewQueue]; each run takes all of them, so later taps queue behind. */
+    fun apply(context: Context) = oneTime(context, APPLY, ExistingWorkPolicy.APPEND_OR_REPLACE, SyncWorker.MODE_APPLY)
+
+    private fun oneTime(context: Context, name: String, policy: ExistingWorkPolicy, mode: String) {
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInputData(workDataOf(SyncWorker.MODE to mode))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(name, policy, request)
     }
 
     fun syncNow(context: Context, allowDeletes: Boolean = false) {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInputData(workDataOf(SyncWorker.ALLOW_DELETES to allowDeletes))
+            .setInputData(workDataOf(SyncWorker.MODE to SyncWorker.MODE_SYNC, SyncWorker.ALLOW_DELETES to allowDeletes))
             .build()
         // A sync already running finishes first; asking again during it doesn't restart it.
         val policy = if (allowDeletes) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP
@@ -219,6 +308,8 @@ object SyncScheduler {
         WorkManager.getInstance(context).apply {
             cancelUniqueWork(PERIODIC)
             cancelUniqueWork(NOW)
+            cancelUniqueWork(CHECK)
+            cancelUniqueWork(APPLY)
         }
     }
 }

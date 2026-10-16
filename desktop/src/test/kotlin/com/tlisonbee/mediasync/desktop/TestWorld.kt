@@ -49,7 +49,7 @@ class TestWorld : AutoCloseable {
         val index = Index(dirs.index)
         // A minute ahead, so files the test just wrote count as settled.
         val engine = SyncEngine(config, api, index, dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 }, ignoresCase = ignoresCase)
-        return TestClient(name, music, index, engine, api)
+        return TestClient(name, music, index, engine, api, config, pairing.token, dirs)
     }
 
     override fun close() {
@@ -59,7 +59,16 @@ class TestWorld : AutoCloseable {
     }
 }
 
-class TestClient(val name: String, val music: Path, val index: Index, val engine: SyncEngine, val api: ApiClient) {
+class TestClient(
+    val name: String,
+    val music: Path,
+    val index: Index,
+    val engine: SyncEngine,
+    val api: ApiClient,
+    val config: ClientConfig,
+    val token: String,
+    val dirs: Dirs,
+) {
     fun sync(allowDeletes: Boolean = false): SyncReport = engine.sync(allowDeletes)
 
     fun file(relative: String): Path = music.resolve(relative)

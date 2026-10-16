@@ -34,6 +34,8 @@
             </intent-filter>
         </activity>
 
+        <receiver android:name=".sync.AcceptAllReceiver" android:exported="false" />
+
         <!-- WorkManager runs long syncs (the first one moves the whole library) as a foreground service. -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

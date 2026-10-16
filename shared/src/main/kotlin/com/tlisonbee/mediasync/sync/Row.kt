@@ -66,4 +66,9 @@ interface FileIndex {
     fun <T> transaction(block: () -> T): T
     fun state(key: String): String?
     fun setState(key: String, value: String?)
+
+    /** Server changes staged for review, one per asset. */
+    fun remote(): List<RemoteChange>
+    fun putRemote(change: RemoteChange)
+    fun deleteRemote(assetId: String)
 }
