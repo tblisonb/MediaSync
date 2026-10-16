@@ -41,8 +41,8 @@ import kotlinx.serialization.builtins.serializer
 sealed class Job(val reply: CompletableDeferred<String>? = null) {
     class Sync(val allowDeletes: Boolean, reply: CompletableDeferred<String>? = null) : Job(reply)
 
-    /** Scan and stage server changes for review, changing nothing. */
-    class Check(reply: CompletableDeferred<String>? = null) : Job(reply)
+    /** Scan and stage server changes for review, changing nothing; [full] compares everything again. */
+    class Check(reply: CompletableDeferred<String>? = null, val full: Boolean = false) : Job(reply)
 
     class Apply(val decisions: Decisions, reply: CompletableDeferred<String>? = null) : Job(reply)
 
@@ -163,7 +163,7 @@ class Service(
                             tracker.succeeded(report)
                             if (report.unsettled) launch { delay(SyncEngine.SETTLE_MS + 2_000); submit(Job.Sync(false)) }
                         }.summary()
-                        is Job.Check -> engine.check().also { tracker.reviewed(it) }.summary("this PC")
+                        is Job.Check -> engine.check(full = job.full).also { tracker.reviewed(it) }.summary("this PC")
                         is Job.Apply -> engine.apply(job.decisions).also { report ->
                             tracker.succeeded(report)
                             tracker.reviewed(engine.review())
@@ -196,7 +196,7 @@ class Service(
                 val reader = Channels.newReader(client, Charsets.UTF_8).buffered()
                 val command = reader.readLine().orEmpty()
                 val reply = CompletableDeferred<String>()
-                jobs.send(if (command.startsWith("check")) Job.Check(reply) else Job.Sync(allowDeletes = "--allow-deletes" in command, reply = reply))
+                jobs.send(if (command.startsWith("check")) Job.Check(reply, full = "--full" in command) else Job.Sync(allowDeletes = "--allow-deletes" in command, reply = reply))
                 val text = reply.await()
                 Channels.newWriter(client, Charsets.UTF_8).apply {
                     write(text + "\n")

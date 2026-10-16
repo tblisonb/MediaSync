@@ -129,6 +129,22 @@ class ReviewTest {
     }
 
     @Test
+    fun aFullCheckFindsFilesThatAreMissingHere() = TestWorld().use { world ->
+        val (_, laptop) = world.twoPcs()
+        // A file that never arrived here, with nothing new on the server to say so.
+        val airbag = laptop.file("Radiohead/OK Computer/01 Airbag.flac")
+        laptop.index.delete(airbag.toString())
+        Files.delete(airbag)
+        assertTrue(laptop.engine.check().isEmpty)
+
+        val review = laptop.engine.check(full = true)
+        assertEquals("new file (flac)", review.incoming.single().items.single().detail)
+        laptop.engine.apply(review.acceptAll())
+        assertTrue(Files.exists(airbag))
+        assertTrue(laptop.engine.check(full = true).isEmpty, "the rest matched")
+    }
+
+    @Test
     fun deletionsAndAFullSyncAfterReviewing() = TestWorld().use { world ->
         val (desktop, laptop) = world.twoPcs()
         Files.delete(desktop.file("Radiohead/OK Computer/01 Airbag.flac"))

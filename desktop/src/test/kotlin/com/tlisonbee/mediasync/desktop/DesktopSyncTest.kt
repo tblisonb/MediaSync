@@ -85,6 +85,20 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun aServerChangeThatFailsToApplyIsTriedAgain() = TestWorld().use { world ->
+        world.importedDesktop()
+        val laptop = world.client("Laptop")
+        // The album's folder can't be written to yet, so its downloads fail.
+        val folder = Files.createDirectories(laptop.file("Radiohead/OK Computer"))
+        folder.toFile().setWritable(false)
+        val first = laptop.sync()
+        assertEquals(3, first.warnings.size, first.warnings.joinToString())
+        folder.toFile().setWritable(true)
+        assertEquals(3, laptop.sync().downloadedFiles, "tried again, although the server has nothing new")
+        assertTrue("Radiohead/OK Computer/01 Airbag.flac" in laptop.files())
+    }
+
+    @Test
     fun aRetagInAnotherAppIsATagOnlyRevision() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         val laptop = world.client("Laptop").apply { sync() }

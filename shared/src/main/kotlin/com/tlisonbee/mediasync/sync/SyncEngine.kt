@@ -120,10 +120,13 @@ class SyncEngine(
      * Scans the folders and stages what changed on the server, without writing a file or pushing
      * anything. Returns what waits for approval.
      */
-    fun check(allowDeletes: Boolean = false): Review {
+    fun check(allowDeletes: Boolean = false, full: Boolean = false): Review {
         val report = SyncReport()
         policy = api.policy()
         scan(report, allowDeletes)
+        // From the start: everything the server holds is compared with the files again, and
+        // whatever differs (a download that once failed, say) is staged.
+        if (full) index.setState(SINCE, null)
         listener.progress(SyncStage.PULLING, 0, 0)
         fetch(report)
         index.setState(CHECK_WARNINGS, report.warnings.joinToString("\n").ifEmpty { null })
@@ -398,6 +401,8 @@ class SyncEngine(
                     applyRemote(asset, report, removals)
                 } catch (e: IOException) {
                     report.warn("${asset.path}: ${e.message}")
+                    // `since` moves past it, so keep it staged: the next sync tries again.
+                    index.putRemote(RemoteChange(asset.assetId, asset.rev, asset))
                 }
             }
             for (id in page.left) index.byAsset(id).forEach { removals[it.path] = it }

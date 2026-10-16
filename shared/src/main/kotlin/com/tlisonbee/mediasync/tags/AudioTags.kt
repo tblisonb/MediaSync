@@ -1,6 +1,7 @@
 package com.tlisonbee.mediasync.tags
 
 import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.audio.mp3.MP3File
 import org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.Tag
@@ -86,8 +87,19 @@ object AudioTags {
 
     fun write(path: Path, tags: TagSet) {
         val file = path.toFile()
-        AudioFileIO.delete(AudioFileIO.read(file))
-        val audio = AudioFileIO.read(file)
+        val audio = if (path.toString().endsWith(".mp3", ignoreCase = true)) {
+            // A fresh tag replaces the old one in a single write. Deleting first is unsafe for MP3:
+            // jaudiotagger's delete only blanks the ID3v2 header, and reading the file again can then
+            // take frame-like bytes in the old tag (a UTF-16 byte-order mark) for the start of the
+            // audio, so the old tag would be written back as if it were audio.
+            (AudioFileIO.read(file) as MP3File).apply {
+                iD3v1Tag = null
+                tag = createDefaultTag()
+            }
+        } else {
+            AudioFileIO.delete(AudioFileIO.read(file))
+            AudioFileIO.read(file)
+        }
         val tag = audio.tagOrCreateAndSetDefault
         for ((name, values) in tags.fields) {
             val key = keys[name] ?: throw IllegalArgumentException("'$name' is not an allowed tag field")

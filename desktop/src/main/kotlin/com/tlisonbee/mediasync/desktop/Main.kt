@@ -29,7 +29,8 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
   review                 Open the page where you approve or undo changes waiting to sync
-  check                  Look for changes now and say what waits (through the running service)
+  check [--full]         Look for changes now and say what waits (through the running service);
+                         --full compares every file with the server again
   sync [--allow-deletes] Sync everything now, without asking (through the running service, if there is one)
   log [count]            The revision log, newest first
   diff <rev>             What one revision changed, field by field
@@ -47,7 +48,7 @@ fun main(args: Array<String>) {
             "status" -> status(dirs)
             "sync" -> sync(dirs, allowDeletes = "--allow-deletes" in args)
             "review" -> review(dirs)
-            "check" -> println(Service.request(dirs, "check") ?: fail("The service isn't running: systemctl --user start mediasync-desktop"))
+            "check" -> println(Service.request(dirs, if ("--full" in args) "check --full" else "check") ?: fail("The service isn't running: systemctl --user start mediasync-desktop"))
             "log" -> log(dirs, args.getOrNull(1)?.toIntOrNull() ?: 20)
             "diff" -> diff(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
             "revert" -> revert(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
