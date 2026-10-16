@@ -150,4 +150,23 @@ class VideoTest {
         web.submitForm("/assets/$sidecar/delete", io.ktor.http.parameters { append("back", "/assets/${movie.assetId}") })
         assertTrue(repo.headVersion(sidecar)!!.deleted)
     }
+
+    @Test
+    fun aDeviceCanEditFieldsAndKindsThroughTheApi() = withServer {
+        val pc = pc()
+        val clip = pc.import("/home/test/Videos/Movies/Gang Movie.mp4")
+        val subtitle = pc.import("/home/test/Videos/Movies/Gang Movie.en.srt", AssetKind.OTHER)
+        assertEquals("videos/movies/Gang Movie/Gang Movie", path(clip.assetId))
+
+        // A home movie, not a film: it leaves the movies folder, with its subtitles.
+        val edit = com.tlisonbee.mediasync.api.EditRequest("Home movies", mapOf(clip.assetId to mapOf("category" to listOf("other"))))
+        val rev = pc.post("/edits", edit).body<com.tlisonbee.mediasync.api.EditResponse>().rev!!
+        assertEquals("videos/other/Gang Movie", path(clip.assetId))
+        assertEquals("videos/other/Gang Movie.en", path(subtitle.assetId))
+        assertEquals("Home movies", repo.revision(rev)!!.message)
+
+        // Only within the device's subscription.
+        val music = pair("Music only").apply { subscribeMusic() }
+        assertEquals(io.ktor.http.HttpStatusCode.Forbidden, music.post("/edits", edit).status)
+    }
 }

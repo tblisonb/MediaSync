@@ -21,6 +21,9 @@ object RepoPaths {
     const val OTHER = "other"
     val VIDEO_CATEGORIES = listOf(MOVIES, SHOWS, OTHER)
 
+    /** Where filed movies and episodes live. */
+    val FILED = listOf("videos/$MOVIES/", "videos/$SHOWS/")
+
     private val UNSAFE = Regex("""[<>:"/\\|?*\u0000-\u001F\u007F]""")
     private val RESERVED = Regex("""(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?""")
 

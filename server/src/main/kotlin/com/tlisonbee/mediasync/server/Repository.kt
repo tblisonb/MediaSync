@@ -174,6 +174,10 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
         if (v.kind == AssetKind.VIDEO && RepoPaths.followsFields(v.kind, v.path, v.category)) {
             return RepoPaths.video(v.tags, v.category, originalName(v.assetId) ?: RepoPaths.name(v.path)) ?: v.path
         }
+        // Taken out of movies or shows: it leaves their folders, and keeps its path from then on.
+        if (v.kind == AssetKind.VIDEO && v.category == RepoPaths.OTHER && RepoPaths.FILED.any { v.path.startsWith(it) }) {
+            return "videos/${RepoPaths.OTHER}/" + RepoPaths.name(v.path)
+        }
         if (v.kind != AssetKind.AUDIO || !RepoPaths.isMusic(v.path)) return v.path
         val folder = RepoPaths.musicAlbumFolder(v.tags)
         val multiDisc = RepoPaths.saysMultiDisc(v.tags) ||

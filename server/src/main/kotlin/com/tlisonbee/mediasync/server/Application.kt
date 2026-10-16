@@ -3,6 +3,9 @@ package com.tlisonbee.mediasync.server
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.HeadEvent
 import com.tlisonbee.mediasync.api.Limits
+import com.tlisonbee.mediasync.api.DeviceKind
+import com.tlisonbee.mediasync.api.EditRequest
+import com.tlisonbee.mediasync.api.EditResponse
 import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.api.PickRequest
 import com.tlisonbee.mediasync.api.PickResponse
@@ -185,6 +188,22 @@ private fun Route.apiRoutes(repo: Repository) {
     post("/push") {
         val request = call.receive<PushRequest>()
         call.respond(io { repo.push(call.device(), request) })
+    }
+    // Field edits (a tag editor, a kind) as one revision; a device edits only what it may send.
+    post("/edits") {
+        val request = call.receive<EditRequest>()
+        if (request.edits.size > Limits.MAX_CHANGES_PER_PUSH) badRequest("at most ${Limits.MAX_CHANGES_PER_PUSH} assets per edit")
+        if ((request.message?.length ?: 0) > Limits.MAX_MESSAGE) badRequest("message too long")
+        val device = call.device()
+        io {
+            for (id in request.edits.keys) {
+                val head = repo.headVersion(id) ?: notFound("no asset $id")
+                if (device.kind != DeviceKind.WEB && !device.subscription.sends(head.path, head.kind)) {
+                    throw RequestException("${head.path} isn't in a two-way or send-only rule of this device's subscription", 403)
+                }
+            }
+        }
+        call.respond(EditResponse(io { repo.editTags(device.id, request.message, request.edits, request.expectedRevs) }))
     }
     post("/revert") {
         val request = call.receive<RevertRequest>()

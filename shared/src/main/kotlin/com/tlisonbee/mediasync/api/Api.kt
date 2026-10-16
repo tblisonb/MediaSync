@@ -381,3 +381,18 @@ data class PickRequest(val pick: List<String> = emptyList(), val unpick: List<St
 /** Every asset whose place on the device changed: the videos, with their subtitles and posters. */
 @Serializable
 data class PickResponse(val changed: List<String>)
+
+/**
+ * Field edits made on a device, such as a tag editor: one revision. [edits] maps an asset to the
+ * fields that change ("category" sets a video's kind); an empty list removes a field. With
+ * [expectedRevs], nothing is written if any of those assets changed since.
+ */
+@Serializable
+data class EditRequest(
+    val message: String? = null,
+    val edits: Map<String, Map<String, List<String>>>,
+    val expectedRevs: Map<String, Long> = emptyMap(),
+)
+
+@Serializable
+data class EditResponse(val rev: Long?)

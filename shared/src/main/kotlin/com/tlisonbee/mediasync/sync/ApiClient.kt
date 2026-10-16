@@ -4,6 +4,8 @@ import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.AssetHistory
 import com.tlisonbee.mediasync.api.ChangesResponse
 import com.tlisonbee.mediasync.api.HeadEvent
+import com.tlisonbee.mediasync.api.EditRequest
+import com.tlisonbee.mediasync.api.EditResponse
 import com.tlisonbee.mediasync.api.IssueDto
 import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.api.PickRequest
@@ -94,6 +96,8 @@ class ApiClient(serverUrl: String, private val token: String?) {
     fun revert(request: RevertRequest): RevertResponse = post("/revert", request, RevertRequest.serializer(), RevertResponse.serializer())
 
     fun openIssues(): List<IssueDto> = get("/resolve", ListSerializer(IssueDto.serializer()))
+
+    fun edit(request: EditRequest): EditResponse = post("/edits", request, EditRequest.serializer(), EditResponse.serializer())
 
     /** The videos under [prefix], each with whether this device keeps it. */
     fun picks(prefix: String = "videos/"): List<PickItem> =
