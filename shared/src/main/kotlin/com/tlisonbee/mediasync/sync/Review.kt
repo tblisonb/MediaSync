@@ -174,7 +174,13 @@ class ReviewBuilder(private val config: ClientConfig, private val index: FileInd
         if (LocalFiles.coverOf(old)?.blob != LocalFiles.coverOf(new)?.blob) add("cover art")
         val samePath = folder?.let { pathKey(it, old.path) == pathKey(it, new.path) } ?: (old.path == new.path)
         if (!samePath) add("moves to ${folder?.let { new.path.removePrefix(it.prefix) } ?: new.path}")
-        if (old.renditions.map { it.mediaHash } != new.renditions.map { it.mediaHash }) add("audio replaced")
+        val before = old.renditions.map { it.mediaHash }
+        val after = new.renditions.map { it.mediaHash }
+        when {
+            before == after -> Unit
+            after.containsAll(before) -> add("another format linked (this file stays as it is)")
+            else -> add("audio replaced")
+        }
     }
 
     private fun outgoingItem(row: Row, kind: LocalKind, conflict: Boolean): ReviewItem {
