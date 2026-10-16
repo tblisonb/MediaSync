@@ -13,6 +13,15 @@ object TagField {
 
     /** The default music tag policy: everything else is stripped. */
     val MUSIC = listOf(TITLE, ARTIST, ALBUM, ALBUM_ARTIST, DATE, GENRE, TRACK_NUMBER, DISC_NUMBER)
+
+    // Videos rarely carry usable tags, so theirs live in the repository only.
+    const val YEAR = "year"
+    const val SHOW = "show"
+    const val SEASON = "season"
+    const val EPISODE = "episode"
+
+    /** A movie's title and year; an episode's show, season, episode and title. */
+    val VIDEO = listOf(TITLE, YEAR, SHOW, SEASON, EPISODE)
 }
 
 class Picture(val mimeType: String, val data: ByteArray) {

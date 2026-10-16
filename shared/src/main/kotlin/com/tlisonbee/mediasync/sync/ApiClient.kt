@@ -5,6 +5,9 @@ import com.tlisonbee.mediasync.api.AssetHistory
 import com.tlisonbee.mediasync.api.ChangesResponse
 import com.tlisonbee.mediasync.api.HeadEvent
 import com.tlisonbee.mediasync.api.IssueDto
+import com.tlisonbee.mediasync.api.PickItem
+import com.tlisonbee.mediasync.api.PickRequest
+import com.tlisonbee.mediasync.api.PickResponse
 import com.tlisonbee.mediasync.api.MediaDto
 import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.api.PairResponse
@@ -91,6 +94,13 @@ class ApiClient(serverUrl: String, private val token: String?) {
     fun revert(request: RevertRequest): RevertResponse = post("/revert", request, RevertRequest.serializer(), RevertResponse.serializer())
 
     fun openIssues(): List<IssueDto> = get("/resolve", ListSerializer(IssueDto.serializer()))
+
+    /** The videos under [prefix], each with whether this device keeps it. */
+    fun picks(prefix: String = "videos/"): List<PickItem> =
+        get("/picks?prefix=" + java.net.URLEncoder.encode(prefix, Charsets.UTF_8), ListSerializer(PickItem.serializer()))
+
+    fun setPicks(request: PickRequest): PickResponse =
+        send(request("/picks").put(json(PickRequest.serializer(), request)).build(), PickResponse.serializer())
 
     /**
      * Uploads a file in chunks, resuming where an earlier attempt stopped (the server remembers

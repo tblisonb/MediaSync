@@ -68,6 +68,30 @@ class BlobStore(private val repo: Repository) {
             finish(upload)
         }
 
+    /**
+     * Stores a small file sent from the web UI (a subtitle, a poster) in one go; returns its media.
+     * Call outside a database transaction.
+     */
+    fun putBytes(bytes: ByteArray, name: String): MediaRow {
+        val tmp = Files.createTempFile(dir.uploads, "web-", ".part")
+        try {
+            Files.write(tmp, bytes)
+            val hash = sha256(tmp)
+            val media = MediaHasher.hash(tmp, name)
+            val target = dir.blob(hash)
+            Files.createDirectories(target.parent)
+            if (!Files.exists(target)) Files.move(tmp, target, ATOMIC_MOVE)
+            val format = formatOf(name)
+            repo.db.tx {
+                repo.db.exec("INSERT OR IGNORE INTO blob (hash, size, mime, created_at) VALUES (?, ?, ?, ?)", hash, bytes.size.toLong(), mimeOf(format), repo.clock())
+                repo.db.exec("INSERT OR IGNORE INTO media (media_hash, base_blob, format) VALUES (?, ?, ?)", media.hex, hash, format)
+            }
+            return repo.media(media.hex)!!
+        } finally {
+            Files.deleteIfExists(tmp)
+        }
+    }
+
     /** Moves a complete upload into blobs/ once its SHA-256 matches. */
     private fun finish(upload: Upload): UploadResponse {
         val file = partial(upload.id)
@@ -157,6 +181,9 @@ class BlobStore(private val repo: Repository) {
             "mp4", "m4v" -> "video/mp4"
             "mov" -> "video/quicktime"
             "mkv" -> "video/x-matroska"
+            "srt" -> "application/x-subrip"
+            "vtt" -> "text/vtt"
+            "ass", "ssa" -> "text/x-ssa"
             else -> "application/octet-stream"
         }
 

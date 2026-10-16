@@ -119,7 +119,7 @@ private fun comparable(v: Version): Map<String, List<String>> {
 private fun keepPathIfMusic(head: Version): Map<String, List<String>> =
     if (isMusic(head)) mapOf(Fields.PATH to listOf(head.path)) else emptyMap()
 
-private fun isMusic(v: Version) = v.kind == AssetKind.AUDIO && RepoPaths.isMusic(v.path)
+private fun isMusic(v: Version) = RepoPaths.followsFields(v.kind, v.path, v.category)
 
 private fun ResultSet.toRevision(): RevisionDto {
     val counts = ApiJson.decodeFromString(Repository.changeCounts, getString("changes"))

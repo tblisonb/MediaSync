@@ -342,7 +342,7 @@ class SyncEngine(
     /** Music paths follow the tags, so a track renamed by hand goes back where its tags put it. */
     private fun moveBackIfMusic(folder: FolderConfig, row: Row, report: SyncReport) {
         val base = row.base ?: return
-        if (row.ignored != null || base.kind != AssetKind.AUDIO || !RepoPaths.isMusic(base.path)) return
+        if (row.ignored != null || !RepoPaths.followsFields(base.kind, base.path, base.category)) return
         val expected = LocalFiles.localPath(folder, base.path, row.extension)
         if (expected == row.file || Files.exists(expected)) return
         LocalFiles.move(row.file, expected)
@@ -613,7 +613,7 @@ class SyncEngine(
             if (value == null) tags.remove(field) else tags[field] = value
         }
         val pictures = if (coverChanged) base.pictures.filter { it.type != TagPolicy.FRONT_COVER } + listOfNotNull(cover) else base.pictures
-        val music = base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path)
+        val music = RepoPaths.followsFields(base.kind, base.path, base.category)
         return PushChange(
             assetId = row.assetId,
             baseRev = base.rev,

@@ -13,7 +13,9 @@ import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.api.PushResponse
 import com.tlisonbee.mediasync.api.PushResult
 import com.tlisonbee.mediasync.library.RepoPaths
+import com.tlisonbee.mediasync.library.SyncMode
 import com.tlisonbee.mediasync.library.ThreeWayMerge
+import com.tlisonbee.mediasync.library.VideoNames
 import java.util.UUID
 import kotlin.math.abs
 
@@ -90,8 +92,15 @@ private fun Repository.requireMedia(change: PushChange): MediaRow {
 private fun Repository.importNew(scope: RevisionScope, device: Device, change: PushChange, path: String): Applied {
     if (change.deleted) badRequest("a new file can't be deleted")
     val media = requireMedia(change)
-    val tags = policy.filter(change.kind, change.tags)
+    var tags = policy.filter(change.kind, change.tags)
     val pictures = policy.filterPictures(change.kind, change.pictures)
+    // A video's fields come from its name: a first guess, corrected in the web UI.
+    var category: String? = null
+    if (change.kind == AssetKind.VIDEO && path.startsWith(RepoPaths.VIDEOS)) {
+        val guess = VideoNames.guess(change.sourcePath ?: "$path.${media.format}")
+        category = guess.category
+        if (tags.isEmpty()) tags = policy.filter(change.kind, guess.tags)
+    }
 
     // The repository already has this media: the file belongs to that asset.
     liveWithMedia(media.mediaHash).firstOrNull()?.let { existing ->
@@ -114,11 +123,18 @@ private fun Repository.importNew(scope: RevisionScope, device: Device, change: P
         assetId, scope.rev(), device.id, change.sourcePath ?: path,
         ApiJson.encodeToString(Repository.tagsSerializer, change.rawTags ?: change.tags),
     )
-    val proposed = Version(assetId, 0, false, path, change.kind, null, listOf(media.mediaHash), tags, pictures)
+    // Brought in by a device that keeps only what it picks: it keeps this.
+    if (device.subscription.rules.any { it.pick && it.mode != SyncMode.SEND_ONLY && it.covers(path, change.kind) }) {
+        db.exec("INSERT OR IGNORE INTO pick (device_id, asset_id) VALUES (?, ?)", device.id, assetId)
+    }
+    val proposed = Version(assetId, 0, false, path, change.kind, category, listOf(media.mediaHash), tags, pictures)
     // Another format of a track has the same tags, so it would also collide on its path; the
     // rendition entry covers that, and linking makes the moved-aside copy go away.
     val match = possibleRendition(proposed, media)
-    val written = scope.write(proposed, raiseCollision = match == null)
+    // A subtitle named like its video ("Movie.srt" beside "Movie.mp4") shares its path until it's
+    // filed beside the video, at the end of the push.
+    val sidecar = path.startsWith(RepoPaths.VIDEOS) && media.format in SUBTITLE_FORMATS + POSTER_FORMATS
+    val written = scope.write(proposed, raiseCollision = match == null && !sidecar)
     if (match != null) raiseRendition(scope, match, written, media)
     return Applied(PushOutcome.CREATED, assetId)
 }
@@ -159,7 +175,8 @@ private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, h
     }
 
     val kind = head.kind
-    val music = kind == AssetKind.AUDIO && RepoPaths.isMusic(head.path)
+    // Named from its fields (music, movies, episodes): the device's path doesn't count.
+    val music = RepoPaths.followsFields(kind, head.path, head.category)
     val ours = head.copy(
         tags = policy.filter(kind, change.tags),
         pictures = policy.filterPictures(kind, change.pictures),

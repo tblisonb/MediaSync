@@ -85,6 +85,13 @@ class Db(path: Path) : AutoCloseable {
                 exec("PRAGMA user_version = 1")
             }
         }
+        if (version < 2) {
+            tx {
+                // Videos (or anything under a pick rule) a device keeps: chosen per device.
+                script("CREATE TABLE pick (device_id TEXT NOT NULL, asset_id TEXT NOT NULL, PRIMARY KEY (device_id, asset_id))")
+                exec("PRAGMA user_version = 2")
+            }
+        }
     }
 }
 

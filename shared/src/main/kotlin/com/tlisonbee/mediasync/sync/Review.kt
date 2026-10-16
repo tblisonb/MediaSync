@@ -142,7 +142,7 @@ class ReviewBuilder(private val config: ClientConfig, private val index: FileInd
 
     private fun movedOutsideMusic(folder: FolderConfig, row: Row): Boolean {
         val base = row.base ?: return false
-        if (row.missing || (base.kind == AssetKind.AUDIO && RepoPaths.isMusic(base.path))) return false
+        if (row.missing || RepoPaths.followsFields(base.kind, base.path, base.category)) return false
         return pathKey(folder, LocalFiles.repoPath(folder, row.file)) != pathKey(folder, base.path)
     }
 

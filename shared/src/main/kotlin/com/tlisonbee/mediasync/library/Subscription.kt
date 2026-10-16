@@ -25,6 +25,11 @@ data class SubscriptionRule(
     val filter: List<String> = emptyList(),
     /** Formats to fetch, best first, when the device has no rendition of an asset yet. */
     val prefer: List<String> = emptyList(),
+    /**
+     * Only what is picked for this device, rather than everything under [prefix]: for videos too
+     * big to keep everywhere. A video's subtitles and posters come with it.
+     */
+    val pick: Boolean = false,
 ) {
     fun covers(path: String, kind: AssetKind): Boolean =
         path.startsWith(prefix) && compiled.all { it.matches(path, kind) }

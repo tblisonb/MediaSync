@@ -57,6 +57,12 @@ class TestDevice(val http: HttpClient, val id: String, val token: String) {
         setBody(body)
     }
 
+    suspend fun put(path: String, body: Any): HttpResponse = http.put("/api/v1$path") {
+        bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
+
     suspend fun subscribe(vararg rules: SubscriptionRule) {
         val response = http.put("/api/v1/devices/me/subscription") {
             bearerAuth(token)

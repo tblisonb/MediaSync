@@ -362,3 +362,22 @@ object Limits {
     const val MAX_DEVICE_NAME = 100
     const val MAX_RULES = 100
 }
+
+/** A video, and whether the asking device keeps it. */
+@Serializable
+data class PickItem(
+    val assetId: String,
+    val path: String,
+    val category: String?,
+    /** "Inception (2010)", "Fringe S01E02 · The Same Old Story". */
+    val label: String,
+    val size: Long,
+    val picked: Boolean,
+)
+
+@Serializable
+data class PickRequest(val pick: List<String> = emptyList(), val unpick: List<String> = emptyList())
+
+/** Every asset whose place on the device changed: the videos, with their subtitles and posters. */
+@Serializable
+data class PickResponse(val changed: List<String>)

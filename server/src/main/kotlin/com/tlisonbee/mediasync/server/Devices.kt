@@ -142,14 +142,15 @@ fun Repository.changes(device: Device, since: Long, after: String?, limit: Int):
 
     val assets = mutableListOf<AssetDto>()
     val left = mutableListOf<String>()
+    val scope = Scope(this, device)
     for (v in page) {
-        val inScope = device.subscription.receives(v.path, v.kind)
+        val inScope = scope.holds(v)
         when {
             reset -> if (inScope && !v.deleted) assets += toDto(v)
             inScope -> assets += toDto(v)
             else -> {
                 val before = versionAt(v.assetId, since)
-                if (before != null && !before.deleted && device.subscription.receives(before.path, before.kind)) left += v.assetId
+                if (before != null && !before.deleted && scope.holds(before)) left += v.assetId
             }
         }
     }

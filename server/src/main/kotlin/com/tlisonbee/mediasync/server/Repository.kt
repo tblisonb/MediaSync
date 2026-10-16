@@ -169,8 +169,11 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
 
     // ---- Paths ----
 
-    /** Where [v] belongs: music paths follow the tags; anything else keeps the path it was given. */
+    /** Where [v] belongs: music, movie and episode paths follow their fields; anything else keeps the path it was given. */
     fun placePath(v: Version): String {
+        if (v.kind == AssetKind.VIDEO && RepoPaths.followsFields(v.kind, v.path, v.category)) {
+            return RepoPaths.video(v.tags, v.category, originalName(v.assetId) ?: RepoPaths.name(v.path)) ?: v.path
+        }
         if (v.kind != AssetKind.AUDIO || !RepoPaths.isMusic(v.path)) return v.path
         val folder = RepoPaths.musicAlbumFolder(v.tags)
         val multiDisc = RepoPaths.saysMultiDisc(v.tags) ||
@@ -249,6 +252,12 @@ class RevisionScope(
     /** Album folders whose tracks may need renaming once this revision's writes are in. */
     private val albums = LinkedHashSet<String>()
 
+    /** Videos this revision moved, with the path each had before: their subtitles and posters follow. */
+    private val videoMoves = LinkedHashMap<String, String>()
+
+    /** Assets this revision created, which may be a video's subtitle or poster, or a video for one. */
+    private val newAssets = LinkedHashSet<String>()
+
     private val issues = LinkedHashMap<String, MutableList<Long>>()
 
     /** Resolve-queue entries this revision raised for [assetId]. */
@@ -317,6 +326,8 @@ class RevisionScope(
         for (path in listOfNotNull(head?.path, v.path)) {
             if (v.kind == AssetKind.AUDIO && RepoPaths.isMusic(path)) albums += RepoPaths.parent(path)
         }
+        if (head == null) newAssets += v.assetId
+        if (v.kind == AssetKind.VIDEO && head != null && !head.deleted && head.path != v.path) videoMoves.putIfAbsent(v.assetId, head.path)
         return v
     }
 
@@ -340,7 +351,39 @@ class RevisionScope(
         for (folder in albums.toList()) {
             for (track in repo.liveIn(folder)) write(track)
         }
+        placeSidecars()
         bringExtras()
+    }
+
+    /** Subtitles and posters stay beside their video: they move with it, and new ones join it. */
+    private fun placeSidecars() {
+        for ((id, oldPath) in videoMoves.toList()) {
+            val video = repo.headVersion(id)?.takeIf { !it.deleted && it.path != oldPath } ?: continue
+            for (file in repo.liveIn(RepoPaths.parent(oldPath))) {
+                if (file.kind == AssetKind.VIDEO) continue
+                val suffix = sidecarSuffix(RepoPaths.name(oldPath), RepoPaths.name(file.path)) ?: continue
+                moveExtra(file, video.path + suffix)
+            }
+        }
+        for (id in newAssets.toList()) {
+            val asset = repo.headVersion(id)?.takeIf { !it.deleted && it.path.startsWith(RepoPaths.VIDEOS) } ?: continue
+            if (asset.kind == AssetKind.VIDEO) {
+                // Its subtitles may have come in an earlier push: they come first in name order.
+                repo.importedBeside(id).forEach { attachSidecar(it) }
+            } else {
+                attachSidecar(id)
+            }
+        }
+    }
+
+    /** Moves a newly imported subtitle or poster to its video's name, if it belongs to one. */
+    private fun attachSidecar(assetId: String) {
+        val file = repo.headVersion(assetId)?.takeIf { !it.deleted && it.kind != AssetKind.VIDEO } ?: return
+        val format = repo.formatOf(file) ?: return
+        if (format !in SUBTITLE_FORMATS && format !in POSTER_FORMATS) return
+        val (video, rest) = repo.ownerOf(file) ?: return
+        val suffix = rest.ifEmpty { if (format in SUBTITLE_FORMATS) ".und" else "-poster" }
+        if (file.path != video.path + suffix) moveExtra(file, video.path + suffix)
     }
 
     /**
@@ -350,7 +393,7 @@ class RevisionScope(
     private fun bringExtras() {
         val moves = LinkedHashMap<String, MutableSet<String>>()
         for ((assetId, old) in before.toList()) {
-            if (old == null || old.deleted || old.kind != AssetKind.AUDIO || !RepoPaths.isMusic(old.path)) continue
+            if (old == null || old.deleted || !RepoPaths.followsFields(old.kind, old.path, old.category)) continue
             val now = repo.headVersion(assetId) ?: continue
             val from = RepoPaths.parent(old.path)
             val to = RepoPaths.parent(now.path).takeUnless { now.deleted }
@@ -359,7 +402,7 @@ class RevisionScope(
         for ((from, targets) in moves) {
             val to = targets.singleOrNull() ?: continue
             val left = repo.liveUnder(from)
-            if (left.any { it.kind == AssetKind.AUDIO }) continue
+            if (left.any { it.kind == AssetKind.AUDIO || it.kind == AssetKind.VIDEO }) continue
             for (extra in left) moveExtra(extra, to + extra.path.removePrefix(from))
         }
     }

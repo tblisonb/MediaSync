@@ -121,7 +121,8 @@ fun Route.webRoutes(repo: Repository) {
             val head = io { repo.headVersion(id) } ?: return@get call.respond(HttpStatusCode.NotFound)
             val dto = io { repo.toDto(head) }
             val history = io { repo.history(id) }
-            call.respondHtml { assetPage(head, dto, history) }
+            val video = if (head.kind == AssetKind.VIDEO && !head.deleted) io { VideoInfo(repo.sidecarsOf(head), repo.videoDevices(head.path, head.assetId)) } else null
+            call.respondHtml { assetPage(head, dto, history, video) }
         }
         post("/assets/{id}/restore") {
             val form = call.receiveParameters()
@@ -194,6 +195,7 @@ fun Route.webRoutes(repo: Repository) {
         }
 
         cleanupRoutes(repo)
+        videoRoutes(repo)
 
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
         post("/settings") {
@@ -318,6 +320,9 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
     if (listing.assets.any { it.kind == AssetKind.AUDIO && RepoPaths.isMusic(it.path) }) {
         p { a(href = "/album?path=" + enc(folder)) { +"Edit this album's tags" } }
     }
+    if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
+        p { a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" } }
+    }
     artists.forEach { renameArtistForm(it) }
     if (listing.folders.isEmpty() && listing.assets.isEmpty()) p("empty") { +"Nothing here yet." }
     ul("list") {
@@ -347,7 +352,7 @@ internal fun FlowContent.breadcrumbs(folder: String) {
     }
 }
 
-private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.AssetDto, history: com.tlisonbee.mediasync.api.AssetHistory) =
+private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.AssetDto, history: com.tlisonbee.mediasync.api.AssetHistory, video: VideoInfo?) =
     page(RepoPaths.name(head.path)) {
         h1 {
             breadcrumbs(RepoPaths.parent(head.path))
@@ -358,6 +363,7 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
             head.pictures.firstOrNull()?.let { img(src = "/web/blobs/${it.blob}", alt = "Cover", classes = "cover") }
             table("fields") {
                 tbody {
+                    head.category?.let { tr { th { +"category" }; td { +it } } }
                     orderedTags(head.tags).forEach { (field, values) ->
                         tr {
                             th { +field }
@@ -367,6 +373,7 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
                 }
             }
         }
+        video?.let { videoSections(head, it) }
         h2 { +"Renditions" }
         table {
             thead { tr { th { +"Format" }; th { +"Size" }; th { +"Length" }; th { +"Media hash" } } }
@@ -406,7 +413,7 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
                                     td { +"→" }
                                     td("new") { +show(f.field, f.new) }
                                     td {
-                                        if (f.field != Fields.PATH || !RepoPaths.isMusic(head.path)) {
+                                        if (f.field != Fields.PATH || !RepoPaths.followsFields(head.kind, head.path, head.category)) {
                                             form(action = "/assets/${head.assetId}/restore", method = FormMethod.post, classes = "inline") {
                                                 hiddenInput(name = "toRev") { value = previous.version.rev.toString() }
                                                 hiddenInput(name = "field") { value = f.field }

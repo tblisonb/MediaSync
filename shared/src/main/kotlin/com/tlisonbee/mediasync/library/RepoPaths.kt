@@ -1,5 +1,6 @@
 package com.tlisonbee.mediasync.library
 
+import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Limits
 import com.tlisonbee.mediasync.api.Tags
 import com.tlisonbee.mediasync.tags.TagField
@@ -12,6 +13,13 @@ import java.util.Locale
  */
 object RepoPaths {
     const val MUSIC = "music/"
+    const val VIDEOS = "videos/"
+
+    /** Video categories whose paths follow their fields; anything else in videos/ keeps its path. */
+    const val MOVIES = "movies"
+    const val SHOWS = "shows"
+    const val OTHER = "other"
+    val VIDEO_CATEGORIES = listOf(MOVIES, SHOWS, OTHER)
 
     private val UNSAFE = Regex("""[<>:"/\\|?*\u0000-\u001F\u007F]""")
     private val RESERVED = Regex("""(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?""")
@@ -44,6 +52,41 @@ object RepoPaths {
     }
 
     fun isMusic(path: String) = path.startsWith(MUSIC)
+
+    /**
+     * Whether an asset's path is worked out from its fields rather than kept as given: music, and
+     * movies and episodes. A device can't move these by renaming; a retag moves them.
+     */
+    fun followsFields(kind: AssetKind, path: String, category: String?): Boolean =
+        (kind == AssetKind.AUDIO && isMusic(path)) ||
+            (kind == AssetKind.VIDEO && path.startsWith(VIDEOS) && (category == MOVIES || category == SHOWS))
+
+    /**
+     * `videos/movies/{title} ({year})/{title} ({year})`, or for an episode
+     * `videos/shows/{show}/Season {nn}/{show} - S{nn}E{nn} - {title}`; null for other categories.
+     */
+    fun video(tags: Tags, category: String?, originalName: String): String? {
+        val title = first(tags, TagField.TITLE)
+        return when (category) {
+            MOVIES -> {
+                val name = (title ?: originalName) + (first(tags, TagField.YEAR)?.let { " ($it)" } ?: "")
+                listOf("videos", MOVIES, segment(name), segment(name, 255 - EXTENSION_ROOM)).joinToString("/")
+            }
+            SHOWS -> {
+                val show = first(tags, TagField.SHOW) ?: "Unknown Show"
+                val season = number(first(tags, TagField.SEASON))
+                val episode = number(first(tags, TagField.EPISODE))
+                val name = if (season != null && episode != null) {
+                    "$show - S%02dE%02d".format(Locale.ROOT, season, episode) + (title?.let { " - $it" } ?: "")
+                } else {
+                    title ?: originalName
+                }
+                (listOf("videos", SHOWS, segment(show)) + listOfNotNull(season?.let { "Season %02d".format(Locale.ROOT, it) }) +
+                    segment(name, 255 - EXTENSION_ROOM)).joinToString("/")
+            }
+            else -> null
+        }
+    }
 
     fun parent(path: String): String = path.substringBeforeLast('/', "")
 

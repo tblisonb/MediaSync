@@ -14,12 +14,12 @@ import java.text.Normalizer
  */
 @Serializable
 data class TagPolicy(
-    val fields: Map<AssetKind, List<String>> = mapOf(AssetKind.AUDIO to TagField.MUSIC),
+    val fields: Map<AssetKind, List<String>> = DEFAULT_FIELDS,
     val pictures: Map<AssetKind, List<String>> = mapOf(AssetKind.AUDIO to listOf(FRONT_COVER)),
 ) {
     /** The allowed fields, in a stable order, with values trimmed, NFC-normalized and blanks dropped. */
     fun filter(kind: AssetKind, tags: Tags): Tags {
-        val allowed = fields[kind].orEmpty()
+        val allowed = allowed(kind)
         return allowed.mapNotNull { field ->
             val values = tags[field].orEmpty().map(::cleanValue).filter { it.isNotEmpty() }.distinct().take(Limits.MAX_TAG_VALUES)
             if (values.isEmpty()) null else field to values
@@ -32,8 +32,12 @@ data class TagPolicy(
         return pictures.filter { it.type in allowed }.distinctBy { it.type }.sortedBy { allowed.indexOf(it.type) }
     }
 
+    /** A kind the saved settings don't mention (videos, in settings from before them) gets the default fields. */
+    fun allowed(kind: AssetKind): List<String> = fields[kind] ?: DEFAULT_FIELDS[kind].orEmpty()
+
     companion object {
         const val FRONT_COVER = "front"
+        val DEFAULT_FIELDS = mapOf(AssetKind.AUDIO to TagField.MUSIC, AssetKind.VIDEO to TagField.VIDEO)
 
         fun cleanValue(value: String): String =
             Normalizer.normalize(value.trim(), Normalizer.Form.NFC).take(Limits.MAX_TAG_VALUE)

@@ -1,6 +1,7 @@
 package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.AssetKind
+import com.tlisonbee.mediasync.api.Fields
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.tags.TagField
 import java.text.Normalizer
@@ -96,10 +97,18 @@ fun Repository.editTags(deviceId: String, message: String?, edits: Map<String, M
         expectedRevs[assetId]?.let { if (it != head.rev) throw RequestException("${RepoPaths.name(head.path)} changed since the page was opened; reload it", 409) }
         if (fields.isEmpty()) continue
         val tags = head.tags.toMutableMap()
+        var category = head.category
         for ((field, values) in fields) {
-            if (values.isEmpty()) tags.remove(field) else tags[field] = values
+            when {
+                field == Fields.CATEGORY -> {
+                    category = values.firstOrNull()?.also { if (it !in RepoPaths.VIDEO_CATEGORIES) badRequest("no category $it") }
+                    if (head.kind != AssetKind.VIDEO) badRequest("only videos have a category")
+                }
+                values.isEmpty() -> tags.remove(field)
+                else -> tags[field] = values
+            }
         }
-        scope.write(head.copy(tags = policy.filter(head.kind, tags)))
+        scope.write(head.copy(tags = policy.filter(head.kind, tags), category = category))
     }
     scope.refreshAlbums()
     scope.finish()

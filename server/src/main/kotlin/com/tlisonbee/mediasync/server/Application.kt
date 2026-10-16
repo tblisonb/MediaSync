@@ -2,7 +2,10 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.HeadEvent
+import com.tlisonbee.mediasync.api.Limits
 import com.tlisonbee.mediasync.api.PairRequest
+import com.tlisonbee.mediasync.api.PickRequest
+import com.tlisonbee.mediasync.api.PickResponse
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.api.ResolveRequest
 import com.tlisonbee.mediasync.api.RevertRequest
@@ -192,6 +195,17 @@ private fun Route.apiRoutes(repo: Repository) {
         val id = call.parameters["id"]?.toLongOrNull() ?: badRequest("bad issue id")
         val request = call.receive<ResolveRequest>()
         call.respond(io { repo.resolve(call.device().id, id, request) })
+    }
+
+    // Which videos this device keeps, under its pick rules.
+    get("/picks") {
+        val prefix = call.parameters["prefix"] ?: "videos/"
+        call.respond(io { repo.pickList(call.device().id, prefix) })
+    }
+    put("/picks") {
+        val request = call.receive<PickRequest>()
+        if (request.pick.size + request.unpick.size > Limits.MAX_CHANGES_PER_PUSH) badRequest("too many picks at once")
+        call.respond(PickResponse(io { repo.setPicks(call.device().id, request.pick, request.unpick) }))
     }
 
     // Clients preview the import and keep files tidy with the same rules the server applies.
