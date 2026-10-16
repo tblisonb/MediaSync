@@ -188,6 +188,9 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         }
     }
 
+    // What waits for a decision comes first; the last sync's details follow.
+    if (state.review.enabled) ReviewSection(state, viewModel)
+
     val progress = state.progress
     if (progress != null) {
         Text(progress.describe())
@@ -201,13 +204,12 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         Text(last.at?.let { "Last synced " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "Not synced yet")
         last.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         last.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        last.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary) }
+        Warnings(last.warnings)
         if (last.warnings.any { "--allow-deletes" in it }) {
             OutlinedButton(onClick = { viewModel.syncNow(allowDeletes = true) }) { Text("Allow these deletions") }
         }
     }
 
-    if (state.review.enabled) ReviewSection(state, viewModel)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         // With review on, syncing everything at once would skip the asking.
         if (!state.review.enabled) Button(onClick = { viewModel.syncNow() }, enabled = progress == null) { Text("Sync now") }
@@ -352,4 +354,13 @@ private fun ReviewSettingsCard(state: UiState, viewModel: MainViewModel) {
             }
         }
     }
+}
+
+/** The first few warnings, and the rest behind a button: a sync can leave dozens. */
+@Composable
+private fun Warnings(warnings: List<String>) {
+    var all by remember(warnings) { mutableStateOf(false) }
+    val shown = if (all) warnings else warnings.take(2)
+    shown.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
+    if (warnings.size > shown.size) TextButton(onClick = { all = true }) { Text("Show all ${warnings.size} warnings") }
 }
