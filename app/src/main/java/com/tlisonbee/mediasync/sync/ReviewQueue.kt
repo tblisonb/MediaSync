@@ -31,6 +31,25 @@ object ReviewQueue {
     @Synchronized
     fun rememberNotified(context: Context, decisions: Decisions) = write(notified(context), decisions)
 
+    /** Assets whose arrival or removal was already approved by picking them on this phone. */
+    private fun picked(context: Context) = File(context.filesDir, "picked.json")
+
+    @Synchronized
+    fun approvePicked(context: Context, assetIds: Collection<String>) {
+        val before = read(picked(context))?.acceptIncoming.orEmpty()
+        write(picked(context), Decisions(acceptIncoming = before + assetIds))
+    }
+
+    /** The picked assets among [waiting]; they're forgotten once taken. */
+    @Synchronized
+    fun takePicked(context: Context, waiting: Set<String>): Set<String> {
+        val approved = read(picked(context))?.acceptIncoming.orEmpty()
+        val now = approved intersect waiting
+        val rest = approved - now
+        if (rest.isEmpty()) picked(context).delete() else write(picked(context), Decisions(acceptIncoming = rest))
+        return now
+    }
+
     @Synchronized
     fun acceptNotified(context: Context): Boolean {
         val decisions = read(notified(context)) ?: return false

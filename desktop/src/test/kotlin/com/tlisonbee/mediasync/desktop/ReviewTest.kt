@@ -230,4 +230,38 @@ class ReviewTest {
             thread.join(10_000)
         }
     }
+
+    @Test
+    fun aPickingDeviceReceivesWhatIsPickedAndLetsGoOfIt() = TestWorld().use { world ->
+        val pc = world.client("PC", videos = false)
+        val videos = pc.music.resolveSibling("Videos")
+        Files.createDirectories(videos.resolve("Movies"))
+        Files.write(videos.resolve("Movies/Inception (2010).mp4"), ByteArray(50_000) { (it * 7).toByte() })
+        Files.writeString(videos.resolve("Movies/Inception (2010).en.srt"), "1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        Files.write(videos.resolve("Movies/Elf.mp4"), ByteArray(40_000) { (it * 3).toByte() })
+        pc.sync()
+        val movie = "movies/Inception (2010)/Inception (2010)"
+        assertTrue(Files.exists(videos.resolve("$movie.mp4")), "filed on the PC")
+        assertTrue(Files.exists(videos.resolve("$movie.en.srt")), "with its subtitles")
+
+        val phone = world.client("Phone", videos = true)
+        val phoneVideos = phone.music.resolveSibling("Videos")
+        assertTrue(phone.engine.check().isEmpty, "nothing picked")
+        val inception = phone.api.picks().single { it.label == "Inception (2010)" }
+        phone.api.setPicks(com.tlisonbee.mediasync.api.PickRequest(pick = listOf(inception.assetId)))
+
+        val arriving = phone.engine.check()
+        assertEquals(listOf("new file (mp4)", "new file (srt)"), arriving.incoming.flatMap { g -> g.items.map { it.detail } }.sorted())
+        phone.engine.apply(arriving.acceptAll())
+        assertTrue(Files.exists(phoneVideos.resolve("$movie.mp4")))
+        assertTrue(Files.exists(phoneVideos.resolve("$movie.en.srt")))
+        assertFalse(Files.exists(phoneVideos.resolve("movies/Elf/Elf.mp4")))
+
+        phone.api.setPicks(com.tlisonbee.mediasync.api.PickRequest(unpick = listOf(inception.assetId)))
+        val leaving = phone.engine.check()
+        assertEquals(2, leaving.group("in:left")!!.items.size)
+        phone.engine.apply(leaving.acceptAll())
+        assertFalse(Files.exists(phoneVideos.resolve("$movie.mp4")))
+        assertTrue(Files.exists(videos.resolve("$movie.mp4")), "still on the PC")
+    }
 }

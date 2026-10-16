@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -51,7 +52,9 @@ import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.sync.ReviewAction
+import com.tlisonbee.mediasync.sync.bytes
 import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.label
@@ -68,6 +71,7 @@ fun MediaSyncRoot(viewModel: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (state.screen) {
+                Screen.STATUS if state.videos.open -> VideosScreen(state, viewModel)
                 Screen.PERMISSION -> PermissionScreen()
                 Screen.PAIR -> PairScreen(state, viewModel)
                 Screen.PREVIEW -> PreviewScreen(state, viewModel)
@@ -219,6 +223,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         "The resolve queue, history and undo are in the web UI for now.",
         style = MaterialTheme.typography.bodySmall,
     )
+    VideosCard(state, viewModel)
     ReviewSettingsCard(state, viewModel)
     if (confirmUnpair) {
         Text("Unpair this phone? Its files stay; it stops syncing until paired again.")
@@ -363,4 +368,87 @@ private fun Warnings(warnings: List<String>) {
     val shown = if (all) warnings else warnings.take(2)
     shown.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
     if (warnings.size > shown.size) TextButton(onClick = { all = true }) { Text("Show all ${warnings.size} warnings") }
+}
+
+@Composable
+private fun VideosCard(state: UiState, viewModel: MainViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Videos", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Keep the movies and episodes you pick in Movies/MediaSync. The rest stay on the server.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = state.videosEnabled, onCheckedChange = viewModel::setVideos)
+            }
+            if (state.videosEnabled) TextButton(onClick = viewModel::openVideos) { Text("Choose videos…") }
+            state.videos.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+/** Every video in the library, grouped into movies, each show's seasons, and the rest, to pick from. */
+@Composable
+private fun VideosScreen(state: UiState, viewModel: MainViewModel) {
+    val videos = state.videos
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Choose videos", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        TextButton(onClick = viewModel::closeVideos) { Text("Cancel") }
+    }
+    Text("Picked videos are kept on this phone, with their subtitles and posters. Unpicking one removes it from the phone only.")
+    when {
+        videos.loading -> CircularProgressIndicator()
+        videos.error != null -> Text(videos.error, color = MaterialTheme.colorScheme.error)
+        videos.items.isEmpty() -> Text("The library has no videos yet.")
+        else -> {
+            Text("${videos.chosen.size} picked, ${bytes(videos.chosenBytes)}", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = viewModel::saveVideos, enabled = videos.changes > 0 && !videos.saving) {
+                Text(if (videos.saving) "Saving…" else "Save ${videos.changes} ${if (videos.changes == 1) "change" else "changes"}")
+            }
+            groups(videos.items).forEach { (title, items) -> VideoGroup(title, items, videos.chosen, viewModel) }
+        }
+    }
+}
+
+/** "Movies"; "Fringe · Season 01" for each show's season; "Other". */
+private fun groups(items: List<PickItem>): List<Pair<String, List<PickItem>>> =
+    items.groupBy { item ->
+        val parts = item.path.split('/')
+        when (item.category) {
+            "movies" -> "Movies"
+            "shows" -> listOfNotNull(parts.getOrNull(2), parts.getOrNull(3)?.takeIf { parts.size > 4 }).joinToString(" · ")
+            else -> "Other"
+        }
+    }.toList().sortedBy { (title, _) -> if (title == "Movies") "" else if (title == "Other") "\uFFFF" else title.lowercase() }
+
+@Composable
+private fun VideoGroup(title: String, items: List<PickItem>, chosen: Set<String>, viewModel: MainViewModel) {
+    var expanded by remember(title) { mutableStateOf(items.size <= 12) }
+    val ids = items.map { it.assetId }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = ids.all { it in chosen }, onCheckedChange = { viewModel.choose(ids, it) })
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text("${ids.count { it in chosen }} of ${items.size} picked · ${bytes(items.sumOf { it.size })}", style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
+            }
+            if (expanded) {
+                items.sortedBy { it.label.lowercase() }.forEach { item ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = item.assetId in chosen, onCheckedChange = { viewModel.choose(listOf(item.assetId), it) })
+                        Column(Modifier.weight(1f)) {
+                            Text(item.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(bytes(item.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

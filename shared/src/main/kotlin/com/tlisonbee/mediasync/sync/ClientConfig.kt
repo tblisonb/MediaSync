@@ -14,10 +14,12 @@ data class FolderConfig(
     val mode: SyncMode = SyncMode.TWO_WAY,
     val filter: List<String> = emptyList(),
     val prefer: List<String> = emptyList(),
+    /** Only what is picked for this device (in the web UI or the app), as with videos on a phone. */
+    val pick: Boolean = false,
 ) {
     val root: Path get() = Path.of(folder)
 
-    fun rule() = SubscriptionRule(prefix, folder, mode, filter, prefer)
+    fun rule() = SubscriptionRule(prefix, folder, mode, filter, prefer, pick)
 }
 
 /** A client's connection to the server and its synced folders, on the desktop and on Android alike. */

@@ -38,12 +38,14 @@ class TestWorld : AutoCloseable {
         url = "http://127.0.0.1:" + runBlocking { server.engine.resolvedConnectors().first().port }
     }
 
-    fun client(name: String, ignoresCase: Boolean? = null): TestClient {
+    /** [videos]: also sync videos/ to ~/Videos; true picks, false keeps everything. */
+    fun client(name: String, ignoresCase: Boolean? = null, videos: Boolean? = null): TestClient {
         val pairing = ApiClient(url, null).pair(PairRequest(repo.newPairingCode(), name, DeviceKind.DESKTOP))
         val home = root.resolve(name)
         val music = Files.createDirectories(home.resolve("Music"))
         val dirs = Dirs(home.resolve("config"), home.resolve("state"), home.resolve("cache"), home.resolve("run"))
-        val config = ClientConfig(url, pairing.deviceId, name, listOf(FolderConfig("music/", music.toString())))
+        val videoFolder = videos?.let { FolderConfig("videos/", Files.createDirectories(home.resolve("Videos")).toString(), pick = it) }
+        val config = ClientConfig(url, pairing.deviceId, name, listOfNotNull(FolderConfig("music/", music.toString()), videoFolder))
         val api = ApiClient(url, pairing.token)
         api.putSubscription(config.subscription())
         val index = Index(dirs.index)

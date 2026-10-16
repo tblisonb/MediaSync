@@ -55,6 +55,9 @@ class Settings(context: Context) {
 
     fun approve() = update { putBoolean(KEY_APPROVED, true) }
 
+    /** A changed list of folders, after the server has the matching subscription. */
+    fun updateConfig(config: ClientConfig) = update { putString(KEY_CONFIG, ApiJson.encodeToString(ClientConfig.serializer(), config)) }
+
     fun unpair() = update { clear() }
 
     fun recordSuccess(summary: String, warnings: List<String>) = update {

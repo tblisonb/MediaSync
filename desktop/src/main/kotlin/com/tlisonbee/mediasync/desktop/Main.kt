@@ -25,6 +25,9 @@ import kotlin.system.exitProcess
 private const val USAGE = """Usage: mediasync-desktop <command>
 
   setup                  Pair this PC with your MediaSync server and choose the music folder
+  add-folder <prefix> <folder> [--mode two-way|receive-only|send-only] [--pick]
+                         Sync another folder, e.g. add-folder videos/ ~/Videos; --pick keeps only
+                         what you pick for this PC in the web UI
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
@@ -43,6 +46,7 @@ fun main(args: Array<String>) {
     try {
         when (args.firstOrNull()) {
             "setup" -> setup(dirs)
+            "add-folder" -> addFolder(dirs, args.drop(1))
             "preview" -> preview(dirs)
             "run" -> withConfig(dirs) { config, token -> Service(dirs, config, token).run() }
             "status" -> status(dirs)
@@ -132,6 +136,35 @@ private fun writeSandboxDropIn(config: ClientConfig) {
     runCatching {
         ProcessBuilder("systemctl", "--user", "daemon-reload").redirectOutput(ProcessBuilder.Redirect.DISCARD)
             .redirectError(ProcessBuilder.Redirect.DISCARD).start().waitFor()
+    }
+}
+
+private fun addFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { config, token ->
+    val positional = args.filterIndexed { i, a -> !a.startsWith("--") && args.getOrNull(i - 1) != "--mode" }
+    val prefix = positional.getOrNull(0)?.let { if (it.endsWith("/")) it else "$it/" } ?: usage()
+    val folder = expandHome(positional.getOrNull(1) ?: usage())
+    val mode = when (args.getOrNull(args.indexOf("--mode") + 1).takeIf { "--mode" in args } ?: "two-way") {
+        "two-way" -> SyncMode.TWO_WAY
+        "receive-only" -> SyncMode.RECEIVE_ONLY
+        "send-only" -> SyncMode.SEND_ONLY
+        else -> fail("Choose two-way, receive-only or send-only.")
+    }
+    if (config.folders.any { it.prefix == prefix }) fail("$prefix is already synced, to ${config.folders.first { it.prefix == prefix }.folder}.")
+    config.folders.firstOrNull { folder.startsWith(it.root) || it.root.startsWith(folder) }?.let {
+        fail("$folder overlaps ${it.folder}, which is already synced.")
+    }
+    if (!Files.isDirectory(folder)) {
+        if (ask("$folder doesn't exist. Create it? [Y/n]", "y").lowercase().startsWith("n")) exitProcess(1)
+        Files.createDirectories(folder)
+    }
+    val updated = config.copy(folders = config.folders + FolderConfig(prefix, folder.toString(), mode, pick = "--pick" in args))
+    ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
+    ConfigStore(dirs).save(updated, token)
+    writeSandboxDropIn(updated)
+    println("$folder now syncs with $prefix (${mode.label}${if ("--pick" in args) ", only what you pick" else ""}).")
+    if (Files.exists(dirs.socket)) {
+        runCatching { ProcessBuilder("systemctl", "--user", "restart", "mediasync-desktop").inheritIO().start().waitFor() }
+        println("The service restarted with it; its next check lists what the folder holds (mediasync-desktop check).")
     }
 }
 

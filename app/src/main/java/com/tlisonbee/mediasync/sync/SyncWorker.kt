@@ -91,7 +91,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     val engine = engine(config, token)
                     when (mode) {
                         MODE_CHECK -> {
-                            val review = engine.check()
+                            var review = engine.check()
+                            // Videos picked on this phone come (or go) without asking again.
+                            val picked = ReviewQueue.takePicked(applicationContext, review.incoming.flatMap { g -> g.items.map { it.id } }.toSet())
+                            if (picked.isNotEmpty()) {
+                                val report = engine.apply(Decisions(acceptIncoming = picked))
+                                settings.recordSuccess(report.summary(), report.warnings)
+                                review = engine.review()
+                            }
                             settings.recordCheck()
                             notifyReview(review)
                         }
@@ -281,7 +288,8 @@ object SyncScheduler {
     /** When the app comes to the front: check, or sync without review. */
     fun onOpen(context: Context) = if (ReviewSettings(context.app.index).enabled) checkNow(context) else syncNow(context)
 
-    fun checkNow(context: Context) = oneTime(context, CHECK, ExistingWorkPolicy.KEEP, SyncWorker.MODE_CHECK)
+    fun checkNow(context: Context, replace: Boolean = false) =
+        oneTime(context, CHECK, if (replace) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, SyncWorker.MODE_CHECK)
 
     /** Applies the decisions in [ReviewQueue]; each run takes all of them, so later taps queue behind. */
     fun apply(context: Context) = oneTime(context, APPLY, ExistingWorkPolicy.APPEND_OR_REPLACE, SyncWorker.MODE_APPLY)

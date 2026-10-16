@@ -6,6 +6,8 @@ import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tlisonbee.mediasync.api.DeviceKind
+import com.tlisonbee.mediasync.api.PickItem
+import com.tlisonbee.mediasync.api.PickRequest
 import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.app
 import com.tlisonbee.mediasync.data.LastSync
@@ -45,6 +47,19 @@ data class PreviewState(val running: Boolean = false, val read: Int = 0, val tot
 /** Whether syncs wait for approval, how often to check, and what waits. */
 data class ReviewState(val enabled: Boolean = true, val checkMinutes: Int = ReviewSettings.DEFAULT_MINUTES, val lastCheck: Long? = null, val review: Review = Review.EMPTY)
 
+/** The video picker: every video in the library, and which ones this phone keeps. */
+data class VideosState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val items: List<PickItem> = emptyList(),
+    val chosen: Set<String> = emptySet(),
+    val saving: Boolean = false,
+    val error: String? = null,
+) {
+    val changes get() = items.count { (it.assetId in chosen) != it.picked }
+    val chosenBytes get() = items.filter { it.assetId in chosen }.sumOf { it.size }
+}
+
 data class UiState(
     val screen: Screen,
     val config: ClientConfig?,
@@ -54,7 +69,13 @@ data class UiState(
     val pairing: PairState,
     val preview: PreviewState,
     val review: ReviewState = ReviewState(),
-)
+    val videos: VideosState = VideosState(),
+) {
+    val videosEnabled get() = config?.folders?.any { it.prefix == VIDEOS } == true
+}
+
+/** Where this phone keeps the videos picked for it. */
+const val VIDEOS = "videos/"
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application.app
@@ -63,12 +84,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val preview = MutableStateFlow(PreviewState())
     private val files = MutableStateFlow(0)
     private val review = MutableStateFlow(ReviewState())
+    private val videos = MutableStateFlow(VideosState())
 
-    private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState)
+    private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
     val state: StateFlow<UiState> = combine(
-        app.settings.changes, SyncState.progress, allFilesAccess, combine(pairing, preview, files, review, ::Extra),
-    ) { _, progress, access, (pair, prev, count, rev) ->
+        app.settings.changes, SyncState.progress, allFilesAccess, combine(pairing, preview, files, review, videos, ::Extra),
+    ) { _, progress, access, (pair, prev, count, rev, vids) ->
         val settings = app.settings
         val screen = when {
             !access -> Screen.PERMISSION
@@ -76,7 +98,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             !settings.approved -> Screen.PREVIEW
             else -> Screen.STATUS
         }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev)
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
     init {
@@ -109,6 +131,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun checkNow() = SyncScheduler.checkNow(app)
+
+    /** Adds or removes the videos folder: only the videos picked for this phone, in Movies/MediaSync. */
+    fun setVideos(enabled: Boolean) {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).resolve("MediaSync")
+                val folders = config.folders.filter { it.prefix != VIDEOS } +
+                    if (enabled) listOf(FolderConfig(VIDEOS, folder.path, SyncMode.TWO_WAY, pick = true)) else emptyList()
+                if (enabled) folder.mkdirs()
+                val updated = config.copy(folders = folders)
+                ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
+                app.settings.updateConfig(updated)
+                SyncScheduler.checkNow(app, replace = true)
+            } catch (e: Exception) {
+                videos.value = videos.value.copy(error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun openVideos() {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        videos.value = VideosState(open = true, loading = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            videos.value = try {
+                val items = ApiClient(config.serverUrl, token).picks(VIDEOS)
+                VideosState(open = true, items = items, chosen = items.filter { it.picked }.map { it.assetId }.toSet())
+            } catch (e: Exception) {
+                VideosState(open = true, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun closeVideos() {
+        videos.value = VideosState()
+    }
+
+    fun choose(ids: Collection<String>, keep: Boolean) {
+        val state = videos.value
+        videos.value = state.copy(chosen = if (keep) state.chosen + ids else state.chosen - ids.toSet())
+    }
+
+    /** Saves the picks; what they bring or take away is applied without asking again. */
+    fun saveVideos() {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        val state = videos.value
+        val pick = state.items.filter { it.assetId in state.chosen && !it.picked }.map { it.assetId }
+        val unpick = state.items.filter { it.assetId !in state.chosen && it.picked }.map { it.assetId }
+        videos.value = state.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val changed = ApiClient(config.serverUrl, token).setPicks(PickRequest(pick, unpick)).changed
+                ReviewQueue.approvePicked(app, changed)
+                SyncScheduler.checkNow(app, replace = true)
+                videos.value = VideosState()
+            } catch (e: Exception) {
+                videos.value = state.copy(saving = false, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
 
     fun setReview(enabled: Boolean? = null, minutes: Int? = null) {
         viewModelScope.launch(Dispatchers.IO) {
