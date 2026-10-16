@@ -6,6 +6,8 @@ import com.tlisonbee.mediasync.sync.Decisions
 import com.tlisonbee.mediasync.sync.ReviewAction
 import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewSettings
+import com.tlisonbee.mediasync.sync.SyncStage
+import com.tlisonbee.mediasync.sync.bytes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -113,7 +115,7 @@ class ReviewPage(private val service: Service) {
             append(" · last checked ").append(service.lastCheck()?.let(::time) ?: "never")
             append(" · <a href=\"").append(esc(service.config.serverUrl)).append("\">web UI</a></p>")
             if (message != null) append("<p class=\"notice\">").append(esc(message)).append("</p>")
-            if (busy != null) append("<p class=\"notice\">").append(esc(busy)).append("… This page refreshes by itself.</p>")
+            if (busy != null) progress(this, busy, service.progress)
             review.warnings.forEach { append("<p class=\"notice warn\">").append(esc(it)).append("</p>") }
 
             append("<div class=\"actions\"><form method=\"post\" action=\"check\"><button>Check now</button></form>")
@@ -155,6 +157,29 @@ class ReviewPage(private val service: Service) {
         ex.responseHeaders.add("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
         ex.responseHeaders.add("Referrer-Policy", "no-referrer")
         respond(ex, 200, html, "text/html")
+    }
+
+    /** The running job: what it's doing, a bar, files and bytes, and a rough time left. */
+    private fun progress(out: StringBuilder, busy: String, p: JobProgress?) = with(out) {
+        append("<div class=\"notice\"><p>").append(esc(busy)).append("… This page refreshes by itself.</p>")
+        if (p != null) {
+            val what = when (p.stage) {
+                SyncStage.SCANNING -> "Reading files"
+                SyncStage.PULLING -> "Asking the server"
+                SyncStage.UPLOADING -> "Uploading"
+                SyncStage.DOWNLOADING -> "Downloading"
+            }
+            val parts = listOfNotNull(
+                "$what:",
+                if (p.total > 0) "${"%,d".format(p.done)} of ${"%,d".format(p.total)} files" else null,
+                if (p.totalBytes > 0) "· ${bytes(p.bytes)} of ${bytes(p.totalBytes)}" else if (p.bytes > 0) "· ${bytes(p.bytes)}" else null,
+                p.fraction?.let { "(${(it * 100).toInt()}%)" },
+                p.remainingMs(System.currentTimeMillis())?.let { "· about ${duration(it)} left" },
+            )
+            append("<p>").append(esc(parts.joinToString(" "))).append("</p>")
+            p.fraction?.let { append("<progress max=\"1000\" value=\"").append((it * 1000).toInt()).append("\"></progress>") }
+        }
+        append("</div>")
     }
 
     private fun group(out: StringBuilder, group: ReviewGroup) = with(out) {
@@ -200,6 +225,11 @@ class ReviewPage(private val service: Service) {
 
         fun time(millis: Long) = TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
 
+        fun duration(ms: Long): String {
+            val minutes = (ms + 59_999) / 60_000
+            return if (minutes < 60) "$minutes min" else "${minutes / 60} h ${minutes % 60} min"
+        }
+
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
         /** The web UI's look, trimmed to what this page uses. */
@@ -226,6 +256,7 @@ class ReviewPage(private val service: Service) {
             label { display: block; margin: 0 0 12px; } label.check input { margin-right: 8px; }
             .badge { padding: 1px 8px; border-radius: 999px; background: var(--danger); color: var(--bg); font-size: 0.75rem; white-space: nowrap; }
             summary { cursor: pointer; color: var(--accent); margin-top: 4px; }
+            .notice p { margin: 0 0 6px; } progress { width: 100%; height: 12px; accent-color: var(--accent); }
             table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 0.9rem; }
             td { padding: 4px 10px 4px 0; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
         """.trimIndent()

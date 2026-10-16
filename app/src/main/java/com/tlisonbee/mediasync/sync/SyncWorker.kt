@@ -134,7 +134,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     private fun engine(config: ClientConfig, token: String): SyncEngine {
         var lastShown = 0L
         val listener = object : SyncListener {
-            override fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long) {
+            override fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long, totalBytes: Long) {
                 val previous = SyncState.progress.value
                 val progress = Progress(
                     stage,

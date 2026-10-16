@@ -7,6 +7,8 @@ import com.tlisonbee.mediasync.sync.Decisions
 import com.tlisonbee.mediasync.sync.Review
 import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.SyncListener
+import com.tlisonbee.mediasync.sync.SyncStage
 import com.tlisonbee.mediasync.sync.SyncReport
 import com.tlisonbee.mediasync.sync.bytes
 import java.io.IOException
@@ -36,6 +38,33 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+
+/** Where a running job is: files and bytes, and when this stage started, for a time estimate. */
+data class JobProgress(
+    val stage: SyncStage,
+    val done: Int,
+    val total: Int,
+    val bytes: Long,
+    val totalBytes: Long,
+    val startedAt: Long,
+    val startBytes: Long,
+) {
+    /** 0 to 1, by bytes where they're known, else by files; null if there's nothing to measure. */
+    val fraction: Double?
+        get() = when {
+            totalBytes > 0 -> (bytes.toDouble() / totalBytes).coerceIn(0.0, 1.0)
+            total > 0 -> (done.toDouble() / total).coerceIn(0.0, 1.0)
+            else -> null
+        }
+
+    /** Milliseconds left at the rate so far; null until there's a rate. */
+    fun remainingMs(now: Long): Long? {
+        val elapsed = now - startedAt
+        val moved = bytes - startBytes
+        if (totalBytes <= 0 || moved <= 0 || elapsed < 5_000) return null
+        return ((totalBytes - bytes) * elapsed / moved).coerceAtLeast(0)
+    }
+}
 
 /** Something for the service's one engine to do; [reply] gets the outcome when it's done. */
 sealed class Job(val reply: CompletableDeferred<String>? = null) {
@@ -77,6 +106,26 @@ class Service(
     var busy: String? = null
         private set
 
+    /** How far the current job has got, for the review page's progress bar. */
+    @Volatile
+    var progress: JobProgress? = null
+        private set
+
+    private val listener = object : SyncListener {
+        override fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long, totalBytes: Long) {
+            val previous = progress?.takeIf { it.stage == stage }
+            progress = JobProgress(
+                stage = stage,
+                done = if (done >= 0) done else previous?.done ?: 0,
+                total = if (total >= 0) total else previous?.total ?: 0,
+                bytes = bytes,
+                totalBytes = if (totalBytes >= 0) totalBytes else previous?.totalBytes ?: 0,
+                startedAt = previous?.startedAt ?: System.currentTimeMillis(),
+                startBytes = previous?.startBytes ?: bytes,
+            )
+        }
+    }
+
     fun submit(job: Job) = jobs.trySend(job)
 
     /** Ends [run] once the current job is done. */
@@ -95,7 +144,7 @@ class Service(
         index = Index(dirs.index)
         settings = ReviewSettings(index)
         val api = ApiClient(config.serverUrl, token)
-        engine = SyncEngine(config, api, index, dirs.pictures)
+        engine = SyncEngine(config, api, index, dirs.pictures, listener = listener)
         val notifier = makeNotifier()
         val page = ReviewPage(this@Service).apply { start() }
         writePrivate(dirs.reviewUrl, page.url + "\n")
@@ -176,6 +225,7 @@ class Service(
                 "Failed: $message"
             } finally {
                 busy = null
+                progress = null
             }
             job.reply?.complete(outcome)
         }

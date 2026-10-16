@@ -26,8 +26,11 @@ enum class SyncStage { SCANNING, PULLING, DOWNLOADING, UPLOADING }
 
 /** Hooks for a client's UI: progress, and the files a sync wrote (Android tells MediaStore about those). */
 interface SyncListener {
-    /** [done] and [total] count files; -1 means unchanged. [bytes] counts the stage's transfer so far. */
-    fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long = 0) {}
+    /**
+     * [done] and [total] count files; -1 means unchanged. [bytes] counts the stage's transfer so
+     * far, out of [totalBytes] planned (-1: unchanged or unknown).
+     */
+    fun progress(stage: SyncStage, done: Int, total: Int, bytes: Long = 0, totalBytes: Long = -1) {}
 
     fun filesChanged(paths: List<Path>) {}
 
@@ -44,6 +47,9 @@ class SyncReport {
     var head = 0L
     var uploadedFiles = 0
     var uploadedBytes = 0L
+
+    /** Files planned for upload that the server turned out to have: done without sending. */
+    var skippedBytes = 0L
     var downloadedFiles = 0
     var downloadedBytes = 0L
     var retagged = 0
@@ -248,8 +254,16 @@ class SyncEngine(
      * without review). A file changed here too is merged by pushing it instead.
      */
     private fun applyStaged(only: Set<String>?, report: SyncReport, removals: MutableMap<String, Row>) {
-        for (change in index.remote()) {
-            if (only != null && change.assetId !in only) continue
+        val changes = index.remote().filter { only == null || it.assetId in only }
+        // What may be downloaded: assets this device has none of the media of.
+        val planned = changes.sumOf { change ->
+            val asset = change.asset ?: return@sumOf 0L
+            val row = index.byAsset(change.assetId).firstOrNull { it.ignored == null }
+            if (asset.deleted || (row != null && !row.missing && row.media in asset.renditions.map { it.mediaHash })) 0L
+            else asset.renditions.firstOrNull()?.size ?: 0L
+        }
+        for ((i, change) in changes.withIndex()) {
+            if (changes.size > 1) listener.progress(SyncStage.DOWNLOADING, i, changes.size, report.downloadedBytes, planned)
             val row = index.byAsset(change.assetId).firstOrNull { it.ignored == null }
             val asset = change.asset
             if (row != null && asset != null && (row.base?.rev ?: 0) >= change.rev && !row.missing) {
@@ -497,7 +511,7 @@ class SyncEngine(
         }
         Files.createDirectories(target.parent)
         val tmp = target.resolveSibling(".mediasync-${rendition.blob.take(16)}.${rendition.format}")
-        report.downloadedBytes += api.download(rendition.blob, tmp) { listener.progress(SyncStage.DOWNLOADING, report.downloadedFiles, 0, report.downloadedBytes + it) }
+        report.downloadedBytes += api.download(rendition.blob, tmp) { listener.progress(SyncStage.DOWNLOADING, -1, -1, report.downloadedBytes + it) }
         report.downloadedFiles++
         if (asset.kind == AssetKind.AUDIO && LocalFiles.isTagged(rendition.format)) LocalFiles.writeTags(tmp, asset.tags, cover(asset))
         Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
@@ -549,10 +563,11 @@ class SyncEngine(
         val pending = all.filter { it.ignored == null && reviewer.pending(it) && (only == null || it.path in only) }
         if (pending.isEmpty()) return
         log("Pushing ${pending.size} local change(s)…")
+        val planned = pending.filter(::needsUpload).sumOf { it.size }
         var done = 0
         for (batch in pending.chunked(BATCH)) {
             val prepared = batch.mapIndexedNotNull { i, row ->
-                listener.progress(SyncStage.UPLOADING, done + i, pending.size, report.uploadedBytes)
+                listener.progress(SyncStage.UPLOADING, done + i, pending.size, report.uploadedBytes + report.skippedBytes, planned)
                 try {
                     row to prepare(row, report)
                 } catch (e: IOException) {
@@ -627,15 +642,25 @@ class SyncEngine(
         )
     }
 
+    /** A new or replaced file: its media may have to be sent. */
+    private fun needsUpload(row: Row) = !row.missing && (row.assetId == null || row.media != row.seenMedia)
+
     private fun uploadMedia(row: Row, report: SyncReport) {
-        if (row.media in knownMedia) return
+        if (row.media in knownMedia) {
+            if (needsUpload(row)) report.skippedBytes += row.size
+            return
+        }
         if (api.media(row.media) == null) {
+            val before = report.uploadedBytes
             val hash = sha256Hex(row.file)
             val result = api.upload(row.file, hash, row.file.fileName.toString()) {
                 report.uploadedBytes += it
-                listener.progress(SyncStage.UPLOADING, -1, -1, report.uploadedBytes)
+                listener.progress(SyncStage.UPLOADING, -1, -1, report.uploadedBytes + report.skippedBytes)
             }
             report.uploadedFiles++
+            // A resumed upload sends only the rest; the part sent before counts as done.
+            val sent = report.uploadedBytes - before
+            if (sent < row.size) report.skippedBytes += row.size - sent
             val served = result.media?.mediaHash
             if (served != row.media) throw IOException("the server read this file's media as $served, not ${row.media}")
         }
