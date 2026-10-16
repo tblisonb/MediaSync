@@ -113,7 +113,8 @@ fun Route.webRoutes(repo: Repository) {
             val folder = call.parameters["path"].orEmpty().trim('/')
             val listing = io { repo.browse(folder) }
             val formats = io { listing.assets.associate { it.assetId to repo.toDto(it).renditions.map { r -> r.format } } }
-            call.respondHtml { browsePage(folder, listing, formats) }
+            val artists = if (RepoPaths.isMusic("$folder/") && folder.count { it == '/' } == 1) io { repo.artistsIn(folder) } else emptyList()
+            call.respondHtml { browsePage(folder, listing, formats, artists) }
         }
         get("/assets/{id}") {
             val id = call.parameters["id"]!!
@@ -192,6 +193,8 @@ fun Route.webRoutes(repo: Repository) {
             call.respondRedirect("/devices")
         }
 
+        cleanupRoutes(repo)
+
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
         post("/settings") {
             val form = call.receiveParameters()
@@ -232,7 +235,7 @@ private fun ApplicationCall.publicUrl(): String {
 
 // ---- Pages ----
 
-private fun HTML.page(pageTitle: String, loggedIn: Boolean = true, content: FlowContent.() -> Unit) {
+internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, content: FlowContent.() -> Unit) {
     head {
         meta(charset = "utf-8")
         meta(name = "viewport", content = "width=device-width, initial-scale=1")
@@ -248,6 +251,7 @@ private fun HTML.page(pageTitle: String, loggedIn: Boolean = true, content: Flow
                     a(href = "/browse") { +"Library" }
                     a(href = "/revisions") { +"History" }
                     a(href = "/resolve") { +"Resolve" }
+                    a(href = "/cleanup") { +"Cleanup" }
                     a(href = "/devices") { +"Devices" }
                     a(href = "/settings") { +"Settings" }
                     form(action = "/logout", method = FormMethod.post) { button(classes = "link") { +"Log out" } }
@@ -309,8 +313,12 @@ private fun FlowContent.tile(label: String, value: String) = div("tile") {
     span("value") { +value }
 }
 
-private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<String, List<String>>) = page(folder.ifEmpty { "Library" }) {
+private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<String, List<String>>, artists: List<String>) = page(folder.ifEmpty { "Library" }) {
     h1 { breadcrumbs(folder) }
+    if (listing.assets.any { it.kind == AssetKind.AUDIO && RepoPaths.isMusic(it.path) }) {
+        p { a(href = "/album?path=" + enc(folder)) { +"Edit this album's tags" } }
+    }
+    artists.forEach { renameArtistForm(it) }
     if (listing.folders.isEmpty() && listing.assets.isEmpty()) p("empty") { +"Nothing here yet." }
     ul("list") {
         listing.folders.forEach { (name, count) ->
@@ -329,7 +337,7 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
     p { a(href = "/deleted") { +"Recently deleted" } }
 }
 
-private fun FlowContent.breadcrumbs(folder: String) {
+internal fun FlowContent.breadcrumbs(folder: String) {
     a(href = "/browse") { +"Library" }
     var path = ""
     folder.split('/').filter { it.isNotEmpty() }.forEach { part ->
@@ -667,7 +675,7 @@ private fun bytes(n: Long): String = when {
 
 private fun duration(ms: Long) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
 
-private fun enc(s: String): String = URLEncoder.encode(s, Charsets.UTF_8)
+internal fun enc(s: String): String = URLEncoder.encode(s, Charsets.UTF_8)
 
 private fun show(field: String, values: List<String>?): String = when {
     values == null -> "(none)"

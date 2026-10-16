@@ -148,6 +148,22 @@ th { color: var(--muted); font-weight: 500; white-space: nowrap; }
 .candidates tr.differs td { font-weight: 500; }
 .issue .actions { margin-top: 16px; }
 
+details { margin: 12px 0; }
+summary { cursor: pointer; color: var(--accent); }
+.moves td { font-size: 0.9rem; }
+
+.variant { padding: 12px 20px; }
+.variant p { margin: 0 0 8px; }
+.variant label.pick { margin-bottom: 6px; }
+.variant .name { font-weight: 500; }
+.variant .actions { align-items: center; }
+.variant .actions input[type=text] { flex: 1; min-width: 200px; width: auto; }
+
+.album-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
+.tracks input[type=text] { padding: 6px 8px; }
+.tracks .f-discnumber, .tracks .f-tracknumber { width: 4.5rem; }
+.tracks td { padding-right: 6px; border-bottom: none; }
+
 .qr { width: 220px; max-width: 100%; padding: 8px; background: #fff; border-radius: 8px; }
 .qr svg { display: block; width: 100%; height: auto; }
 code.code { font-size: 1.4rem; letter-spacing: 0.08em; }

@@ -93,6 +93,27 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
         ) { it.toVersion() }.filter { RepoPaths.parent(it.path) == folder }
     }
 
+    /** Live assets anywhere under [folder]. */
+    fun liveUnder(folder: String): List<Version> {
+        val key = pathKey(folder)
+        return db.query(
+            """
+            SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
+            WHERE h.deleted = 0 AND h.path_key >= ? AND h.path_key < ? ORDER BY h.path_key
+            """.trimIndent(),
+            "$key/", "${key}0",
+        ) { it.toVersion() }.filter { it.path.startsWith("$folder/") }
+    }
+
+    /** Every live track in the music folder. */
+    fun liveTracks(): List<Version> = db.query(
+        """
+        SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
+        WHERE h.deleted = 0 AND v.kind = ? AND h.path_key >= ? AND h.path_key < ? ORDER BY h.path_key
+        """.trimIndent(),
+        AssetKind.AUDIO.apiName, RepoPaths.MUSIC, "music0",
+    ) { it.toVersion() }
+
     fun liveWithMedia(mediaHash: String): List<Version> = db.query(
         """
         SELECT v.* FROM rendition r JOIN asset_head h ON h.asset_id = r.asset_id
@@ -318,6 +339,38 @@ class RevisionScope(
     fun refreshAlbums() {
         for (folder in albums.toList()) {
             for (track in repo.liveIn(folder)) write(track)
+        }
+        bringExtras()
+    }
+
+    /**
+     * Moves what isn't a track (cover scans, a booklet, a .cue) after its album: once every track
+     * has left a folder, and all for the same new folder, whatever is still under it follows.
+     */
+    private fun bringExtras() {
+        val moves = LinkedHashMap<String, MutableSet<String>>()
+        for ((assetId, old) in before.toList()) {
+            if (old == null || old.deleted || old.kind != AssetKind.AUDIO || !RepoPaths.isMusic(old.path)) continue
+            val now = repo.headVersion(assetId) ?: continue
+            val from = RepoPaths.parent(old.path)
+            val to = RepoPaths.parent(now.path).takeUnless { now.deleted }
+            if (from != to) moves.getOrPut(from) { LinkedHashSet() }.addAll(listOfNotNull(to))
+        }
+        for ((from, targets) in moves) {
+            val to = targets.singleOrNull() ?: continue
+            val left = repo.liveUnder(from)
+            if (left.any { it.kind == AssetKind.AUDIO }) continue
+            for (extra in left) moveExtra(extra, to + extra.path.removePrefix(from))
+        }
+    }
+
+    /** Moves [extra] to [path]; if the same file is already there, the copy is deleted instead. */
+    fun moveExtra(extra: Version, path: String) {
+        val there = repo.liveAssetAt(path)?.let(repo::headVersion)
+        if (there != null && there.assetId != extra.assetId && there.renditions.firstOrNull() == extra.renditions.firstOrNull()) {
+            write(extra.copy(deleted = true))
+        } else {
+            write(extra.copy(path = path), raiseCollision = false)
         }
     }
 

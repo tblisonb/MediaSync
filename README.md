@@ -60,7 +60,15 @@ Later runs only replace the program in `/opt/mediasync`.
 
 The web UI is at that address: status, library browser, history with revert and per-field restore,
 the resolve queue, devices (pairing by QR code or code, subscriptions, revoking) and the tag policy.
+Cleanup finds artist and album names spelled several ways, moves cover scans and other leftover files
+to where their album's tracks are, and lists albums with missing tags; each album has a tag editor
+(Library > an album > Edit this album's tags). Every cleanup is one revision, revertible from History.
 Get a pairing code for the smoke test from Devices > Pair a device.
+
+Backup: `deploy/backup/` backs the repository up nightly with restic to rest-server on a Raspberry Pi
+over Tailscale, append-only, with a weekly `restic check`. Set up the Pi with
+`sudo bash pi-setup.sh mediasync.htpasswd` and this PC with `sudo deploy/backup/install.sh --pi <name>`
+(each script explains its steps).
 
 Run the maintenance commands as the service's user:
 
