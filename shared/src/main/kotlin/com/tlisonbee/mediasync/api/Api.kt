@@ -396,3 +396,10 @@ data class EditRequest(
 
 @Serializable
 data class EditResponse(val rev: Long?)
+
+/** Cleanup the server asks every device to do in its own folders, from the web UI's Cleanup page. */
+@Serializable
+data class DeviceCleanup(
+    /** Delete the clutter devices never sync (desktop.ini, Thumbs.db, .DS_Store and the like) where it's found. */
+    val deleteClutter: Boolean = false,
+)

@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.sync
 
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
+import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.PictureRef
 import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.PushRequest
@@ -56,6 +57,9 @@ class SyncReport {
     var renamed = 0
     var deleted = 0
 
+    /** Clutter deleted because the server asked (desktop.ini, Thumbs.db and the like). */
+    var clutterDeleted = 0
+
     /** Local changes in receive-only folders, which are never pushed. */
     var notPushed = 0
 
@@ -74,6 +78,7 @@ class SyncReport {
         if (retagged > 0) add("retagged $retagged")
         if (renamed > 0) add("renamed $renamed")
         if (deleted > 0) add("deleted $deleted")
+        if (clutterDeleted > 0) add("deleted $clutterDeleted leftover ${if (clutterDeleted == 1) "file" else "files"}")
         if (warnings.isNotEmpty()) add("${warnings.size} warning(s)")
     }.ifEmpty { listOf("nothing to do") }.joinToString(", ") + " (at r${maxOf(head, rev ?: 0)})"
 }
@@ -99,6 +104,7 @@ class SyncEngine(
     private val caseless = HashMap<String, Boolean>()
     private val reviewer = ReviewBuilder(config, index, ::pathKey)
     private var policy = TagPolicy()
+    private var cleanup = DeviceCleanup()
 
     /** Files this sync wrote, moved or deleted, both old and new paths. */
     private val touched = LinkedHashSet<Path>()
@@ -107,7 +113,7 @@ class SyncEngine(
         val report = SyncReport()
         touched.clear()
         try {
-            policy = api.policy()
+            refreshSettings()
             scan(report, allowDeletes)
             listener.progress(SyncStage.PULLING, 0, 0)
             pull(report, allowDeletes)
@@ -128,7 +134,7 @@ class SyncEngine(
      */
     fun check(allowDeletes: Boolean = false, full: Boolean = false): Review {
         val report = SyncReport()
-        policy = api.policy()
+        refreshSettings()
         scan(report, allowDeletes)
         // From the start: everything the server holds is compared with the files again, and
         // whatever differs (a download that once failed, say) is staged.
@@ -152,7 +158,7 @@ class SyncEngine(
         val report = SyncReport()
         touched.clear()
         try {
-            policy = api.policy()
+            refreshSettings()
             scan(report, allowDeletes = false)
             for (rev in decisions.revert) {
                 api.revert(RevertRequest(rev = rev))
@@ -283,6 +289,11 @@ class SyncEngine(
         }
     }
 
+    private fun refreshSettings() {
+        policy = api.policy()
+        cleanup = api.cleanup()
+    }
+
     // ---- Scan: what changed on disk ----
 
     private fun scan(report: SyncReport, allowDeletes: Boolean) {
@@ -296,7 +307,7 @@ class SyncEngine(
             val known = index.inFolder(folder.prefix).associateBy { pathKey(folder, it.path) }
             val seen = HashSet<String>()
             val fresh = mutableListOf<Row>()
-            val files = walk(root)
+            val files = walk(root, report)
             for ((i, file) in files.withIndex()) {
                 if (i % 50 == 0) listener.progress(SyncStage.SCANNING, i, files.size)
                 val path = file.toString()
@@ -377,8 +388,14 @@ class SyncEngine(
             (state.cover != null && TagPolicy.FRONT_COVER !in policy.pictures[AssetKind.AUDIO].orEmpty())
     }
 
-    private fun walk(root: Path): List<Path> {
+    /**
+     * The files to sync under [root]. Clutter is deleted on the way when the server asks for that,
+     * which is the one change even a check makes: those files are never synced, so there is
+     * nothing to review.
+     */
+    private fun walk(root: Path, report: SyncReport): List<Path> {
         val files = mutableListOf<Path>()
+        val clutter = mutableListOf<Path>()
         Files.walkFileTree(
             root,
             object : SimpleFileVisitor<Path>() {
@@ -386,13 +403,28 @@ class SyncEngine(
                     if (dir != root && LocalFiles.skipped(dir.fileName.toString())) FileVisitResult.SKIP_SUBTREE else FileVisitResult.CONTINUE
 
                 override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    if (attrs.isRegularFile && !LocalFiles.skipped(file.fileName.toString())) files.add(file)
+                    val name = file.fileName.toString()
+                    if (!attrs.isRegularFile) return FileVisitResult.CONTINUE
+                    if (!LocalFiles.skipped(name)) files.add(file) else if (cleanup.deleteClutter && LocalFiles.isClutter(name)) clutter.add(file)
                     return FileVisitResult.CONTINUE
                 }
 
                 override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult = FileVisitResult.CONTINUE
             },
         )
+        // After the walk: deleting a folder's last file also removes the folder.
+        var deleted = 0
+        for (file in clutter) {
+            try {
+                LocalFiles.delete(file, root)
+                touched.add(file)
+                deleted++
+            } catch (e: IOException) {
+                report.warn("$file couldn't be deleted: ${e.message}")
+            }
+        }
+        report.clutterDeleted += deleted
+        if (deleted > 0) log("Deleted $deleted leftover files under $root (desktop.ini, Thumbs.db and the like)")
         return files
     }
 

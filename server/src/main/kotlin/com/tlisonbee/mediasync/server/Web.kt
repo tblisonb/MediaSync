@@ -673,7 +673,7 @@ private val TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
 private fun time(millis: Long) = TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
 
-private fun bytes(n: Long): String = when {
+internal fun bytes(n: Long): String = when {
     n >= 1L shl 30 -> "%.1f GiB".format(n / (1L shl 30).toDouble())
     n >= 1L shl 20 -> "%.1f MiB".format(n / (1L shl 20).toDouble())
     n >= 1L shl 10 -> "%.0f KiB".format(n / (1L shl 10).toDouble())

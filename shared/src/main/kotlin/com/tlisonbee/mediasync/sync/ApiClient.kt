@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.sync
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.AssetHistory
 import com.tlisonbee.mediasync.api.ChangesResponse
+import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.HeadEvent
 import com.tlisonbee.mediasync.api.EditRequest
 import com.tlisonbee.mediasync.api.EditResponse
@@ -62,6 +63,13 @@ class ApiClient(serverUrl: String, private val token: String?) {
     fun pair(request: PairRequest): PairResponse = post("/pair", request, PairRequest.serializer(), PairResponse.serializer())
 
     fun policy(): TagPolicy = get("/policy", TagPolicy.serializer())
+
+    /** The cleanup the server asks of this device's folders; a server from before cleanup asks none. */
+    fun cleanup(): DeviceCleanup = try {
+        get("/cleanup", DeviceCleanup.serializer())
+    } catch (e: ApiException) {
+        if (e.status == 404) DeviceCleanup() else throw e
+    }
 
     fun putSubscription(subscription: Subscription): Subscription =
         send(request("/devices/me/subscription").put(json(Subscription.serializer(), subscription)).build(), Subscription.serializer())

@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.server
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.HeadEvent
 import com.tlisonbee.mediasync.api.Limits
+import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.DeviceKind
 import com.tlisonbee.mediasync.api.EditRequest
 import com.tlisonbee.mediasync.api.EditResponse
@@ -229,6 +230,7 @@ private fun Route.apiRoutes(repo: Repository) {
 
     // Clients preview the import and keep files tidy with the same rules the server applies.
     get("/policy") { call.respond(repo.policy) }
+    get("/cleanup") { call.respond(DeviceCleanup(deleteClutter = repo.settings.deleteClutter)) }
     get("/devices/me") { call.respond(call.device().toDto()) }
     get("/devices/{id}/subscription") { call.respond(call.ownDevice().subscription) }
     put("/devices/{id}/subscription") {

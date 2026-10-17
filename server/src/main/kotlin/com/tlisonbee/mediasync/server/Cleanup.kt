@@ -8,8 +8,9 @@ import java.text.Normalizer
 import java.util.Locale
 
 /**
- * Library cleanup: names spelled several ways, edits to many tracks at once, and files left behind
- * in folders their tracks moved out of. Every change is one revision, so it can be reverted.
+ * Library cleanup: names spelled several ways, edits to many tracks at once, files left behind in
+ * folders their tracks moved out of, and leftovers nothing uses (album art is in AlbumArt.kt).
+ * Every change is one revision, so it can be reverted.
  */
 
 /** One way a name is spelled, and how many tracks use it. */
@@ -145,14 +146,7 @@ fun Repository.strayPlan(): StrayPlan = db.read {
     }
     val moves = mutableListOf<StrayMove>()
     val unplaced = mutableListOf<String>()
-    val extras = db.query(
-        """
-        SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
-        WHERE h.deleted = 0 AND v.kind != ? AND h.path_key >= ? AND h.path_key < ? ORDER BY h.path_key
-        """.trimIndent(),
-        AssetKind.AUDIO.apiName, RepoPaths.MUSIC, "music0",
-    ) { it.toVersion() }
-    for (extra in extras) {
+    for (extra in musicExtras()) {
         val folders = RepoPaths.parent(extra.path).removePrefix(RepoPaths.MUSIC).split('/')
         val match = (folders.size downTo 2).firstNotNullOfOrNull { n -> now[folderKey(folders.take(n))]?.let { n to it } } ?: continue
         val (n, targets) = match
@@ -168,6 +162,46 @@ fun Repository.strayPlan(): StrayPlan = db.read {
 }
 
 private fun folderKey(folders: List<String>) = folders.joinToString("/").lowercase(Locale.ROOT)
+
+/** Every live file in the music folder that isn't a track: cover scans, booklets, .cue sheets, clutter. */
+internal fun Repository.musicExtras(): List<Version> = db.query(
+    """
+    SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
+    WHERE h.deleted = 0 AND v.kind != ? AND h.path_key >= ? AND h.path_key < ? ORDER BY h.path_key
+    """.trimIndent(),
+    AssetKind.AUDIO.apiName, RepoPaths.MUSIC, "music0",
+) { it.toVersion() }
+
+/**
+ * Formats in the music folder that nothing plays or shows: what Windows, old players and rippers
+ * leave behind. The Cleanup page ticks these; the rest (.cue, .log, .pdf, .m3u, .nfo) it lists unticked.
+ */
+val JUNK_FORMATS = setOf("ini", "db", "lnk", "url", "tmp", "bak")
+
+/** The files of one format in the music folder that aren't tracks or pictures, with their extension. */
+data class Leftovers(val format: String, val paths: List<String>) {
+    val junk get() = format in JUNK_FORMATS
+}
+
+/** Leftover files by format: junk first, then the most common. */
+fun Repository.leftovers(): List<Leftovers> = db.read {
+    musicExtras().filter { it.kind == AssetKind.OTHER }
+        .groupBy { formatOf(it) ?: "bin" }
+        .map { (format, files) -> Leftovers(format, files.map { "${it.path}.$format" }) }
+        .sortedWith(compareBy({ !it.junk }, { -it.paths.size }, { it.format }))
+}
+
+/** Deletes every file of [formats] in the music folder that isn't a track or a picture, as one revision. */
+fun Repository.deleteLeftovers(deviceId: String, formats: Set<String>): Long? {
+    if (formats.isEmpty()) badRequest("pick the kinds of files to delete")
+    return write {
+        val doomed = musicExtras().filter { it.kind == AssetKind.OTHER && (formatOf(it) ?: "bin") in formats }
+        val types = formats.sorted().joinToString(", ") { ".$it" }
+        val scope = RevisionScope(this, deviceId, "Deleted ${doomed.size} leftover ${if (doomed.size == 1) "file" else "files"} ($types)")
+        doomed.forEach { scope.write(it.copy(deleted = true)) }
+        scope.finish()
+    }
+}
 
 /** Carries out [strayPlan] as one revision. */
 fun Repository.tidyStrays(deviceId: String): Long? {

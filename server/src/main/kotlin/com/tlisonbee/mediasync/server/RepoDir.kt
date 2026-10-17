@@ -60,7 +60,11 @@ class RepoDir(val root: Path) {
 
 /** Server settings, editable in the web UI. */
 @Serializable
-data class Settings(val tagPolicy: TagPolicy = TagPolicy())
+data class Settings(
+    val tagPolicy: TagPolicy = TagPolicy(),
+    /** Devices delete the clutter they never sync (Cleanup > Leftover files on devices). */
+    val deleteClutter: Boolean = false,
+)
 
 @Serializable
 data class AdminSecrets(

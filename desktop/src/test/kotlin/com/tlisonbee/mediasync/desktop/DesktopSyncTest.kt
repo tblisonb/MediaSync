@@ -30,6 +30,33 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun clutterIsDeletedOnceTheServerAsks() = TestWorld().use { world ->
+        val desktop = world.importedDesktop()
+        val ini = desktop.file("Radiohead/OK Computer/desktop.ini").also { Files.writeString(it, "[.ShellClassInfo]") }
+        val apple = desktop.file("Radiohead/OK Computer/._01 Airbag.flac").also { Files.writeString(it, "resource fork") }
+        val nomedia = desktop.file("Radiohead/.nomedia").also { Files.writeString(it, "") }
+        val thumbs = Files.createDirectories(desktop.file("old/Windows")).resolve("Thumbs.db").also { Files.writeString(it, "thumbnails") }
+        assertEquals(0, desktop.sync().clutterDeleted)
+        assertTrue(Files.exists(ini), "not until the server asks")
+
+        world.repo.updateSettings(world.repo.settings.copy(deleteClutter = true))
+        // A check, which changes nothing else, deletes it too: it's never synced, so there's nothing to review.
+        desktop.engine.check()
+        assertFalse(Files.exists(ini))
+        assertFalse(Files.exists(apple))
+        assertFalse(Files.exists(desktop.file("old")), "a folder left empty goes too")
+        assertFalse(Files.exists(thumbs))
+        assertTrue(Files.exists(nomedia), "other dotfiles stay")
+        assertTrue(Files.exists(desktop.file("Radiohead/OK Computer/01 Airbag.flac")))
+
+        Files.writeString(ini, "[.ShellClassInfo]")
+        val report = desktop.sync()
+        assertEquals(1, report.clutterDeleted)
+        assertTrue("deleted 1 leftover file" in report.summary(), report.summary())
+        assertEquals(0, report.pushed)
+    }
+
+    @Test
     fun importRenamesByTagsAndASecondPcReceives() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         assertEquals(

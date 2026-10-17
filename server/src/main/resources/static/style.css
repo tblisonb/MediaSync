@@ -159,6 +159,17 @@ summary { cursor: pointer; color: var(--accent); }
 .variant .actions { align-items: center; }
 .variant .actions input[type=text] { flex: 1; min-width: 200px; width: auto; }
 
+.leftovers td:first-child { width: 2rem; }
+.leftovers input[type=checkbox] { width: auto; margin: 2px 0 0; }
+.leftovers details { margin: 0; }
+form.actions { align-items: center; }
+
+.art-options p { margin: 8px 0 6px; }
+.art-options .choices { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-bottom: 12px; }
+.art td { font-size: 0.9rem; }
+.art-file { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.art-file img { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); flex: none; }
+
 .album-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
 .tracks input[type=text] { padding: 6px 8px; }
 .tracks .f-discnumber, .tracks .f-tracknumber { width: 4.5rem; }

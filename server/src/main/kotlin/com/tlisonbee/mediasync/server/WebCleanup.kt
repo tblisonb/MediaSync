@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.server
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.tags.TagField
+import io.ktor.http.Parameters
 import io.ktor.server.html.respondHtml
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respondRedirect
@@ -20,7 +21,10 @@ import kotlinx.html.div
 import kotlinx.html.form
 import kotlinx.html.h1
 import kotlinx.html.h2
+import kotlinx.html.h3
 import kotlinx.html.hiddenInput
+import kotlinx.html.id
+import kotlinx.html.img
 import kotlinx.html.input
 import kotlinx.html.label
 import kotlinx.html.li
@@ -52,8 +56,13 @@ fun Route.cleanupRoutes(repo: Repository) {
     get("/cleanup") {
         val variants = io { repo.nameVariants() }
         val strays = io { repo.strayPlan() }
+        val leftovers = io { repo.leftovers() }
+        val options = artOptions(call.parameters)
+        val art = io { repo.artPlans(options) }
         val incomplete = io { repo.incompleteAlbums() }
-        call.respondHtml { cleanupPage(variants, strays, incomplete, call.parameters["done"]?.toLongOrNull()) }
+        call.respondHtml {
+            cleanupPage(variants, strays, leftovers, repo.settings.deleteClutter, options, art, incomplete, call.parameters["done"]?.toLongOrNull())
+        }
     }
     post("/cleanup/rename") {
         val form = call.receiveParameters()
@@ -64,6 +73,21 @@ fun Route.cleanupRoutes(repo: Repository) {
     }
     post("/cleanup/strays") {
         val rev = io { repo.tidyStrays(repo.webDeviceId()) }
+        call.respondRedirect(rev?.let { "/cleanup?done=$it" } ?: "/cleanup")
+    }
+    post("/cleanup/leftovers") {
+        val formats = call.receiveParameters().getAll("format").orEmpty().toSet()
+        val rev = io { repo.deleteLeftovers(repo.webDeviceId(), formats) }
+        call.respondRedirect(rev?.let { "/cleanup?done=$it" } ?: "/cleanup")
+    }
+    post("/cleanup/clutter") {
+        val on = call.receiveParameters()["on"] == "true"
+        io { repo.updateSettings(repo.settings.copy(deleteClutter = on)) }
+        call.respondRedirect("/cleanup#leftovers")
+    }
+    post("/cleanup/art") {
+        val options = artOptions(call.receiveParameters())
+        val rev = io { repo.tidyAlbumArt(repo.webDeviceId(), options) }
         call.respondRedirect(rev?.let { "/cleanup?done=$it" } ?: "/cleanup")
     }
 
@@ -114,7 +138,23 @@ private fun shown(values: List<String>?) = values.orEmpty().joinToString("; ")
 /** "A; B" is two values, as the pages show them. */
 private fun parse(text: String) = text.split(';').map { it.trim() }.filter { it.isNotEmpty() }
 
-private fun HTML.cleanupPage(variants: List<NameVariants>, strays: StrayPlan, incomplete: List<Pair<String, Int>>, done: Long?) = page("Cleanup") {
+/** The album art form's choices; the page opens with copies removed and names and formats left alone. */
+private fun artOptions(params: Parameters) = ArtOptions(
+    dedupe = params["art"] == null || params["dedupe"] != null,
+    coverName = params["name"]?.takeIf { it in COVER_NAMES },
+    png = params["png"] != null,
+)
+
+private fun HTML.cleanupPage(
+    variants: List<NameVariants>,
+    strays: StrayPlan,
+    leftovers: List<Leftovers>,
+    deleteClutter: Boolean,
+    artOptions: ArtOptions,
+    art: List<ArtPlan>,
+    incomplete: List<Pair<String, Int>>,
+    done: Long?,
+) = page("Cleanup") {
     h1 { +"Cleanup" }
     if (done != null) {
         p("notice") {
@@ -166,6 +206,9 @@ private fun HTML.cleanupPage(variants: List<NameVariants>, strays: StrayPlan, in
         }
     }
 
+    leftoverSection(leftovers, deleteClutter)
+    albumArtSection(artOptions, art)
+
     h2 { +"Albums with missing tags" }
     p("muted") { +"Tracks without an artist, album or title. Open an album to fill them in." }
     if (incomplete.isEmpty()) p("empty") { +"Every track has an artist, album and title." }
@@ -178,6 +221,165 @@ private fun HTML.cleanupPage(variants: List<NameVariants>, strays: StrayPlan, in
         }
     }
 }
+
+private fun FlowContent.leftoverSection(leftovers: List<Leftovers>, deleteClutter: Boolean) {
+    h2 { id = "leftovers"; +"Leftover files" }
+    p("muted") {
+        +"Files in the music folder that aren't tracks or pictures. The ticked kinds are ones nothing uses; "
+        +"the others may be worth keeping (a .cue sheet, a rip log, a booklet). Deleting is one revision, which History can revert."
+    }
+    if (leftovers.isEmpty()) {
+        p("empty") { +"Nothing but tracks and pictures." }
+    } else {
+        form(action = "/cleanup/leftovers", method = FormMethod.post) {
+            table("leftovers") {
+                thead { tr { th { }; th { +"Kind" }; th { +"Files" } } }
+                tbody {
+                    leftovers.forEach { kind ->
+                        tr {
+                            td {
+                                input(type = InputType.checkBox, name = "format") {
+                                    value = kind.format
+                                    checked = kind.junk
+                                    attributes["aria-label"] = ".${kind.format} files"
+                                }
+                            }
+                            td { +".${kind.format}" }
+                            td {
+                                details {
+                                    summary { +"${kind.paths.size} ${if (kind.paths.size == 1) "file" else "files"}" }
+                                    ul("list") { kind.paths.take(200).forEach { li { +it.removePrefix(RepoPaths.MUSIC) } } }
+                                    if (kind.paths.size > 200) p("muted") { +"And ${kind.paths.size - 200} more." }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div("actions") { button(classes = "primary") { +"Delete the ticked kinds" } }
+        }
+    }
+
+    h3 { +"On devices" }
+    p("muted") {
+        +"Devices never sync desktop.ini, Thumbs.db, Windows Media Player’s AlbumArtSmall.jpg and AlbumArt_{…}.jpg, "
+        +".DS_Store or macOS’s ._ files, so they aren’t in the library and the list above can’t show them. "
+        +"With this on, every device deletes the ones in its synced folders each time it looks for changes "
+        +"(their apps need updating first). Those files can’t be brought back, but nothing uses them."
+    }
+    form(action = "/cleanup/clutter", method = FormMethod.post, classes = "actions") {
+        hiddenInput(name = "on") { value = (!deleteClutter).toString() }
+        if (deleteClutter) {
+            span { +"Devices delete them. " }
+            button { +"Stop deleting them" }
+        } else {
+            button(classes = "primary") { +"Delete them on every device" }
+        }
+    }
+}
+
+private fun FlowContent.albumArtSection(options: ArtOptions, plans: List<ArtPlan>) {
+    h2 { id = "art"; +"Album art" }
+    p("muted") {
+        +"Pictures directly in each album’s folder, compared by what they show: copies of one picture under other names "
+        +"or at smaller sizes come down to the one with the most pixels. The front cover is the picture the tracks carry, "
+        +"else the one named folder, cover or front, else the only one."
+    }
+    form(action = "/cleanup/art", method = FormMethod.post, classes = "card art-options") {
+        hiddenInput(name = "art") { value = "1" }
+        label("check") {
+            input(type = InputType.checkBox, name = "dedupe") { checked = options.dedupe }
+            +"Keep only the best copy of each picture"
+        }
+        p { +"Name the front cover" }
+        div("choices") {
+            (listOf(null) + COVER_NAMES).forEach { name ->
+                label("pick") {
+                    input(type = InputType.radio, name = "name") {
+                        value = name.orEmpty()
+                        checked = options.coverName == name
+                    }
+                    +(name?.let { "$it.jpg or $it.png" } ?: "Leave the names")
+                }
+            }
+        }
+        label("check") {
+            input(type = InputType.checkBox, name = "png") { checked = options.png }
+            +"Convert JPEG pictures to PNG"
+        }
+        p("muted") { +"PNG is lossless, but a JPEG converted to it looks no better than before and takes several times the space." }
+        div("actions") {
+            button {
+                attributes["formaction"] = "/cleanup#art"
+                attributes["formmethod"] = "get"
+                +"Preview"
+            }
+            button(classes = "primary") { +"Apply" }
+        }
+    }
+
+    val changing = plans.filter { it.changes }
+    val deletes = changing.sumOf { it.deleted.size }
+    val renames = changing.sumOf { p -> p.kept.count { it.path != it.slot.version.path } }
+    val converts = changing.sumOf { p -> p.kept.count { it.png } }
+    if (changing.isEmpty()) {
+        p("empty") { +"With these choices, every album’s art is already tidy." }
+    } else {
+        p { +"${changing.size} ${if (changing.size == 1) "album changes" else "albums change"}: $deletes deleted, $renames renamed, $converts converted." }
+        details {
+            summary { +"Show them" }
+            table("art") {
+                thead { tr { th { +"Album" }; th { +"Keeps" }; th { +"Deletes" } } }
+                tbody {
+                    changing.take(300).forEach { plan ->
+                        tr {
+                            td { a(href = "/browse?path=" + enc(plan.album.folder)) { +plan.album.folder.removePrefix(RepoPaths.MUSIC) } }
+                            td {
+                                plan.kept.filter { it.changes || it.cover }.forEach { kept ->
+                                    div("art-file") {
+                                        artThumb(kept.best)
+                                        span {
+                                            +artLabel(kept.best)
+                                            val name = RepoPaths.name(kept.path) + "." + (if (kept.png) "png" else kept.best.format)
+                                            if (name != kept.best.name) +" → $name"
+                                            if (kept.cover) span("muted") { +" front cover" }
+                                        }
+                                    }
+                                }
+                            }
+                            td {
+                                // A best copy that hands its image to the file at the cover's name shows under
+                                // Keeps; the image that file had is what goes.
+                                plan.deleted.filter { d -> plan.kept.none { it.best === d } }.forEach { art ->
+                                    div("art-file") { artThumb(art); span { +artLabel(art) } }
+                                }
+                                plan.kept.filter { it.slot !== it.best }.forEach { kept ->
+                                    div("art-file") { artThumb(kept.slot); span { +artLabel(kept.slot); span("muted") { +" replaced" } } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (changing.size > 300) p("muted") { +"And ${changing.size - 300} more." }
+        }
+    }
+    val unclear = plans.filter { it.album.cover == null && it.album.groups.size > 1 }
+    if (options.coverName != null && unclear.isNotEmpty()) {
+        details {
+            summary { +"${unclear.size} albums whose front cover isn’t clear keep their pictures’ names" }
+            ul("list") { unclear.take(200).forEach { li { a(href = "/browse?path=" + enc(it.album.folder)) { +it.album.folder.removePrefix(RepoPaths.MUSIC) } } } }
+        }
+    }
+}
+
+private fun FlowContent.artThumb(art: Art) = img(src = "/web/blobs/${art.blob}", alt = "") {
+    attributes["loading"] = "lazy"
+    width = "48"
+    height = "48"
+}
+
+private fun artLabel(art: Art) = "${art.name} (${art.info?.let { "${it.width}×${it.height}" } ?: "unreadable"}, ${bytes(art.size)})"
 
 private fun FlowContent.variantForm(group: NameVariants) = form(action = "/cleanup/rename", method = FormMethod.post, classes = "card variant") {
     hiddenInput(name = "field") { value = group.field }

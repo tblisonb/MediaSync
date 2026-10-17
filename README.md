@@ -62,7 +62,13 @@ The web UI is at that address: status, library browser, history with revert and 
 the resolve queue, devices (pairing by QR code or code, subscriptions, revoking) and the tag policy.
 Cleanup finds artist and album names spelled several ways, moves cover scans and other leftover files
 to where their album's tracks are, and lists albums with missing tags; each album has a tag editor
-(Library > an album > Edit this album's tags). Every cleanup is one revision, revertible from History.
+(Library > an album > Edit this album's tags). It also deletes leftover files by kind (.ini, .db and
+the like are ticked; .cue, .log and the rest aren't), and tidies album art: pictures in an album's
+folder are compared by what they show, copies come down to the one with the most pixels, and the
+front cover can be named folder or cover everywhere and converted to PNG (Preview shows what changes).
+Pictures are read once, so the first visit to Cleanup takes a while on a big library (about 15 ms a
+picture). Every cleanup is one revision, revertible from History. Devices never sync desktop.ini,
+Thumbs.db, AlbumArt*.jpg, .DS_Store or ._ files; Cleanup > On devices has them delete their own.
 Get a pairing code for the smoke test from Devices > Pair a device.
 
 Backup: `deploy/backup/` backs the repository up nightly with restic to rest-server on a Raspberry Pi
@@ -100,6 +106,8 @@ How it behaves:
 - Music files are named by their tags; a file renamed by hand moves back. Tags outside the policy
   (ripper comments and the like) are removed from the files; the server keeps the originals.
 - Files whose tags MediaSync can't manage (Opus, WAV, cover.jpg, .cue) sync as plain files, where they are.
+  Windows and macOS clutter (desktop.ini, Thumbs.db, .DS_Store) isn't synced; once the web UI's Cleanup
+  page says so, each scan deletes it, even a check that otherwise changes nothing.
 - It asks before syncing (the default). Every hour (15 minutes to a day, a setting) it scans the
   folders and asks the server what changed, without changing anything. When something waits, a
   notification says so, with Review and Accept all. The review page (`mediasync-desktop review`, in

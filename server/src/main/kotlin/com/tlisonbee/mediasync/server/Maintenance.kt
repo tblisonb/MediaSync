@@ -108,7 +108,10 @@ object Maintenance {
                 if (media in usedMedia || createdAt >= graceCutoff) usedBlobs += blob else db.exec("DELETE FROM media WHERE media_hash = ?", media)
             }
             val doomed = db.query("SELECT hash FROM blob WHERE created_at < ?", graceCutoff) { it.getString(1) }.filter { it !in usedBlobs }
-            doomed.forEach { db.exec("DELETE FROM blob WHERE hash = ?", it) }
+            doomed.forEach {
+                db.exec("DELETE FROM blob WHERE hash = ?", it)
+                db.exec("DELETE FROM image_info WHERE blob = ?", it)
+            }
             Triple(droppedVersions, goneAssets.size, doomed)
         }
         // Files go only after the database no longer mentions them.

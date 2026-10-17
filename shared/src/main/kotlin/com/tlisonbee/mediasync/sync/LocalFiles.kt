@@ -47,6 +47,13 @@ object LocalFiles {
     /** Our own temporary files, the dotfiles other programs leave around, and Windows clutter. */
     fun skipped(name: String) = name.startsWith(".") || CLUTTER.matches(name)
 
+    /**
+     * What a device deletes when the server asks it to: the Windows clutter, and macOS's .DS_Store
+     * and "._" files. Never other dotfiles: .nomedia means something on Android, and our own
+     * temporary files start with a dot.
+     */
+    fun isClutter(name: String) = CLUTTER.matches(name) || name == ".DS_Store" || name.startsWith("._")
+
     fun stat(path: Path): Pair<Long, Long> {
         val size = Files.size(path)
         val mtime = Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).to(TimeUnit.MICROSECONDS)

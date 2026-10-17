@@ -92,6 +92,13 @@ class Db(path: Path) : AutoCloseable {
                 exec("PRAGMA user_version = 2")
             }
         }
+        if (version < 3) {
+            tx {
+                // What album art cleanup learns of a picture blob; width 0 means it couldn't be read.
+                script("CREATE TABLE image_info (blob TEXT PRIMARY KEY, width INTEGER NOT NULL, height INTEGER NOT NULL, thumb BLOB)")
+                exec("PRAGMA user_version = 3")
+            }
+        }
     }
 }
 

@@ -2,10 +2,12 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
+import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.RevertRequest
 import com.tlisonbee.mediasync.api.Tags
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -129,6 +131,39 @@ class CleanupTest {
         web.submitForm("/cleanup/strays", parameters { })
         assertEquals("music/IRON MAIDEN/Powerslave/Covers/front", path(front.assetId))
         assertTrue(repo.strayPlan().moves.isEmpty())
+    }
+
+    @Test
+    fun leftoverFilesAreDeletedByKindInOneRevision() = withServer {
+        val phone = pair("Phone").apply { subscribeMusic() }
+        phone.add(TestDevice.fakeFile("a.mp3"), track("Airbag", 1))
+        val desktopIni = phone.import("desktop.ini", AssetKind.OTHER, "/x/OK Computer/desktop.ini", path = "music/Radiohead/OK Computer/desktop")
+        val folderIni = phone.import("Folder.ini", AssetKind.OTHER, "/x/Folder.ini", path = "music/Radiohead/Folder")
+        val log = phone.import("rip.log", AssetKind.OTHER, "/x/OK Computer/rip.log", path = "music/Radiohead/OK Computer/rip")
+        val cover = phone.import("folder.jpg", AssetKind.IMAGE, "/x/OK Computer/folder.jpg", path = "music/Radiohead/OK Computer/folder")
+        assertEquals(listOf("ini" to 2, "log" to 1), repo.leftovers().map { it.format to it.paths.size }, "junk first")
+
+        val web = loggedIn()
+        val page = web.get("/cleanup").bodyAsText()
+        assertTrue("Radiohead/OK Computer/desktop.ini" in page)
+        web.submitForm("/cleanup/leftovers", parameters { append("format", "ini") })
+        assertTrue(repo.headVersion(desktopIni.assetId)!!.deleted)
+        assertTrue(repo.headVersion(folderIni.assetId)!!.deleted)
+        assertTrue(!repo.headVersion(log.assetId)!!.deleted)
+        assertTrue(!repo.headVersion(cover.assetId)!!.deleted)
+        assertEquals(listOf("log"), repo.leftovers().map { it.format })
+        assertEquals("Deleted 2 leftover files (.ini)", repo.revisions(null, 1).revisions.single().message)
+    }
+
+    @Test
+    fun devicesAreAskedToDeleteTheirClutter() = withServer {
+        val phone = pair("Phone")
+        assertEquals(DeviceCleanup(), phone.get("/cleanup").body<DeviceCleanup>())
+        val web = loggedIn()
+        assertTrue("Delete them on every device" in web.get("/cleanup").bodyAsText())
+        web.submitForm("/cleanup/clutter", parameters { append("on", "true") })
+        assertEquals(DeviceCleanup(deleteClutter = true), phone.get("/cleanup").body<DeviceCleanup>())
+        assertTrue("Stop deleting them" in web.get("/cleanup").bodyAsText())
     }
 
     @Test
