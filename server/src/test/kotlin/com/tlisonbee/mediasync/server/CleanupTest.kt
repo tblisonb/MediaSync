@@ -162,6 +162,30 @@ class CleanupTest {
     }
 
     @Test
+    fun aTrackThatCameInAsAPlainFileBecomesATrackWhenADeviceCanReadIt() = withServer {
+        val phone = pair("Phone").apply { subscribeMusic() }
+        // An ID3v1-only MP3, from before clients could read those.
+        val plain = phone.import("06.mp3", AssetKind.OTHER, "/x/06.mp3", path = "music/Molly Hatchet/Greatest Hits/06-Molly_Hatchet-Flirtin_With_Disaster-HHI")
+        val media = plain.renditions.single().mediaHash
+        phone.push(
+            PushChange(
+                plain.assetId, plain.rev, plain.path, AssetKind.AUDIO, media, media,
+                tags = track("Flirtin' With Disaster", 6, "Greatest Hits", "Molly Hatchet"),
+            ),
+        )
+        val head = repo.headVersion(plain.assetId)!!
+        assertEquals(AssetKind.AUDIO, head.kind)
+        assertEquals("music/Molly Hatchet/Greatest Hits/06 Flirtin' With Disaster", head.path)
+        assertEquals(listOf("Molly Hatchet"), head.tags["artist"])
+
+        // Other media stays what it was: a plain file isn't made a track by its name alone.
+        val notes = phone.import("notes.txt", AssetKind.OTHER, "/x/notes.txt", path = "music/Molly Hatchet/notes")
+        val other = TestDevice.fakeFile("other.mp3").also { phone.upload(it) }
+        phone.push(PushChange(notes.assetId, notes.rev, notes.path, AssetKind.AUDIO, other.mediaHash, notes.renditions.single().mediaHash, tags = track("X", 1)))
+        assertEquals(AssetKind.OTHER, repo.headVersion(notes.assetId)!!.kind)
+    }
+
+    @Test
     fun devicesAreAskedToDeleteTheirClutter() = withServer {
         val phone = pair("Phone")
         assertEquals(DeviceCleanup(), phone.get("/cleanup").body<DeviceCleanup>())

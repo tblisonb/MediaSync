@@ -7,6 +7,7 @@ import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.Tag
 import org.jaudiotagger.tag.TagOptionSingleton
 import org.jaudiotagger.tag.flac.FlacTag
+import org.jaudiotagger.tag.id3.ID3v1Tag
 import org.jaudiotagger.tag.images.ArtworkFactory
 import org.jaudiotagger.tag.reference.PictureTypes
 import org.jaudiotagger.tag.vorbiscomment.VorbisCommentFieldKey
@@ -71,6 +72,13 @@ object AudioTags {
             if (values.isEmpty()) null else name to values
         }.toMap()
         val cover = tag.artworkList.firstOrNull { it.pictureType == PictureTypes.DEFAULT_ID } ?: tag.firstArtwork
+        if (tag is ID3v1Tag) {
+            // An MP3 with only the old fixed-size tag. jaudiotagger can't list its fields, so they
+            // are the ones read above, plus the comment, the one thing a rewrite would lose.
+            val comment = tag.firstComment.takeIf { it.isNotBlank() }
+            val raw = fields + listOfNotNull(comment?.let { "COMMENT" to listOf(it) })
+            return Inspection(TagSet(fields, null), raw, duration, hasExtras = comment != null)
+        }
         val raw = LinkedHashMap<String, MutableList<String>>()
         for (field in tag.fields) {
             val value = if (field.isBinary) "(binary)" else field.toString()

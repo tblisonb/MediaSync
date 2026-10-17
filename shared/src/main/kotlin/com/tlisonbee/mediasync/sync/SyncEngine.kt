@@ -320,7 +320,10 @@ class SyncEngine(
                 // Where case doesn't count, a folder keeps the case it was made with: "IRON MAIDEN/x"
                 // may be on disk as "Iron Maiden/x". That is the same file, not a move.
                 val row = known[pathKey(folder, path)]?.let { if (it.path == path) it else it.copy(path = path).also { moved -> index.replace(it.path, moved) } }
-                if (row != null && !row.missing && row.size == size && row.mtime == mtime) continue
+                // A track this client couldn't read (an ID3v1-only MP3, before that was fixed) is
+                // read again each time, in case this version can.
+                val unread = row?.kind == AssetKind.OTHER && LocalFiles.isTagged(row.extension)
+                if (row != null && !row.missing && row.size == size && row.mtime == mtime && !unread) continue
                 if (clock() - mtime / 1000 < SETTLE_MS) {
                     report.unsettled = true // still being written; it's picked up next time
                     continue

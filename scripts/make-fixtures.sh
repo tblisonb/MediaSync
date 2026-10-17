@@ -30,5 +30,12 @@ ff -i "$work/tone.wav" "${with_cover[@]}" -c:a aac -b:a 128k "${tags[@]}" "$out/
 ff -i "$work/tone.wav" -c:a alac "${tags[@]}" "$out/tone-alac.m4a"
 ff -i "$work/tone.wav" -c:a libvorbis -q:a 3 "${tags[@]}" "$out/tone.ogg"
 ff -i "$work/tone.wav" -c:a libopus -b:a 96k "${tags[@]}" "$out/tone.opus"
+# Only the old fixed-size tag at the end, as rips from around 2000 often have. ffmpeg's own ID3v1
+# leaves most fields out, so the 128 bytes are written here: ID3v1.1, track 3, genre 17 (Rock).
+ff -i "$work/tone.wav" -c:a libmp3lame -b:a 128k -id3v2_version 0 -write_xing 0 "$out/tone-id3v1.mp3"
+printf 'TAG%-30s%-30s%-30s%-4s%-28s\0\x03\x11' "Fixture Tone" "Fixture Artist" "Fixture Album" 2026 "Ripped by SomeRipper 1.0" \
+    >> "$out/tone-id3v1.mp3"
+# Windows Media Audio, which the server can convert to MP3.
+ff -i "$work/tone.wav" -c:a wmav2 -b:a 128k "${tags[@]}" "$out/tone.wma"
 
 ls -l "$out"

@@ -174,10 +174,14 @@ private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, h
         return Applied(PushOutcome.UPDATED, head.assetId)
     }
 
-    val kind = head.kind
+    // A track an older client couldn't read, so it came in as a plain file, read now: the same
+    // media with tags. It becomes a track, and is filed by them.
+    val readable = head.kind == AssetKind.OTHER && change.kind == AssetKind.AUDIO && change.mediaHash?.let { it in head.renditions } == true
+    val kind = if (readable) AssetKind.AUDIO else head.kind
     // Named from its fields (music, movies, episodes): the device's path doesn't count.
     val music = RepoPaths.followsFields(kind, head.path, head.category)
     val ours = head.copy(
+        kind = kind,
         tags = policy.filter(kind, change.tags),
         pictures = policy.filterPictures(kind, change.pictures),
         path = if (music) head.path else RepoPaths.clean(change.path),
@@ -188,7 +192,7 @@ private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, h
     fun mergeable(v: Version) = v.fields() - Fields.MEDIA - Fields.DELETED - Fields.CATEGORY - (if (music) Fields.PATH else "")
     val merge = ThreeWayMerge.merge(base?.let(::mergeable), mergeable(ours), mergeable(head))
     var result = head.withFields(merge.merged + mapOf(Fields.PATH to listOf(head.path), Fields.MEDIA to head.renditions))
-        .copy(deleted = head.deleted, category = head.category)
+        .copy(deleted = head.deleted, category = head.category, kind = kind)
     if (!music) result = result.copy(path = merge.merged[Fields.PATH]?.firstOrNull() ?: head.path)
     if (merge.conflicts.isNotEmpty()) {
         val fields = merge.conflicts.toList()
