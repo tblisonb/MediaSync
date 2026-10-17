@@ -37,6 +37,9 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
 
     val policy: TagPolicy get() = settings.tagPolicy
 
+    /** The WMA conversion running or last run (Convert.kt): one at a time. */
+    internal val conversion = java.util.concurrent.atomic.AtomicReference<Conversion?>(null)
+
     private val _head = MutableStateFlow(db.read { head() })
 
     /** The newest revision, for GET /events. */

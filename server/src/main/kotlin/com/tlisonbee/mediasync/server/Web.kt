@@ -237,9 +237,11 @@ private fun ApplicationCall.publicUrl(): String {
 
 // ---- Pages ----
 
-internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, content: FlowContent.() -> Unit) {
+/** [refresh]: reload every so many seconds, for a page following a job. */
+internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int? = null, content: FlowContent.() -> Unit) {
     head {
         meta(charset = "utf-8")
+        refresh?.let { meta { httpEquiv = "refresh"; this.content = it.toString() } }
         meta(name = "viewport", content = "width=device-width, initial-scale=1")
         title("$pageTitle · MediaSync")
         link(rel = "stylesheet", href = "/static/style.css")

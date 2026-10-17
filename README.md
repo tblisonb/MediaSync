@@ -67,7 +67,8 @@ the like are ticked; .cue, .log and the rest aren't), and tidies album art: pict
 folder are compared by what they show, copies come down to the one with the most pixels, and the
 front cover can be named folder or cover everywhere and converted to PNG (Preview shows what changes).
 Pictures are read once, so the first visit to Cleanup takes a while on a big library (about 15 ms a
-picture). Every cleanup is one revision, revertible from History. Devices never sync desktop.ini,
+picture). WMA tracks can be converted to MP3 (needs ffmpeg on the server; LAME V0, with their tags
+and cover), and are filed by their tags from then on. Every cleanup is one revision, revertible from History. Devices never sync desktop.ini,
 Thumbs.db, AlbumArt*.jpg, .DS_Store or ._ files; Cleanup > On devices has them delete their own.
 Get a pairing code for the smoke test from Devices > Pair a device.
 

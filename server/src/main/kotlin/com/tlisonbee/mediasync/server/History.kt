@@ -89,7 +89,9 @@ private fun Repository.revertRevision(deviceId: String, rev: Long): RevertRespon
                 skipped += SkippedField(changed.assetId, field)
             }
         }
-        scope.write(head.withFields(target + keepPathIfMusic(head)))
+        // A plain file made a track (a WMA converted) goes back to being one, at the path it had.
+        val reverted = if (changed.kind != before.kind && head.kind == changed.kind) head.copy(kind = before.kind) else head
+        scope.write(reverted.withFields(target + keepPathIfMusic(reverted)))
     }
     scope.refreshAlbums()
     return RevertResponse(scope.finish(), skipped)
@@ -105,7 +107,8 @@ private fun Repository.restore(deviceId: String, assetId: String, toRev: Long, f
     for (field in fields ?: (oldFields.keys + target.keys).toList()) {
         oldFields[field]?.let { target[field] = it } ?: target.remove(field)
     }
-    scope.write(head.withFields(target + keepPathIfMusic(head)))
+    val restored = if (fields == null) head.copy(kind = old.kind) else head
+    scope.write(restored.withFields(target + keepPathIfMusic(restored)))
     scope.refreshAlbums()
     return RevertResponse(scope.finish(), emptyList())
 }

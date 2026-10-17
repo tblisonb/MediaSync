@@ -57,11 +57,12 @@ fun Route.cleanupRoutes(repo: Repository) {
         val variants = io { repo.nameVariants() }
         val strays = io { repo.strayPlan() }
         val leftovers = io { repo.leftovers() }
+        val wma = io { repo.wmaTracks() }.map { it.path + ".wma" }
         val options = artOptions(call.parameters)
         val art = io { repo.artPlans(options) }
         val incomplete = io { repo.incompleteAlbums() }
         call.respondHtml {
-            cleanupPage(variants, strays, leftovers, repo.settings.deleteClutter, options, art, incomplete, call.parameters["done"]?.toLongOrNull())
+            cleanupPage(variants, strays, leftovers, wma, repo.settings.deleteClutter, options, art, incomplete, call.parameters["done"]?.toLongOrNull())
         }
     }
     post("/cleanup/rename") {
@@ -84,6 +85,14 @@ fun Route.cleanupRoutes(repo: Repository) {
         val on = call.receiveParameters()["on"] == "true"
         io { repo.updateSettings(repo.settings.copy(deleteClutter = on)) }
         call.respondRedirect("/cleanup#leftovers")
+    }
+    post("/cleanup/wma") {
+        io { repo.startWmaConversion(repo.webDeviceId()) { work -> Thread(work, "wma-conversion").apply { isDaemon = true }.start() } }
+        call.respondRedirect("/cleanup/wma")
+    }
+    get("/cleanup/wma") {
+        val job = repo.conversion.get() ?: return@get call.respondRedirect("/cleanup")
+        call.respondHtml { conversionPage(job) }
     }
     post("/cleanup/art") {
         val options = artOptions(call.receiveParameters())
@@ -149,6 +158,7 @@ private fun HTML.cleanupPage(
     variants: List<NameVariants>,
     strays: StrayPlan,
     leftovers: List<Leftovers>,
+    wma: List<String>,
     deleteClutter: Boolean,
     artOptions: ArtOptions,
     art: List<ArtPlan>,
@@ -207,6 +217,7 @@ private fun HTML.cleanupPage(
     }
 
     leftoverSection(leftovers, deleteClutter)
+    wmaSection(wma)
     albumArtSection(artOptions, art)
 
     h2 { +"Albums with missing tags" }
@@ -276,6 +287,47 @@ private fun FlowContent.leftoverSection(leftovers: List<Leftovers>, deleteClutte
             button(classes = "primary") { +"Delete them on every device" }
         }
     }
+}
+
+private fun FlowContent.wmaSection(wma: List<String>) {
+    if (wma.isEmpty()) return
+    h2 { id = "wma"; +"WMA tracks" }
+    p("muted") {
+        +"Windows Media Audio, which MediaSync can’t tag and many players can’t play, so these sync as plain files under the names "
+        +"they came with. Converting makes each an MP3 (LAME’s best VBR setting) with the tags and cover it had, filed by its tags. "
+        +"One lossy format to another loses a little more, though rarely audibly at this setting. It takes a second or two a track, "
+        +"and is one revision: reverting it brings the WMA files back."
+    }
+    if (!Ffmpeg.available) p("error") { +"Converting needs ffmpeg on the server: sudo apt install ffmpeg" }
+    details {
+        summary { +"${wma.size} ${if (wma.size == 1) "track" else "tracks"}" }
+        ul("list") { wma.take(200).forEach { li { +it.removePrefix(RepoPaths.MUSIC) } } }
+        if (wma.size > 200) p("muted") { +"And ${wma.size - 200} more." }
+    }
+    if (Ffmpeg.available) {
+        form(action = "/cleanup/wma", method = FormMethod.post) {
+            button(classes = "primary") { +"Convert ${wma.size} to MP3" }
+        }
+    }
+}
+
+private fun HTML.conversionPage(job: Conversion) = page("Converting WMA tracks", refresh = if (job.finished) null else 3) {
+    h1 { +"Converting WMA tracks" }
+    val rev = job.rev
+    when {
+        !job.finished -> p { +"${job.done} of ${job.total} converted. This page follows along; you can leave it, too." }
+        rev != null -> p("notice") {
+            +"Saved as "
+            a(href = "/revisions/$rev") { +"r$rev" }
+            +". Devices get the MP3 files at their next sync, and drop the WMA ones."
+        }
+        else -> p { +"Nothing was converted." }
+    }
+    if (job.failed.isNotEmpty()) {
+        p("error") { +"${job.failed.size} couldn’t be converted (a DRM-protected file, say) and stay as they are:" }
+        ul("list") { job.failed.forEach { li { +it } } }
+    }
+    if (job.finished) p { a(href = "/cleanup") { +"Back to Cleanup" } }
 }
 
 private fun FlowContent.albumArtSection(options: ArtOptions, plans: List<ArtPlan>) {

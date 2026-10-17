@@ -36,6 +36,6 @@ ff -i "$work/tone.wav" -c:a libmp3lame -b:a 128k -id3v2_version 0 -write_xing 0 
 printf 'TAG%-30s%-30s%-30s%-4s%-28s\0\x03\x11' "Fixture Tone" "Fixture Artist" "Fixture Album" 2026 "Ripped by SomeRipper 1.0" \
     >> "$out/tone-id3v1.mp3"
 # Windows Media Audio, which the server can convert to MP3.
-ff -i "$work/tone.wav" -c:a wmav2 -b:a 128k "${tags[@]}" "$out/tone.wma"
+ff -i "$work/tone.wav" "${with_cover[@]}" -c:a wmav2 -b:a 128k "${tags[@]}" "$out/tone.wma"
 
 ls -l "$out"
