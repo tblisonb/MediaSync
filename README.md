@@ -170,3 +170,17 @@ on the phone (Videos > Choose videos…).
 mediasync-desktop add-folder videos/ /mnt/other/media/videos            # everything
 mediasync-desktop add-folder videos/ ~/Videos --pick                     # only what's picked
 ```
+
+## Releases
+
+Each part is versioned and released on its own, from master on GitHub, as a tag and a GitHub release
+with its build attached: `app-v0.3.3` (the APK), `desktop-v0.1.0` (the self-contained tarball) and
+`server-v0.1.0` (the server's tarball). Bump the version in that part's `build.gradle.kts` (for the
+app, `versionCode` too), push, then:
+
+```sh
+scripts/release.sh app        # or desktop, or server
+```
+
+It runs that part's tests first and refuses a version that's already tagged. The APK is signed with
+this PC's debug key, like `./gradlew installDebug`, so it installs over the app already on the phone.

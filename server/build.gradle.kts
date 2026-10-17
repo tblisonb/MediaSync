@@ -4,6 +4,8 @@ plugins {
     application
 }
 
+version = "0.1.0"
+
 // Java 17 bytecode like :shared, so the desktop client's tests can run this server in-process.
 java {
     sourceCompatibility = JavaVersion.VERSION_17
