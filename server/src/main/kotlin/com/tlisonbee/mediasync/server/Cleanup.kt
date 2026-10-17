@@ -178,16 +178,29 @@ internal fun Repository.musicExtras(): List<Version> = db.query(
  */
 val JUNK_FORMATS = setOf("ini", "db", "lnk", "url", "tmp", "bak")
 
+/**
+ * Tracks, videos and pictures, even when they sync as plain files: WMA, Opus and WAV have no tags
+ * MediaSync manages, and an MP3 it can't parse is kept as it is, but they're still music.
+ */
+val MEDIA_FORMATS = setOf(
+    "mp3", "mp2", "flac", "m4a", "m4b", "aac", "alac", "ogg", "oga", "opus", "wav", "aif", "aiff", "wma",
+    "ape", "wv", "mpc", "tta", "dsf", "dff", "ac3", "dts", "mka", "amr", "mid", "midi",
+    "mp4", "m4v", "mov", "mkv", "avi", "webm", "wmv", "mpg", "mpeg",
+    "jpg", "png", "gif", "webp", "heic", "bmp", "tif", "tiff",
+)
+
 /** The files of one format in the music folder that aren't tracks or pictures, with their extension. */
 data class Leftovers(val format: String, val paths: List<String>) {
     val junk get() = format in JUNK_FORMATS
 }
 
+/** Files that aren't tracks, videos or pictures, by format. */
+private fun Repository.leftoverFiles(): Map<String, List<Version>> =
+    musicExtras().filter { it.kind == AssetKind.OTHER }.groupBy { formatOf(it) ?: "bin" }.filterKeys { it !in MEDIA_FORMATS }
+
 /** Leftover files by format: junk first, then the most common. */
 fun Repository.leftovers(): List<Leftovers> = db.read {
-    musicExtras().filter { it.kind == AssetKind.OTHER }
-        .groupBy { formatOf(it) ?: "bin" }
-        .map { (format, files) -> Leftovers(format, files.map { "${it.path}.$format" }) }
+    leftoverFiles().map { (format, files) -> Leftovers(format, files.map { "${it.path}.$format" }) }
         .sortedWith(compareBy({ !it.junk }, { -it.paths.size }, { it.format }))
 }
 
@@ -195,8 +208,9 @@ fun Repository.leftovers(): List<Leftovers> = db.read {
 fun Repository.deleteLeftovers(deviceId: String, formats: Set<String>): Long? {
     if (formats.isEmpty()) badRequest("pick the kinds of files to delete")
     return write {
-        val doomed = musicExtras().filter { it.kind == AssetKind.OTHER && (formatOf(it) ?: "bin") in formats }
-        val types = formats.sorted().joinToString(", ") { ".$it" }
+        val picked = leftoverFiles().filterKeys { it in formats }
+        val doomed = picked.values.flatten()
+        val types = picked.keys.sorted().joinToString(", ") { ".$it" }
         val scope = RevisionScope(this, deviceId, "Deleted ${doomed.size} leftover ${if (doomed.size == 1) "file" else "files"} ($types)")
         doomed.forEach { scope.write(it.copy(deleted = true)) }
         scope.finish()
