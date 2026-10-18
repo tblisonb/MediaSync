@@ -727,6 +727,12 @@ class SyncEngine(
             index.put(row.synced(asset).copy(ignored = "same audio as ${others.first().path}"))
             return
         }
+        // A track this device reads but the server still holds as a plain file (a server from
+        // before it could make one a track): not synced yet, so it's offered again next time.
+        if (row.kind == AssetKind.AUDIO && asset.kind == AssetKind.OTHER && !asset.deleted) {
+            index.put(row.copy(assetId = asset.assetId, base = asset))
+            return
+        }
         if (folder.mode == SyncMode.SEND_ONLY) {
             index.put(row.synced(asset))
             return
