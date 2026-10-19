@@ -7,6 +7,8 @@ import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.HeadEvent
 import com.tlisonbee.mediasync.api.EditRequest
 import com.tlisonbee.mediasync.api.EditResponse
+import com.tlisonbee.mediasync.api.FolderPickItem
+import com.tlisonbee.mediasync.api.FolderPickRequest
 import com.tlisonbee.mediasync.api.IssueDto
 import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.api.PickRequest
@@ -113,6 +115,13 @@ class ApiClient(serverUrl: String, private val token: String?) {
 
     fun setPicks(request: PickRequest): PickResponse =
         send(request("/picks").put(json(PickRequest.serializer(), request)).build(), PickResponse.serializer())
+
+    /** The platforms and games under [prefix], and which this device keeps whole. */
+    fun folderPicks(prefix: String = "games/"): List<FolderPickItem> =
+        get("/picks/folders?prefix=" + java.net.URLEncoder.encode(prefix, Charsets.UTF_8), ListSerializer(FolderPickItem.serializer()))
+
+    fun setFolderPicks(request: FolderPickRequest): PickResponse =
+        send(request("/picks/folders").put(json(FolderPickRequest.serializer(), request)).build(), PickResponse.serializer())
 
     /**
      * Uploads a file in chunks, resuming where an earlier attempt stopped (the server remembers
