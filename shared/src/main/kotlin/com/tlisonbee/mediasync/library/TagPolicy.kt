@@ -32,12 +32,18 @@ data class TagPolicy(
         return pictures.filter { it.type in allowed }.distinctBy { it.type }.sortedBy { allowed.indexOf(it.type) }
     }
 
-    /** A kind the saved settings don't mention (videos, in settings from before them) gets the default fields. */
-    fun allowed(kind: AssetKind): List<String> = fields[kind] ?: DEFAULT_FIELDS[kind].orEmpty()
+    /**
+     * A kind the saved settings don't mention (videos, in settings from before them) gets the
+     * default fields; MediaSync's own fields are always kept.
+     */
+    fun allowed(kind: AssetKind): List<String> = ((fields[kind] ?: DEFAULT_FIELDS[kind].orEmpty()) + OWN_FIELDS[kind].orEmpty()).distinct()
 
     companion object {
         const val FRONT_COVER = "front"
         val DEFAULT_FIELDS = mapOf(AssetKind.AUDIO to TagField.MUSIC, AssetKind.VIDEO to TagField.VIDEO)
+
+        /** Fields MediaSync keeps itself and never writes into the files: a photo's (or a clip's) date. */
+        val OWN_FIELDS = mapOf(AssetKind.IMAGE to listOf(TagField.DATE), AssetKind.VIDEO to listOf(TagField.DATE))
 
         fun cleanValue(value: String): String =
             Normalizer.normalize(value.trim(), Normalizer.Form.NFC).take(Limits.MAX_TAG_VALUE)

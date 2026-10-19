@@ -76,13 +76,19 @@ data class UiState(
     val activity: SyncActivity? = null,
     /** The review groups whose button was pressed, with what's happening to them ("Accepting"). */
     val applying: Map<String, String> = emptyMap(),
+    /** Why turning the photos folder on or off failed. */
+    val photosError: String? = null,
 ) {
     val videosEnabled get() = config?.folders?.any { it.prefix == VIDEOS } == true
+    val photosEnabled get() = config?.folders?.any { it.prefix == PHOTOS } == true
     val busy get() = activity != null
 }
 
 /** Where this phone keeps the videos picked for it. */
 const val VIDEOS = "videos/"
+
+/** The library's photos, all of them, filed by year. */
+const val PHOTOS = RepoPaths.PHOTOS
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application.app
@@ -97,17 +103,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Set when a button queues work, until WorkManager reports it (a moment later). */
     private val requested = MutableStateFlow<SyncActivity?>(null)
     private val applying = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val photosError = MutableStateFlow<String?>(null)
 
     private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
-    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>)
+    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>, val photosError: String?)
 
     val state: StateFlow<UiState> = combine(
         app.settings.changes,
         SyncState.progress,
         allFilesAccess,
         combine(pairing, preview, files, review, videos, ::Extra),
-        combine(working, requested, applying) { now, asked, groups -> Work(now ?: asked, groups) },
+        combine(working, requested, applying, photosError) { now, asked, groups, photos -> Work(now ?: asked, groups, photos) },
     ) { _, progress, access, (pair, prev, count, rev, vids), work ->
         val settings = app.settings
         val screen = when {
@@ -117,7 +124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> Screen.STATUS
         }
         val activity = work.activity ?: progress?.let { SyncActivity(SyncActivity.Kind.SYNC, started = true) }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying)
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.photosError)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
     init {
@@ -190,21 +197,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Adds or removes the videos folder: only the videos picked for this phone, in Movies/MediaSync. */
-    fun setVideos(enabled: Boolean) {
+    fun setVideos(enabled: Boolean) = setFolder(VIDEOS, Environment.DIRECTORY_MOVIES, pick = true, enabled) {
+        videos.value = videos.value.copy(error = it)
+    }
+
+    /** Adds or removes the photos folder: every photo in the library, filed by year, in Pictures/MediaSync. */
+    fun setPhotos(enabled: Boolean) = setFolder(PHOTOS, Environment.DIRECTORY_PICTURES, pick = false, enabled) { photosError.value = it }
+
+    /** A MediaSync folder inside one of the phone's public folders (Movies, Pictures), apart from what other apps put there. */
+    private fun setFolder(prefix: String, publicFolder: String, pick: Boolean, enabled: Boolean, onError: (String?) -> Unit) {
         val config = app.settings.config ?: return
         val token = app.settings.token ?: return
+        onError(null)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val folder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).resolve("MediaSync")
-                val folders = config.folders.filter { it.prefix != VIDEOS } +
-                    if (enabled) listOf(FolderConfig(VIDEOS, folder.path, SyncMode.TWO_WAY, pick = true)) else emptyList()
+                val folder = Environment.getExternalStoragePublicDirectory(publicFolder).resolve("MediaSync")
+                val folders = config.folders.filter { it.prefix != prefix } +
+                    if (enabled) listOf(FolderConfig(prefix, folder.path, SyncMode.TWO_WAY, pick = pick)) else emptyList()
                 if (enabled) folder.mkdirs()
                 val updated = config.copy(folders = folders)
                 ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
                 app.settings.updateConfig(updated)
+                request(SyncActivity.Kind.CHECK)
                 SyncScheduler.checkNow(app, replace = true)
             } catch (e: Exception) {
-                videos.value = videos.value.copy(error = e.message ?: e.javaClass.simpleName)
+                onError(e.message ?: e.javaClass.simpleName)
             }
         }
     }

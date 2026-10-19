@@ -4,7 +4,7 @@ plugins {
     application
 }
 
-version = "0.1.1"
+version = "0.2.0"
 
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
 tasks.jar { archiveVersion = "" }
@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.sqlite.jdbc)
     implementation(libs.logback.classic)
     implementation(libs.zxing.core)
+    implementation(libs.metadata.extractor)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.ktor.server.test.host)

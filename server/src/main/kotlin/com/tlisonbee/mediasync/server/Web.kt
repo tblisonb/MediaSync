@@ -196,6 +196,7 @@ fun Route.webRoutes(repo: Repository) {
 
         cleanupRoutes(repo)
         videoRoutes(repo)
+        photoRoutes(repo)
 
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
         post("/settings") {
@@ -217,6 +218,15 @@ fun Route.webRoutes(repo: Repository) {
             val blob = io { repo.blob(hash) }?.takeIf { it.mime.startsWith("image/") } ?: return@get call.respond(HttpStatusCode.NotFound)
             call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
             call.respond(LocalPathContent(repo.dir.blob(hash), ContentType.parse(blob.mime)))
+        }
+
+        // A photo's thumbnail, made the first time it's shown.
+        get("/web/thumbs/{hash}") {
+            val hash = call.parameters["hash"]!!
+            if (!BlobStore.isHash(hash)) return@get call.respond(HttpStatusCode.NotFound)
+            val thumb = io { repo.thumbnail(hash) } ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+            call.respond(LocalPathContent(thumb, ContentType.Image.JPEG))
         }
     }
 }
@@ -322,7 +332,9 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
     if (listing.assets.any { it.kind == AssetKind.AUDIO && RepoPaths.isMusic(it.path) }) {
         p { a(href = "/album?path=" + enc(folder)) { +"Edit this album's tags" } }
     }
-    if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
+    if (listing.assets.any { RepoPaths.isPhoto(it.kind, it.path) }) {
+        p { a(href = "/photos?path=" + enc(folder)) { +"Date these photos" } }
+    } else if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
         p { a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" } }
     }
     artists.forEach { renameArtistForm(it) }

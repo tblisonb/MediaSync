@@ -36,7 +36,8 @@ class FileState(
 object LocalFiles {
     /** Formats whose tags MediaSync manages. Others (Opus, WAV, cover.jpg, .cue) sync as plain files. */
     private val TAGGED = setOf("mp3", "flac", "m4a", "ogg", "oga")
-    private val IMAGES = setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tif", "tiff")
+    // Camera raw formats too, so a raw file is filed beside the JPEG taken with it.
+    private val IMAGES = setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "bmp", "tif", "tiff", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2", "raf")
     private val VIDEOS = setOf("mp4", "m4v", "mov", "mkv", "avi", "webm")
 
     fun isTagged(format: String) = format.lowercase() in TAGGED

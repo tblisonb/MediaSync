@@ -120,6 +120,7 @@ object Maintenance {
             val file = repo.dir.blob(hash)
             if (Files.exists(file)) freed += Files.size(file)
             Files.deleteIfExists(file)
+            Files.deleteIfExists(repo.dir.thumb(hash))
         }
         println("Pruned $versions old versions and $assets deleted assets; removed ${blobs.size} blobs (${freed / (1 shl 20)} MiB).")
         return 0
