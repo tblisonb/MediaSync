@@ -188,7 +188,9 @@ private fun Route.apiRoutes(repo: Repository) {
 
     post("/push") {
         val request = call.receive<PushRequest>()
-        call.respond(io { repo.push(call.device(), request) })
+        val response = io { repo.push(call.device(), request) }
+        io { repo.convertArrivals(request) }
+        call.respond(response)
     }
     // Field edits (a tag editor, a kind) as one revision; a device edits only what it may send.
     post("/edits") {

@@ -199,7 +199,10 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
   - Lists albums with missing tags.
   - Deletes leftover files (`desktop.ini`, `Thumbs.db`, …).
   - Tidies album art.
-  - Converts WMA to MP3 (needs `ffmpeg` on the server).
+  - Converts tracks to MP3 (WMA, AAC `.m4a`, FLAC, Ogg…), so every device has one format. It can
+    also keep converting tracks in those formats as they're added. Tracks keep their tags, cover
+    and place, and devices swap their copies for the MP3s at their next sync. Needs `ffmpeg` on
+    the server.
   - Each cleanup is one revision, so it can be reverted.
 - **Devices**: pair and revoke devices, and see which folders each one syncs.
 - **Settings**: the tag policy.
