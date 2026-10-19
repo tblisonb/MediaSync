@@ -38,6 +38,15 @@ class GameTest {
     private val ff7Bin = ByteArray(300_000) { (it * 7).toByte() }
     private val ff7Cue = "FILE \"Final Fantasy VII (USA) (Disc 1).bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n".toByteArray()
 
+    // Three Crash Bandicoots as one PS1 folder had them: the first and third good dumps (the first
+    // named the Open PS2 Loader way), the second packed with ECM, so only its serial shows.
+    private val crash1 = ByteArray(200_000) { (it * 11).toByte() }
+    private val crash3 = ByteArray(200_000) { (it * 17 + 3).toByte() }
+    private val crash2 = "ECM".toByteArray() + ByteArray(1_200_000) { if (it % 4096 == 0) 0x55 else 0 }
+        .also { "BOOT = cdrom:\\SCUS_941.54;1\r\nTCB = 4\r\n".toByteArray().copyInto(it, 47_085) }
+
+    private fun cue(bin: String) = "FILE \"$bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n".toByteArray()
+
     // Chrono Trigger with a copier's 512-byte header, which the No-Intro list leaves out.
     private val chronoRom = ByteArray(4096) { (it * 13 + 1).toByte() }
     private val chronoSmc = ByteArray(512) + chronoRom
@@ -56,7 +65,12 @@ class GameTest {
             ))
         }
         val ps1 = work.resolve("ps1.dat").also {
-            Files.writeString(it, dat("""game ( name "Final Fantasy VII (USA) (Disc 1)" region "USA" serial "SCUS-94163" rom ( name "Final Fantasy VII (USA) (Disc 1).bin" size ${ff7Bin.size} sha1 ${sha1(ff7Bin)} ) )"""))
+            Files.writeString(it, dat(
+                """game ( name "Final Fantasy VII (USA) (Disc 1)" region "USA" serial "SCUS-94163" rom ( name "Final Fantasy VII (USA) (Disc 1).bin" size ${ff7Bin.size} sha1 ${sha1(ff7Bin)} ) )""",
+                """game ( name "Crash Bandicoot (USA)" region "USA" serial "SCUS-94900" rom ( name "Crash Bandicoot (USA).bin" size ${crash1.size} sha1 ${sha1(crash1)} serial "SCUS-94900" ) )""",
+                """game ( name "Crash Bandicoot 2 - Cortex Strikes Back (USA)" region "USA" serial "SCUS-94154" rom ( name "Crash Bandicoot 2 - Cortex Strikes Back (USA).bin" size 192814608 sha1 3d37fe4288a83b01f1a0edbf78e76e0fede6bc22 serial "SCUS-94154" ) )""",
+                """game ( name "Crash Bandicoot - Warped (USA)" region "USA" serial "SCUS-94244" rom ( name "Crash Bandicoot - Warped (USA).bin" size ${crash3.size} sha1 ${sha1(crash3)} serial "SCUS-94244" ) )""",
+            ))
         }
         val snes = work.resolve("snes.dat").also {
             Files.writeString(it, dat("""game ( name "Chrono Trigger (USA)" region "USA" rom ( name "Chrono Trigger (USA).sfc" size ${chronoRom.size} sha1 ${sha1(chronoRom)} ) )"""))
@@ -286,9 +300,40 @@ class GameTest {
             val ps1 = dir.resolve("c.bin").also { Files.write(it, iso("BOOT = cdrom:\\SCUS_941.63;1", raw = true)) }
             assertEquals(IsoSerial.Boot("SCUS_941.63", ps2 = false), IsoSerial.read(ps1))
             assertNull(IsoSerial.read(dir.resolve("d.bin").also { Files.write(it, ByteArray(100_000)) }))
+            val ecm = dir.resolve("e.bin").also { Files.write(it, crash2) }
+            assertEquals(IsoSerial.Boot("SCUS_941.54", ps2 = false), IsoSerial.read(ecm), "an ECM image's SYSTEM.CNF is still readable")
         } finally {
             dir.toFile().deleteRecursively()
         }
+        assertTrue(sameName("Game (USA) (Track 2)", "Game (USA)"))
+        assertTrue(sameName("crash bandicoot 3", "Crash Bandicoot 3"))
+        assertTrue(!sameName("Crash Bandicoot 2 - Cortex Strikes Back", "Crash Bandicoot"), "a longer title isn't the same game")
+        assertTrue(!sameName("Crash Bandicoot 3", "Crash Bandicoot - Warped (USA)"))
+    }
+
+    @Test
+    fun eachCueJoinsItsOwnDisc() = withServer {
+        installDatabases()
+        val crash2Name = "Crash Bandicoot 2 - Cortex Strikes Back [NTSC-U] [SCUS-94154]"
+        val (cue1, bin1, cue2, bin2, cue3) = pc().import(
+            "PS1/SCUS_949.00.Crash Bandicoot.cue" to cue("SCUS_949.00.Crash Bandicoot.bin"),
+            "PS1/SCUS_949.00.Crash Bandicoot.bin" to crash1,
+            "PS1/$crash2Name.cue" to cue("$crash2Name.BIN"),
+            "PS1/$crash2Name.bin" to crash2,
+            "PS1/Crash Bandicoot 3.cue" to cue("Crash Bandicoot 3.bin"),
+        )
+        val (bin3) = pc().import("PS1/Crash Bandicoot 3.bin" to crash3)
+        assertEquals(How.SERIAL, repo.gameIdents()[bin2.assetId], "the ECM image, by its serial")
+        val folder = { a: AssetDto -> RepoPathsName.folder(now(a).path) }
+        assertEquals("games/PlayStation/Crash Bandicoot (USA)", folder(bin1))
+        assertEquals(folder(bin1), folder(cue1), "a .cue named the Open PS2 Loader way, with its .bin")
+        assertEquals("games/PlayStation/Crash Bandicoot 2 - Cortex Strikes Back (USA)", folder(bin2))
+        assertEquals(folder(bin2), folder(cue2), "not with Crash Bandicoot, whose title begins its name")
+        // The third disc came in a later push; its .cue, filed before by name, joins it once found again.
+        repo.startIdentifying(repo.webDeviceId(), listOf(cue3.assetId))
+        assertEquals("games/PlayStation/Crash Bandicoot - Warped (USA)", folder(bin3))
+        assertEquals(folder(bin3), folder(cue3))
+        assertEquals(listOf("Crash Bandicoot - Warped"), now(cue3).tags["title"])
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, Charsets.UTF_8)

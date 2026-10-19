@@ -235,7 +235,9 @@ internal fun Repository.identifyGames(deviceId: String, files: List<Version>, jo
             for ((id, f) in found) {
                 val before = files.first { it.assetId == id }
                 val head = headVersion(id)?.takeIf { it.rev == before.rev && !it.deleted } ?: continue
-                scope.write(head.copy(category = f.platform ?: head.category, tags = policy.filter(AssetKind.GAME, head.tags + f.tags)))
+                // What's found replaces every detail of the game the file was taken for before.
+                val kept = if (f.tags.isEmpty()) head.tags else head.tags - TagField.GAME.toSet()
+                scope.write(head.copy(category = f.platform ?: head.category, tags = policy.filter(AssetKind.GAME, kept + f.tags)))
                 db.exec("INSERT OR REPLACE INTO game_ident (asset_id, how, at) VALUES (?, ?, ?)", id, f.how, clock())
             }
             scope.finish()
@@ -278,17 +280,29 @@ private fun gameTags(title: String, region: String?, disc: String?, serial: Stri
     meta?.players?.let { put(TagField.PLAYERS, listOf(it)) }
 }
 
+/** Files that only describe or complete a disc image, and are named after it. */
+private val COMPANIONS = setOf("cue", "m3u", "gdi", "ccd", "sub", "mds", "toc")
+
+/**
+ * Whether two names (without extension) are the same file's: equal, or one is the other with a
+ * qualifier added ("Game (USA)" and "Game (USA) (Track 2)"). Never a mere prefix: "Crash Bandicoot
+ * 2" isn't "Crash Bandicoot".
+ */
+internal fun sameName(a: String, b: String) = a.equals(b, ignoreCase = true) ||
+    a.startsWith("$b (", ignoreCase = true) || b.startsWith("$a (", ignoreCase = true)
+
 /**
  * A file with no match of its own takes the game of a matched file beside it (in the same folder,
  * or imported from the same one) that it's named after: "Game (USA).cue" and "Game (USA) (Track
- * 2).bin" go with "Game (USA) (Track 1).bin". Failing that, with the only game there.
+ * 2).bin" go with "Game (USA) (Track 1).bin", "Crash 3.cue" with "Crash 3.bin". A .cue or other
+ * companion named after nothing there joins the only game there, if there's just one.
  */
 private fun Repository.fromSiblings(found: MutableMap<String, Found>, files: List<Version>, job: GameJob) {
     val idents = gameIdents()
     for (file in files) {
         val own = found[file.assetId] ?: continue
         if (own.how != How.UNKNOWN) continue
-        val stem = (originalName(file.assetId) ?: RepoPaths.name(file.path))
+        val stem = originalName(file.assetId) ?: RepoPaths.name(file.path).substringBeforeLast('.')
         val siblings = (db.read { liveIn(RepoPaths.parent(file.path)) } + importedBeside(file.assetId).mapNotNull(::headVersion))
             .filter { it.assetId != file.assetId && it.kind == AssetKind.GAME && !it.deleted }
             .distinctBy { it.assetId }
@@ -300,11 +314,12 @@ private fun Repository.fromSiblings(found: MutableMap<String, Found>, files: Lis
                     else -> null
                 }
             }
-        val named = siblings.filter { (_, f) ->
-            val release = f.release ?: return@filter false
-            stem.startsWith(release) || release.startsWith(stem) || stem.startsWith(GameNames.guess(release).title)
-        }.maxByOrNull { it.second.release!!.length }
-        val only = siblings.map { it.second }.distinctBy { it.platform to it.tags[TagField.TITLE] }.singleOrNull()
+        val named = siblings.filter { (s, f) ->
+            val sStem = originalName(s.assetId) ?: RepoPaths.name(s.path).substringBeforeLast('.')
+            sameName(stem, sStem) || f.release?.let { sameName(stem, it) } == true
+        }.maxByOrNull { it.second.release?.length ?: 0 }
+        val companion = formatOf(file)?.lowercase() in COMPANIONS
+        val only = if (companion) siblings.map { it.second }.distinctBy { it.platform to it.tags[TagField.TITLE] }.singleOrNull() else null
         val from = named?.second ?: only ?: continue
         // The game's details, but not what's particular to the other file.
         found[file.assetId] = Found(How.SIBLING, from.platform, from.tags - TagField.SERIAL - TagField.RELEASE)

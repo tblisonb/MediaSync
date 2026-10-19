@@ -18,13 +18,38 @@ object IsoSerial {
     private class Layout(val sectorSize: Int, val dataOffset: Int)
 
     private val LAYOUTS = listOf(Layout(2048, 0), Layout(2352, 24), Layout(2352, 16))
-    private val BOOT = Regex("""(?im)^\s*(BOOT2?)\s*=\s*cdrom0?:\\?([^;\s]+)""")
+    // Not anchored to a line: inside a raw image, the file's first line follows other bytes.
+    private val BOOT = Regex("""(?i)\b(BOOT2?)\s*=\s*cdrom0?:\\?([^;\s]+)""")
 
     fun read(image: Path): Boot? = try {
-        FileChannel.open(image, READ).use { ch -> LAYOUTS.firstNotNullOfOrNull { read(ch, it) } }
+        FileChannel.open(image, READ).use { ch -> LAYOUTS.firstNotNullOfOrNull { read(ch, it) } ?: scan(ch) }
     } catch (e: java.io.IOException) {
         null
     }
+
+    /** How far into an image [scan] looks: SYSTEM.CNF is among a disc's first files. */
+    private const val SCAN_BYTES = 8 shl 20
+
+    /**
+     * An image whose filesystem can't be read as it stands, such as one packed with ECM (Error
+     * Code Modeler), which drops each sector's error correction but leaves its data as it was:
+     * SYSTEM.CNF's BOOT line is still there to be found.
+     */
+    private fun scan(ch: FileChannel): Boot? {
+        val buf = ByteBuffer.allocate(minOf(SCAN_BYTES.toLong(), ch.size()).toInt())
+        while (buf.hasRemaining()) if (ch.read(buf, buf.position().toLong()) < 0) break
+        return boot(String(buf.array(), 0, buf.position(), Charsets.ISO_8859_1))
+    }
+
+    private fun boot(text: String): Boot? {
+        val m = BOOT.find(text) ?: return null
+        val file = m.groupValues[2].substringAfterLast('\\').substringAfterLast('/')
+        if (!SERIAL.matches(file)) return null
+        return Boot(file, ps2 = m.groupValues[1].equals("BOOT2", ignoreCase = true))
+    }
+
+    /** What a boot file of a licensed disc looks like: "SLUS_203.12", "SCES_123.45". */
+    private val SERIAL = Regex("""[A-Z]{4}[_-]\d{3}\.?\d{2}""")
 
     private fun read(ch: FileChannel, layout: Layout): Boot? {
         val pvd = sector(ch, layout, 16) ?: return null
@@ -34,9 +59,7 @@ object IsoSerial {
         val rootSize = root.getInt(156 + 10).coerceIn(0, 64 * 2048)
         val entry = findFile(ch, layout, rootLba, rootSize, "SYSTEM.CNF") ?: return null
         val text = readFile(ch, layout, entry.first, entry.second.coerceAtMost(8192)) ?: return null
-        val m = BOOT.find(String(text, Charsets.ISO_8859_1)) ?: return null
-        val file = m.groupValues[2].substringAfterLast('\\').substringAfterLast('/')
-        return Boot(file, ps2 = m.groupValues[1].equals("BOOT2", ignoreCase = true))
+        return boot(String(text, Charsets.ISO_8859_1))
     }
 
     /** The extent and size of [name] in the directory at [lba]. */
