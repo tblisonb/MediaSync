@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# Installs or updates the MediaSync desktop client for the current user (no sudo needed):
+# Usage: install.sh
+#
+# Installs or updates the MediaSync desktop client for you (no sudo). It installs the client in
+# ~/.local/share/mediasync-desktop, puts the mediasync-desktop command in ~/.local/bin, and runs
+# it as a user service that starts with your desktop session.
+#
+# The first run pairs this PC with the server. It asks for the server's address, a pairing code
+# (web UI > Devices > Pair a device), a name, the music folder and the sync mode. Then it previews
+# what the first sync will do to your files, and starts syncing only if you say so. Later runs
+# update the program and restart the service.
+#
+# Run it from an unpacked release, or from the source after building:
+#   tar xzf mediasync-desktop-<version>-linux-x86_64.tar.gz && mediasync-desktop-<version>-linux-x86_64/install.sh
 #   ./gradlew :desktop:installDist && desktop/build/install/mediasync-desktop/install.sh
-# The first run pairs this PC with the server, previews what the first sync will do to your
-# files, and starts syncing only once you say so.
+#                                                           (scripts/update.sh desktop does both)
+#
+# Afterwards, mediasync-desktop --help lists its commands.
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"

@@ -1,25 +1,43 @@
 #!/usr/bin/env bash
-# Sets up nightly backups of the MediaSync repository with restic (optional). Run on the server,
-# from deploy/backup/ in the source or backup/ in the server's release tarball, with one of:
+# Usage: sudo backup/install.sh --target NAME [--port PORT]
+#        sudo backup/install.sh --local DIR
+#        sudo backup/install.sh                  (later runs)
 #
-#   sudo backup/install.sh --target NAME [--port PORT]
-#       To another machine on your tailnet, set up with target-setup.sh (NAME is its tailnet
-#       name; PORT its --https-port, if not 443). Append-only: nothing on this PC can delete or
-#       rewrite the backups. The first run writes that machine's login to
-#       /etc/mediasync/backup.htpasswd; set the machine up with it, then run this again.
-#   sudo backup/install.sh --local DIR
-#       To a folder on this PC, best on another drive. Simpler, but not append-only, and lost
-#       with this PC.
+# Sets up nightly backups of the MediaSync repository with restic (optional), on the server. The
+# script is in backup/ in the server's release folder, /opt/mediasync/backup/ once installed, and
+# deploy/backup/ in the source. A backup runs every night around 03:30, and a check that reads back
+# 5% of the data runs every Sunday.
 #
-# Later runs need no options: they only update the units. To back up somewhere else instead,
-# remove /etc/mediasync/backup/repository and run this again (the password stays the same).
+#   --target NAME   Back up to another machine on your tailnet, NAME being its tailnet name (e.g.
+#                   raspberrypi). Recommended: it's append-only, so nothing on this PC can delete
+#                   or rewrite the backups. The first run writes that machine's login to
+#                   /etc/mediasync/backup.htpasswd. Copy that file and target-setup.sh to the
+#                   machine and set it up (target-setup.sh --help), then run this again.
+#   --port PORT     The machine's HTTPS port, if target-setup.sh was given another --https-port
+#                   than 443.
+#   --local DIR     Back up to a folder on this PC instead, best on another drive. It's simpler,
+#                   but not append-only, and lost along with this PC.
+#   -h, --help      Show this help.
+#
+# The first time it reaches the backup, it shows restic's password: save it, because without it the
+# backups can't be read. The password stays in /etc/mediasync/backup/password, and where the
+# backups go is in /etc/mediasync/backup/repository. Later runs need no options: they only update
+# the units. To back up somewhere else, remove /etc/mediasync/backup/repository and run this again
+# (the password stays the same).
+#
+# Back up now:  sudo systemctl start --no-block mediasync-backup
+# Follow it:    journalctl -fu mediasync-backup
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 CONF=/etc/mediasync/backup
 HTPASSWD=/etc/mediasync/backup.htpasswd
 UNITS=(mediasync-backup.service mediasync-backup.timer mediasync-backup-check.service mediasync-backup-check.timer)
-USAGE="Usage: sudo $0 --target NAME [--port PORT] | --local DIR"
+USAGE="Usage: sudo $0 --target NAME [--port PORT] | --local DIR (see --help)"
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 SERVER_DROPIN=/etc/systemd/system/mediasync.service.d/repo.conf

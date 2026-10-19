@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Generates the small audio files the tag round-trip tests run on (shared, and the Android
-# instrumented test). Each is 2 s of tones, tagged the way rippers tag things, including the junk
-# (comments, encoder fields) the tag policy strips. Needs ffmpeg: sudo apt install ffmpeg
+# Usage: scripts/make-fixtures.sh
+#
+# Regenerates the small audio files the tag round-trip tests run on (in shared/src/test/resources,
+# also used by the Android instrumented test). Each is 2 s of tones, tagged the way rippers tag
+# things, including the junk (comments, encoder fields) that the tag policy strips.
+#
+# Needs: ffmpeg (sudo apt install ffmpeg).
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 
 out="$(cd "$(dirname "$0")/.." && pwd)/shared/src/test/resources/fixtures"
 mkdir -p "$out"
