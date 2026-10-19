@@ -1,13 +1,15 @@
 [Unit]
 Description=restic rest-server (MediaSync backups)
 After=network.target
-# Never write backups onto the SD card when the drive is missing: no drive, no service.
-RequiresMountsFor=/mnt/storage
+# target-setup.sh fills in @DATA@, the backup folder. Never write backups onto the system disk
+# when their drive is missing: no drive (so no folder), no service.
+RequiresMountsFor=@DATA@
+ConditionPathIsDirectory=@DATA@
 
 [Service]
 # Append-only: clients can add snapshots but not delete or rewrite them, so a mistake (or malware)
-# on the server PC can't destroy its backups. Each login only reaches the repository of its name.
-ExecStart=/usr/local/bin/rest-server --path /mnt/storage/restic --listen 127.0.0.1:8000 \
+# on the MediaSync server can't destroy its backups. Each login only reaches the repository of its name.
+ExecStart=/usr/local/bin/rest-server --path @DATA@ --listen 127.0.0.1:8000 \
     --append-only --private-repos --htpasswd-file /etc/rest-server/htpasswd
 Restart=on-failure
 
@@ -24,7 +26,7 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
-ReadWritePaths=/mnt/storage/restic
+ReadWritePaths=@DATA@
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

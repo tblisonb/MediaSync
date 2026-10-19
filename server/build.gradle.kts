@@ -4,7 +4,7 @@ plugins {
     application
 }
 
-version = "0.2.1"
+version = "0.2.2"
 
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
 tasks.jar { archiveVersion = "" }
@@ -20,6 +20,16 @@ distributions {
         contents {
             from("../deploy/install.sh") { filePermissions { unix("rwxr-xr-x") } }
             from("../deploy/mediasync.service")
+            // Optional backups (backup/install.sh), and the setup for the machine that holds them.
+            from("../deploy/backup") {
+                into("backup")
+                exclude("*.sh")
+            }
+            from("../deploy/backup") {
+                into("backup")
+                include("*.sh")
+                filePermissions { unix("rwxr-xr-x") }
+            }
         }
     }
 }

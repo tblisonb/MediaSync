@@ -274,23 +274,41 @@ Update the server first, then the clients: a client may need something only a ne
 - **From source:** `git pull`, then `scripts/update.sh`. That updates the server (asking for your
   password), then the desktop client. Use `scripts/update.sh desktop` on PCs without the server.
 
-The APKs on the Releases page are all signed with the same key, so each one installs over the last.
-If you build the app yourself, your build is signed with your own key. Android won't install it over
-the released app (or the other way round) until you uninstall the old one, and that loses the
-app's pairing.
+The APKs on the Releases page (from 0.5.0 on) are release builds, all signed with MediaSync's
+release key, so each one installs over the last. If you build the app yourself, your build is signed
+with your own key. Android won't install it over the released app (or the other way round) until you
+uninstall the old one, and that loses the app's pairing. The same goes once for anyone moving from
+0.4.0 or earlier, which were signed with a development key: uninstall, install 0.5.0, then pair again.
+Your music stays on the phone, and the first sync finds it already in place.
 
 ## Backups and maintenance
 
-The repository holds the only copy of your history, so back it up. `deploy/backup/` (in the
-source) sets up nightly [restic](https://restic.net) backups to a Raspberry Pi over Tailscale. The
-backups are append-only, so the server can't delete old ones, and a `restic check` runs weekly.
-The Pi needs 64-bit Raspberry Pi OS and a backup drive mounted at `/mnt/storage`.
+The repository holds the only copy of your history, so it's worth backing up. Backups are
+optional. The scripts are in `backup/` in the server's release folder, or `deploy/backup/` in the
+source. They set up nightly [restic](https://restic.net) backups, with a weekly `restic check` that
+reads back a sample. restic encrypts the backups with a password the setup creates. Save that
+password in your password manager when it's shown: without it the backups can't be read.
 
-1. On the server, run `sudo deploy/backup/install.sh --pi <the Pi's tailnet name>`. It creates the
-   backup's password and a login for the Pi in `/etc/mediasync/backup.htpasswd`.
-2. Copy `deploy/backup/` and that htpasswd file to the Pi, then run
-   `sudo bash pi-setup.sh backup.htpasswd` there.
-3. Run the server's `install.sh --pi …` again. It creates the backup repository and starts the timers.
+**To another machine** on your tailnet (recommended). This can be any Linux machine with systemd,
+such as a Raspberry Pi, a NAS or an old PC. It runs restic's rest-server in append-only mode, so
+nothing on the server, not even a mistake or malware, can delete or rewrite old backups.
+
+1. On the server: `sudo backup/install.sh --target <the machine's tailnet name>`. It creates the
+   backup's password, and a login for the machine in `/etc/mediasync/backup.htpasswd`.
+2. Copy the `backup/` folder and that htpasswd file to the machine, then run there:
+   `sudo bash target-setup.sh --path /mnt/backup/mediasync backup.htpasswd`. Choose any folder
+   for `--path`, ideally on its own drive: when the drive isn't mounted, backups stop rather than
+   filling the system disk. The machine publishes the backups on port 443. If that port is taken,
+   add `--https-port 8444` here, and `--port 8444` on the server in the next step.
+3. On the server, run step 1 again. It creates the backup repository and starts the timers.
+
+**To a folder on the server**, on another drive: `sudo backup/install.sh --local /mnt/usb/mediasync-backup`.
+This is simpler, but the backup isn't append-only, and it's lost along with the server PC if
+something happens to the PC (theft, fire).
+
+Back up now with `sudo systemctl start --no-block mediasync-backup`, and follow along with
+`journalctl -fu mediasync-backup`. To move the backups somewhere else, remove
+`/etc/mediasync/backup/repository` and set them up again.
 
 Maintenance commands run as the service's user:
 
@@ -328,7 +346,7 @@ MediaSync is Kotlin throughout, built with Gradle.
 | `app/` | Android app (Jetpack Compose and WorkManager) |
 | `spike/` | The first tag round-trip check (see [MILESTONES.md](MILESTONES.md)) |
 | `deploy/` | The server's systemd unit, install script, backups and an end-to-end smoke test |
-| `scripts/` | `update.sh` (build and install), `release.sh`, `make-fixtures.sh` |
+| `scripts/` | `update.sh` (build and install), `release.sh`, `make-release-key.sh`, `make-fixtures.sh` |
 
 **Toolchain.**
 - **JDK:** any JDK 21 builds the server and the desktop client. Set `JAVA_HOME`, or install
@@ -355,5 +373,11 @@ release with its build attached: `app-v…` (the APK), `desktop-v…` (the self-
 3. Run `scripts/release.sh app` (or `desktop`, or `server`).
 
 The script runs that part's tests first, and refuses a version that's already tagged.
+
+The APK is a release build, signed with the release key from `~/.android/mediasync-release.jks`,
+whose password is in `~/.android/mediasync-release.properties`. `scripts/make-release-key.sh` made
+that key once; it refuses to replace an existing one. Keep a copy of both files somewhere safe.
+Losing them means every phone has to uninstall the app to take a new release. Anyone who has
+them can sign an update your phones would accept.
 
 How MediaSync got here, milestone by milestone, is in [MILESTONES.md](MILESTONES.md).

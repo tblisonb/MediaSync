@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Release builds are signed with MediaSync's release key, which lives outside the repository
+// (scripts/make-release-key.sh makes one): a properties file with storeFile, storePassword,
+// keyAlias and keyPassword, ~/.android/mediasync-release.properties unless -Pmediasync.signing=FILE.
+// Without it, release builds come out unsigned.
+val releaseSigning = file(
+    providers.gradleProperty("mediasync.signing").orNull
+        ?: "${System.getProperty("user.home")}/.android/mediasync-release.properties",
+).takeIf { it.isFile }?.let { f -> Properties().apply { f.inputStream().use(::load) } }
 
 android {
     namespace = "com.tlisonbee.mediasync"
@@ -11,9 +22,28 @@ android {
         applicationId = "com.tlisonbee.mediasync"
         minSdk = 33
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.4.0"
+        versionCode = 13
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Not shrunk: kotlinx.serialization and jaudiotagger rely on reflection.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
 
     compileOptions {
