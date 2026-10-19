@@ -121,6 +121,21 @@ class Db(path: Path) : AutoCloseable {
                 exec("PRAGMA user_version = 4")
             }
         }
+        if (version < 5) {
+            tx {
+                // Server 0.4.0-0.4.2 gave a file the game of any matched file whose title began its
+                // name ("Crash Bandicoot 2.cue" joined "Crash Bandicoot"), and found no serial in an
+                // ECM-packed image. The identifications that rule or a missing serial could have
+                // decided are made again at startup.
+                script(
+                    """
+                    DELETE FROM game_ident WHERE how IN ('sibling', 'name', 'unknown');
+                    DELETE FROM game_check WHERE serial IS NULL
+                    """.trimIndent(),
+                )
+                exec("PRAGMA user_version = 5")
+            }
+        }
     }
 }
 
