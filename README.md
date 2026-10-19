@@ -288,6 +288,7 @@ optional. The scripts are in `backup/` in the server's release folder, or `deplo
 source. They set up nightly [restic](https://restic.net) backups, with a weekly `restic check` that
 reads back a sample. restic encrypts the backups with a password the setup creates. Save that
 password in your password manager when it's shown: without it the backups can't be read.
+[KEYS.md](KEYS.md) lists exactly what to save, and how to restore the server from a backup.
 
 **To another machine** on your tailnet (recommended). This can be any Linux machine with systemd,
 such as a Raspberry Pi, a NAS or an old PC. It runs restic's rest-server in append-only mode, so
@@ -348,6 +349,9 @@ MediaSync is Kotlin throughout, built with Gradle.
 | `deploy/` | The server's systemd unit, install script, backups and an end-to-end smoke test |
 | `scripts/` | `update.sh` (build and install), `release.sh`, `make-release-key.sh`, `make-fixtures.sh` |
 
+Every script explains itself with `--help` (or `-h`), as do `mediasync-server --help` and
+`mediasync-desktop --help`.
+
 **Toolchain.**
 - **JDK:** any JDK 21 builds the server and the desktop client. Set `JAVA_HOME`, or install
   `openjdk-21-jdk-headless`. `scripts/update.sh` also finds one in `~/Android/jdk-21`.
@@ -376,7 +380,8 @@ The script runs that part's tests first, and refuses a version that's already ta
 
 The APK is a release build, signed with the release key from `~/.android/mediasync-release.jks`,
 whose password is in `~/.android/mediasync-release.properties`. `scripts/make-release-key.sh` made
-that key once; it refuses to replace an existing one. Keep a copy of both files somewhere safe.
+that key once; it refuses to replace an existing one. Keep a copy of both files somewhere safe,
+as [KEYS.md](KEYS.md) describes.
 Losing them means every phone has to uninstall the app to take a new release. Anyone who has
 them can sign an update your phones would accept.
 

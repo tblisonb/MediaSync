@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
-# Sets up a machine on your tailnet to hold MediaSync's backups: restic's rest-server in
-# append-only mode, keeping them in DIR, published on the tailnet with HTTPS by `tailscale serve`.
-# Any Linux machine with systemd works (a Raspberry Pi, a NAS, an old PC). On that machine, from a
-# copy of this folder:
-#   sudo bash target-setup.sh --path /mnt/backup/restic [--https-port 443] mediasync.htpasswd
-# The htpasswd file is the server's login; the server's backup/install.sh writes it as
-# /etc/mediasync/backup.htpasswd. DIR is best on its own drive: if it's missing (the drive isn't
-# mounted), the service doesn't start rather than filling the system disk. Safe to run again: it
-# updates the program, the login and the folder.
+# Usage: sudo bash target-setup.sh --path DIR [--https-port PORT] HTPASSWD_FILE
+#
+# Sets up a machine on your tailnet to hold MediaSync's backups. Any Linux machine with systemd
+# works: a Raspberry Pi, a NAS, an old PC. It installs restic's rest-server in append-only mode,
+# keeping the backups in DIR, and publishes it on the tailnet with HTTPS (`tailscale serve`).
+# It installs Tailscale too, if needed. Run it on that machine, from a copy of the backup folder.
+# It's safe to run again: it updates the program, the login and the folder.
+#
+#   --path DIR          Where the backups are kept, best on a drive of its own. If the folder is
+#                       missing (the drive isn't mounted), the service doesn't start, rather than
+#                       filling the system disk. No spaces in the path.
+#   --https-port PORT   The port to publish on (default 443). If you change it, give the server's
+#                       backup/install.sh the same --port.
+#   HTPASSWD_FILE       The server's login: /etc/mediasync/backup.htpasswd on the server, written
+#                       by its backup/install.sh --target.
+#   -h, --help          Show this help.
+#
+# Example:
+#   sudo bash target-setup.sh --path /mnt/backup/mediasync backup.htpasswd
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 cd "$(dirname "$0")"
 
 VERSION=0.14.0
@@ -19,7 +33,7 @@ declare -A SHA256=(
     [armv6]=da53133964532371d3eb0c29ed4372ba1eef3296df4447f7715bae5bfafb584c
     [386]=de12ba817a8153be2ba4cbe6ae51ad2ca4c26d8210084659c1f421839bdb49c7
 )
-USAGE="Usage: sudo bash target-setup.sh --path DIR [--https-port PORT] mediasync.htpasswd"
+USAGE="Usage: sudo bash target-setup.sh --path DIR [--https-port PORT] HTPASSWD_FILE (see --help)"
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 DATA=""

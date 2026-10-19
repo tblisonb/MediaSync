@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# Makes the key that signs MediaSync's Android releases, once:
+# Usage: scripts/make-release-key.sh
 #
-#   scripts/make-release-key.sh
+# Makes the key that signs MediaSync's Android releases. Run it once, ever: it refuses to replace
+# a key that exists. It writes two files, both readable only by you:
+#   ~/.android/mediasync-release.jks          the key
+#   ~/.android/mediasync-release.properties   its password, for Gradle (random, never printed)
 #
-# It writes ~/.android/mediasync-release.jks (the key) and ~/.android/mediasync-release.properties
-# (its password, for Gradle), both readable only by you, with a random password it never prints.
-# Back both files up somewhere safe, such as your password manager: every update has to be signed
-# with this same key, so without it phones can only take a new release by uninstalling the app.
+# Back up both files, as KEYS.md describes. Every update has to be signed with this same key:
+# without it, phones can only take a new release by uninstalling the app.
+#
+# Needs: a JDK (keytool) and openssl.
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 
 DIR=$HOME/.android
 STORE=$DIR/mediasync-release.jks
@@ -40,4 +47,4 @@ echo "  $STORE"
 echo "  $PROPS (its password)"
 "$KEYTOOL" -list -v -keystore "$STORE" -storepass:env MEDIASYNC_KEY_PASSWORD | grep -m1 'SHA256:' | sed 's/^\s*/  Certificate /'
 echo
-echo "Back up both files now (a password manager's secure note with them attached is ideal)."
+echo "Back up the key and its password now: KEYS.md says what to save and how."

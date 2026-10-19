@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
-# Installs or updates the MediaSync server as a system service, from an unpacked release:
-#   tar xzf mediasync-server-<version>.tar.gz && sudo mediasync-server-<version>/install.sh [--repo DIR]
-# or from the repo root, after building (scripts/update.sh server does both):
-#   ./gradlew :server:installDist && sudo deploy/install.sh [--repo DIR]
-# The first run creates the mediasync user and the repository (asking for an admin password and
-# the tag policy); later runs only update the program. --repo picks the repository folder the
-# first time (default /var/lib/mediasync); give it again later only to point at a moved repository.
+# Usage: sudo install.sh [--repo DIR]
+#
+# Installs or updates the MediaSync server as a system service (the mediasync service, run by its
+# own mediasync user), and publishes it on your tailnet at https://<this machine>.ts.net:8443.
+#
+# The first run creates the mediasync user and the repository, and asks for the web UI's admin
+# password and the music tag policy. Later runs only update the program, keeping the repository
+# and settings. Run it again after fixing Tailscale, and it publishes the server then.
+#
+# Run it from an unpacked release, or from the source after building:
+#   tar xzf mediasync-server-<version>.tar.gz && sudo mediasync-server-<version>/install.sh
+#   ./gradlew :server:installDist && sudo deploy/install.sh     (scripts/update.sh server does both)
+#
+# Options:
+#   --repo DIR   Where the repository lives, chosen on the first run (default /var/lib/mediasync).
+#                It can't be in a home folder. Give it again later only to point at a moved
+#                repository.
+#   -h, --help   Show this help.
+#
+# Needs: systemd, Java 17 or newer (sudo apt install openjdk-21-jre-headless), Python 3, and
+# Tailscale with HTTPS certificates turned on (admin console > DNS).
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 DROPIN_DIR=/etc/systemd/system/mediasync.service.d
@@ -32,7 +50,7 @@ REPO=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --repo) REPO=$2; shift 2 ;;
-        *) echo "Unknown option: $1" >&2; exit 2 ;;
+        *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
 if [[ -z $REPO && -f $DROPIN ]]; then

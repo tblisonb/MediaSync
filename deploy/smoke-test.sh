@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
-# Checks a running server end to end over HTTP, the way a device reaches it:
-#   deploy/smoke-test.sh https://server.example.ts.net:8443 ABCD-EFGH
-# The pairing code comes from the web UI (Devices > Pair a device). The test pairs a device named
-# "Smoke test", uploads one small random file and reads it back; it never pushes, so the library
-# and its history are untouched. Revoke the device in the web UI afterwards.
+# Usage: smoke-test.sh SERVER_URL PAIRING_CODE
+#
+# Checks a running MediaSync server end to end over HTTP, the way a device reaches it. It pairs a
+# device named "Smoke test", uploads one small random file and reads it back. It never pushes, so
+# the library and its history are untouched. Revoke the "Smoke test" device in the web UI
+# afterwards.
+#
+#   SERVER_URL     The server's address, e.g. https://my-pc.tail1234.ts.net:8443
+#   PAIRING_CODE   A code from the web UI: Devices > Pair a device.
+#
+# Example:
+#   deploy/smoke-test.sh https://my-pc.tail1234.ts.net:8443 ABCD-EFGH
+#
+# Needs: curl and jq (sudo apt install jq).
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 URL=${1:?usage: smoke-test.sh SERVER_URL PAIRING_CODE}
 CODE=${2:?usage: smoke-test.sh SERVER_URL PAIRING_CODE}
 API=$URL/api/v1

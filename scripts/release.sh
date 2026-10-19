@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
+# Usage: scripts/release.sh app|desktop|server
+#
 # Tags one part of MediaSync and publishes it as a GitHub release, with its build attached:
+#   app       app-v<versionName>: the APK, a release build signed with the release key
+#   desktop   desktop-v<version>: a tarball with its own Java (bundledDist)
+#   server    server-v<version>: the server tarball, which installs itself
 #
-#   scripts/release.sh app       # app-v<versionName>: the APK, signed with the release key
-#   scripts/release.sh desktop   # desktop-v<version>: a tarball with its own Java (bundledDist)
-#   scripts/release.sh server    # server-v<version>: the server's distribution tarball
+# First bump the version in that part's build.gradle.kts (for the app, versionCode too), commit and
+# push. It releases what master has on GitHub, after that part's tests pass, and refuses a version
+# that's already tagged. The release notes list the commits that touched the part (or :shared)
+# since its last release.
 #
-# Bump the version in that part's build.gradle.kts first (for the app, versionCode too). It
-# releases what master has on GitHub, after that part's tests pass, and refuses a version that
-# is already tagged. The notes list the commits that touched the part (or :shared) since its
-# last release. Needs gh, logged in.
+# Needs: gh, logged in. For the app, the release key in ~/.android (see make-release-key.sh).
 set -euo pipefail
+# -h or --help prints the comment at the top of this file.
+for arg in "$@"; do
+    [[ $arg != -h && $arg != --help ]] || { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0; }
+done
 cd "$(dirname "$0")/.."
 
 part=${1:-}
 case $part in
     app) version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts) ;;
     desktop | server) version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$part/build.gradle.kts") ;;
-    *) echo "usage: $0 app|desktop|server" >&2; exit 2 ;;
+    *) echo "usage: $0 app|desktop|server (see --help)" >&2; exit 2 ;;
 esac
 [[ -n $version ]] || { echo "no version in $part/build.gradle.kts" >&2; exit 1; }
 tag="$part-v$version"
