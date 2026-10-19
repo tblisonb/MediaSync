@@ -25,10 +25,12 @@ import com.tlisonbee.mediasync.sync.ReviewAction
 import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewQueue
 import com.tlisonbee.mediasync.sync.ReviewSettings
+import com.tlisonbee.mediasync.sync.SyncActivity
 import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.SyncScheduler
 import com.tlisonbee.mediasync.sync.SyncState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -70,8 +72,13 @@ data class UiState(
     val preview: PreviewState,
     val review: ReviewState = ReviewState(),
     val videos: VideosState = VideosState(),
+    /** What the worker is doing, from the moment a button asks for it; null when idle. */
+    val activity: SyncActivity? = null,
+    /** The review groups whose button was pressed, with what's happening to them ("Accepting"). */
+    val applying: Map<String, String> = emptyMap(),
 ) {
     val videosEnabled get() = config?.folders?.any { it.prefix == VIDEOS } == true
+    val busy get() = activity != null
 }
 
 /** Where this phone keeps the videos picked for it. */
@@ -85,12 +92,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val files = MutableStateFlow(0)
     private val review = MutableStateFlow(ReviewState())
     private val videos = MutableStateFlow(VideosState())
+    private val working = SyncScheduler.activity(app).stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Set when a button queues work, until WorkManager reports it (a moment later). */
+    private val requested = MutableStateFlow<SyncActivity?>(null)
+    private val applying = MutableStateFlow<Map<String, String>>(emptyMap())
 
     private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
+    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>)
+
     val state: StateFlow<UiState> = combine(
-        app.settings.changes, SyncState.progress, allFilesAccess, combine(pairing, preview, files, review, videos, ::Extra),
-    ) { _, progress, access, (pair, prev, count, rev, vids) ->
+        app.settings.changes,
+        SyncState.progress,
+        allFilesAccess,
+        combine(pairing, preview, files, review, videos, ::Extra),
+        combine(working, requested, applying) { now, asked, groups -> Work(now ?: asked, groups) },
+    ) { _, progress, access, (pair, prev, count, rev, vids), work ->
         val settings = app.settings
         val screen = when {
             !access -> Screen.PERMISSION
@@ -98,15 +116,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             !settings.approved -> Screen.PREVIEW
             else -> Screen.STATUS
         }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids)
+        val activity = work.activity ?: progress?.let { SyncActivity(SyncActivity.Kind.SYNC, started = true) }
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
     init {
         // A check or apply in the worker ends with a settings change: reload what waits.
         viewModelScope.launch { app.settings.changes.collect { loadReview() } }
+        viewModelScope.launch {
+            working.collect { now ->
+                if (now != null) {
+                    requested.value = null
+                } else if (requested.value == null && applying.value.isNotEmpty()) {
+                    // All done: the pressed groups keep their "Accepting…" until the new list is in.
+                    loadReview(doneApplying = true)
+                }
+            }
+        }
     }
 
-    fun loadReview() {
+    fun loadReview(doneApplying: Boolean = false) {
         val config = app.settings.config ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val settings = ReviewSettings(app.index)
@@ -116,21 +145,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lastCheck = app.index.state(SyncEngine.LAST_CHECK)?.toLong(),
                 review = SyncEngine.storedReview(config, app.index, ignoresCase = true),
             )
+            if (doneApplying) applying.value = emptyMap()
         }
     }
 
     /** A group's button. The review it acts on is the one on screen, so nothing newer slips in. */
-    fun decide(group: ReviewGroup, action: ReviewAction) = queue(review.value.review.decide(group, action))
+    fun decide(group: ReviewGroup, action: ReviewAction) {
+        val doing = when (action) {
+            ReviewAction.ACCEPT -> "Accepting"
+            ReviewAction.UNDO -> "Putting the files back"
+            ReviewAction.REVERT -> "Reverting on the server"
+        }
+        queue(review.value.review.decide(group, action), mapOf(group.key to doing))
+    }
 
-    fun acceptAll() = queue(review.value.review.acceptAll())
+    fun acceptAll() {
+        val review = review.value.review
+        queue(review.acceptAll(), review.groups.associate { it.key to "Accepting" })
+    }
 
-    private fun queue(decisions: Decisions) {
+    private fun queue(decisions: Decisions, groups: Map<String, String>) {
         if (decisions.isEmpty) return
+        applying.value = applying.value + groups
+        request(SyncActivity.Kind.APPLY)
         ReviewQueue.add(app, decisions)
         SyncScheduler.apply(app)
     }
 
-    fun checkNow() = SyncScheduler.checkNow(app)
+    fun checkNow() {
+        request(SyncActivity.Kind.CHECK)
+        SyncScheduler.checkNow(app)
+    }
+
+    /** Shows [kind] as waiting right away; WorkManager's own state takes over once it has the work. */
+    private fun request(kind: SyncActivity.Kind) {
+        if (working.value != null) return
+        val asked = SyncActivity(kind, started = false)
+        requested.value = asked
+        viewModelScope.launch {
+            // In case WorkManager kept existing work instead and never reports this one.
+            delay(10_000)
+            if (requested.compareAndSet(asked, null) && working.value == null && applying.value.isNotEmpty()) loadReview(doneApplying = true)
+        }
+    }
 
     /** Adds or removes the videos folder: only the videos picked for this phone, in Movies/MediaSync. */
     fun setVideos(enabled: Boolean) {
@@ -265,10 +322,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun approve() {
         app.settings.approve()
         SyncScheduler.schedulePeriodic(app)
-        SyncScheduler.syncNow(app)
+        syncNow()
     }
 
-    fun syncNow(allowDeletes: Boolean = false) = SyncScheduler.syncNow(app, allowDeletes)
+    fun syncNow(allowDeletes: Boolean = false) {
+        request(SyncActivity.Kind.SYNC)
+        SyncScheduler.syncNow(app, allowDeletes)
+    }
 
     fun unpair() {
         SyncScheduler.cancelAll(app)

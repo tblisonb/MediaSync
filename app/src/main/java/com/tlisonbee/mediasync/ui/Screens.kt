@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -58,6 +59,7 @@ import com.tlisonbee.mediasync.sync.bytes
 import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.label
+import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 
@@ -195,14 +197,9 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
     // What waits for a decision comes first; the last sync's details follow.
     if (state.review.enabled) ReviewSection(state, viewModel)
 
-    val progress = state.progress
-    if (progress != null) {
-        Text(progress.describe())
-        if (progress.total > 0) {
-            LinearProgressIndicator(progress = { progress.done.toFloat() / progress.total }, modifier = Modifier.fillMaxWidth())
-        } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
+    // With review on, what's happening shows above its buttons instead.
+    if (!state.review.enabled && state.busy) {
+        ActivityLine(state)
     } else {
         val last = state.lastSync
         Text(last.at?.let { "Last synced " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "Not synced yet")
@@ -216,7 +213,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         // With review on, syncing everything at once would skip the asking.
-        if (!state.review.enabled) Button(onClick = { viewModel.syncNow() }, enabled = progress == null) { Text("Sync now") }
+        if (!state.review.enabled) Button(onClick = { viewModel.syncNow() }, enabled = !state.busy) { Text("Sync now") }
         OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, config.serverUrl.toUri())) }) { Text("Open web UI") }
     }
     Text(
@@ -240,7 +237,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
 @Composable
 private fun ReviewSection(state: UiState, viewModel: MainViewModel) {
     val review = state.review.review
-    val busy = state.progress != null
+    val busy = state.busy
     Text(
         if (review.isEmpty) "Nothing waiting" else review.summary("this phone").replaceFirstChar { it.uppercase() },
         style = MaterialTheme.typography.titleMedium,
@@ -251,6 +248,7 @@ private fun ReviewSection(state: UiState, viewModel: MainViewModel) {
         style = MaterialTheme.typography.bodySmall,
     )
     review.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary) }
+    ActivityLine(state)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = viewModel::checkNow, enabled = !busy) { Text("Check now") }
         if (!review.isEmpty) Button(onClick = viewModel::acceptAll, enabled = !busy) { Text("Accept all") }
@@ -261,7 +259,7 @@ private fun ReviewSection(state: UiState, viewModel: MainViewModel) {
             "Accept writes a change into your files. To leave it for later, do nothing. Revert undoes it on the server, for every device.",
             style = MaterialTheme.typography.bodySmall,
         )
-        review.incoming.forEach { ReviewGroupCard(it, busy, viewModel) }
+        review.incoming.forEach { ReviewGroupCard(it, busy, state.applying[it.key], viewModel) }
     }
     if (review.outgoing.isNotEmpty()) {
         Text("Made on this phone", style = MaterialTheme.typography.titleSmall)
@@ -269,13 +267,13 @@ private fun ReviewSection(state: UiState, viewModel: MainViewModel) {
             "Accept sends a change to the server. Undo here puts the files back as the server has them; an undone new file stays, but isn't synced.",
             style = MaterialTheme.typography.bodySmall,
         )
-        review.outgoing.forEach { ReviewGroupCard(it, busy, viewModel) }
+        review.outgoing.forEach { ReviewGroupCard(it, busy, state.applying[it.key], viewModel) }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReviewGroupCard(group: ReviewGroup, busy: Boolean, viewModel: MainViewModel) {
+private fun ReviewGroupCard(group: ReviewGroup, busy: Boolean, applying: String?, viewModel: MainViewModel) {
     var expanded by remember(group.key) { mutableStateOf(false) }
     var confirm by remember(group.key, group.version) { mutableStateOf<ReviewAction?>(null) }
     Card(Modifier.fillMaxWidth()) {
@@ -287,15 +285,16 @@ private fun ReviewGroupCard(group: ReviewGroup, busy: Boolean, viewModel: MainVi
                     .joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
             )
-            when (confirm) {
-                ReviewAction.REVERT -> {
+            when {
+                applying != null -> Working(applying)
+                confirm == ReviewAction.REVERT -> {
                     Text("Revert r${group.rev} on the server? Every device gets the old values back. History in the web UI can undo this too.")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { confirm = null; viewModel.decide(group, ReviewAction.REVERT) }) { Text("Revert") }
                         TextButton(onClick = { confirm = null }) { Text("Cancel") }
                     }
                 }
-                ReviewAction.UNDO -> {
+                confirm == ReviewAction.UNDO -> {
                     Text("Put these files back as the server has them? What changed here is lost.")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { confirm = null; viewModel.decide(group, ReviewAction.UNDO) }) { Text("Undo here") }
@@ -323,6 +322,47 @@ private fun ReviewGroupCard(group: ReviewGroup, busy: Boolean, viewModel: MainVi
                 if (group.items.size > MAX_ITEMS) Text("And ${group.items.size - MAX_ITEMS} more.", style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+}
+
+/**
+ * What the sync is doing, from the moment a button asks for it: a spinner and a line at once,
+ * then the sync's own progress once it reports some.
+ */
+@Composable
+private fun ActivityLine(state: UiState) {
+    val activity = state.activity ?: return
+    val progress = state.progress
+    // Work that hasn't started after a few seconds is waiting for a network (or a retry).
+    var stuck by remember(activity) { mutableStateOf(false) }
+    LaunchedEffect(activity) {
+        if (!activity.started) {
+            delay(5_000)
+            stuck = true
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Working(activity.kind.label)
+        when {
+            progress != null -> {
+                Text(progress.describe(), style = MaterialTheme.typography.bodySmall)
+                if (progress.total > 0) {
+                    LinearProgressIndicator(progress = { progress.done.toFloat() / progress.total }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            stuck -> Text("Waiting to start: it needs a connection to the server.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** A small spinner beside "[label]…". */
+@Composable
+private fun Working(label: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        Text("$label…", color = MaterialTheme.colorScheme.primary)
     }
 }
 

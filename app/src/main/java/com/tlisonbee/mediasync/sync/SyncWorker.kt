@@ -22,6 +22,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -30,9 +31,13 @@ import com.tlisonbee.mediasync.R
 import com.tlisonbee.mediasync.app
 import com.tlisonbee.mediasync.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -50,6 +55,28 @@ data class Progress(val stage: SyncStage, val done: Int, val total: Int, val byt
     }
 
     private fun fmt(n: Int) = "%,d".format(n)
+}
+
+/**
+ * What the worker is doing, or has been asked to do and hasn't started yet ([started] false: it
+ * waits its turn, or for a network). Known from the moment a button queues the work, before the
+ * sync reports any progress.
+ */
+data class SyncActivity(val kind: Kind, val started: Boolean) {
+    enum class Kind(val label: String) {
+        CHECK("Checking for changes"),
+        APPLY("Applying your choices"),
+        SYNC("Syncing"),
+    }
+
+    companion object {
+        fun kindOf(mode: String?): Kind? = when (mode) {
+            SyncWorker.MODE_CHECK -> Kind.CHECK
+            SyncWorker.MODE_APPLY -> Kind.APPLY
+            SyncWorker.MODE_SYNC -> Kind.SYNC
+            else -> null
+        }
+    }
 }
 
 object SyncState {
@@ -78,6 +105,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
         // The periodic job checks or syncs, as the review setting says at the time it runs.
         val mode = inputData.getString(MODE) ?: if (ReviewSettings(app.index).enabled) MODE_CHECK else MODE_SYNC
+        // For the status screen, which learns of the periodic job's mode only this way.
+        setProgress(workDataOf(MODE to mode))
         // A check only reads; a sync or apply may move the whole library and gets a progress notification.
         // Not allowed when started from the background on recent Android; then it runs as a plain job.
         if (mode != MODE_CHECK) {
@@ -290,6 +319,26 @@ object SyncScheduler {
 
     fun checkNow(context: Context, replace: Boolean = false) =
         oneTime(context, CHECK, if (replace) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, SyncWorker.MODE_CHECK)
+
+    /** What the worker is doing, or has been asked to do next; null when it's idle. */
+    fun activity(context: Context): Flow<SyncActivity?> {
+        val work = WorkManager.getInstance(context)
+        // In priority order for work that's waiting: what was asked for most explicitly first.
+        val named = listOf(APPLY to SyncActivity.Kind.APPLY, NOW to SyncActivity.Kind.SYNC, CHECK to SyncActivity.Kind.CHECK, PERIODIC to null)
+            .map { (name, kind) -> work.getWorkInfosForUniqueWorkFlow(name).map { infos -> Triple(name, kind, infos) } }
+        return combine(named) { all ->
+            val running = all.firstNotNullOfOrNull { (_, kind, infos) ->
+                infos.firstOrNull { it.state == WorkInfo.State.RUNNING }?.let { SyncActivity.kindOf(it.progress.getString(SyncWorker.MODE)) ?: kind ?: SyncActivity.Kind.CHECK }
+            }
+            // The periodic job is always enqueued between runs, so only the requested ones count as waiting.
+            val waiting = all.firstOrNull { (name, _, infos) -> name != PERIODIC && infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED } }?.second
+            when {
+                running != null -> SyncActivity(running, started = true)
+                waiting != null -> SyncActivity(waiting, started = false)
+                else -> null
+            }
+        }.distinctUntilChanged()
+    }
 
     /** Applies the decisions in [ReviewQueue]; each run takes all of them, so later taps queue behind. */
     fun apply(context: Context) = oneTime(context, APPLY, ExistingWorkPolicy.APPEND_OR_REPLACE, SyncWorker.MODE_APPLY)
