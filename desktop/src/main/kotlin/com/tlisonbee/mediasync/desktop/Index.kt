@@ -168,7 +168,7 @@ class Index(path: Path) : FileIndex, AutoCloseable {
         prefix = getString("prefix"),
         size = getLong("size"),
         mtime = getLong("mtime"),
-        kind = AssetKind.entries.first { it.apiName == getString("kind") },
+        kind = AssetKind.of(getString("kind")),
         media = getString("media"),
         tags = decode(getString("tags")),
         cover = getString("cover"),

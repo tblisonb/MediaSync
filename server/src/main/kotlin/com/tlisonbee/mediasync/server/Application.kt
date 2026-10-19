@@ -7,6 +7,7 @@ import com.tlisonbee.mediasync.api.DeviceCleanup
 import com.tlisonbee.mediasync.api.DeviceKind
 import com.tlisonbee.mediasync.api.EditRequest
 import com.tlisonbee.mediasync.api.EditResponse
+import com.tlisonbee.mediasync.api.FolderPickRequest
 import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.api.PickRequest
 import com.tlisonbee.mediasync.api.PickResponse
@@ -15,6 +16,7 @@ import com.tlisonbee.mediasync.api.ResolveRequest
 import com.tlisonbee.mediasync.api.RevertRequest
 import com.tlisonbee.mediasync.api.UploadRequest
 import com.tlisonbee.mediasync.api.UploadResponse
+import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.Subscription
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -190,6 +192,7 @@ private fun Route.apiRoutes(repo: Repository) {
         val request = call.receive<PushRequest>()
         val response = io { repo.push(call.device(), request) }
         io { repo.convertArrivals(request) }
+        io { repo.identifyArrivals(request, response.results.map { it.outcome }) }
         call.respond(response)
     }
     // Field edits (a tag editor, a kind) as one revision; a device edits only what it may send.
@@ -228,6 +231,16 @@ private fun Route.apiRoutes(repo: Repository) {
         val request = call.receive<PickRequest>()
         if (request.pick.size + request.unpick.size > Limits.MAX_CHANGES_PER_PUSH) badRequest("too many picks at once")
         call.respond(PickResponse(io { repo.setPicks(call.device().id, request.pick, request.unpick) }))
+    }
+    // Which games and platforms this device keeps whole, under its pick rules.
+    get("/picks/folders") {
+        val prefix = call.parameters["prefix"] ?: RepoPaths.GAMES
+        call.respond(io { repo.folderPickList(call.device().id, prefix) })
+    }
+    put("/picks/folders") {
+        val request = call.receive<FolderPickRequest>()
+        if (request.pick.size + request.unpick.size > Limits.MAX_CHANGES_PER_PUSH) badRequest("too many picks at once")
+        call.respond(PickResponse(io { repo.setFolderPicks(call.device().id, request.pick, request.unpick) }))
     }
 
     // Clients preview the import and keep files tidy with the same rules the server applies.
@@ -284,4 +297,6 @@ fun Repository.startup() {
         val known = db.read { db.query("SELECT id FROM upload") { it.getString(1) }.toSet() }
         files.filter { it.fileName.toString() !in known }.forEach { Files.deleteIfExists(it) }
     }
+    // Game files a stopped server never got to.
+    if (liveGames().any { it.assetId !in gameIdents() }) startIdentifying(webDeviceId())
 }

@@ -6,6 +6,7 @@ import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.media.MediaHasher
 import com.tlisonbee.mediasync.server.diff
+import com.tlisonbee.mediasync.server.openIssues
 import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.LocalFiles
@@ -313,5 +314,32 @@ class DesktopSyncTest {
         val report = engine.sync()
         assertTrue(report.unsettled)
         assertEquals(0, report.pushed)
+    }
+
+    @Test
+    fun aGamesFilesKeepTheirNamesOnEveryPc() = TestWorld().use { world ->
+        world.repo.inBackground = { _, work -> work() }
+        val desktop = world.client("Desktop", games = false)
+        val games = desktop.music.resolveSibling("Games")
+        val cue = "FILE \"Final Fantasy VII (USA) (Disc 1).bin\" BINARY\n  TRACK 01 MODE2/2352\n".toByteArray()
+        val bin = ByteArray(200_000) { (it % 251).toByte() }
+        Files.createDirectories(games.resolve("PS1"))
+        Files.write(games.resolve("PS1/Final Fantasy VII (USA) (Disc 1).cue"), cue)
+        Files.write(games.resolve("PS1/Final Fantasy VII (USA) (Disc 1).bin"), bin)
+        assertEquals(2, desktop.sync().pushed)
+
+        // Filed under its platform and game (no databases here: from its folder and name), the
+        // .cue still beside the .bin it names, and neither renamed to make room for the other.
+        val folder = "PlayStation/Final Fantasy VII (USA)"
+        desktop.sync()
+        val laptop = world.client("Laptop", games = false)
+        laptop.sync()
+        for (pc in listOf(desktop, laptop)) {
+            val home = pc.music.resolveSibling("Games")
+            assertTrue(cue.contentEquals(Files.readAllBytes(home.resolve("$folder/Final Fantasy VII (USA) (Disc 1).cue"))), pc.name)
+            assertTrue(bin.contentEquals(Files.readAllBytes(home.resolve("$folder/Final Fantasy VII (USA) (Disc 1).bin"))), pc.name)
+            assertEquals(2, Files.walk(home).use { s -> s.filter { Files.isRegularFile(it) }.count() }.toInt(), pc.name)
+        }
+        assertTrue(world.repo.openIssues().isEmpty(), "no path collisions")
     }
 }

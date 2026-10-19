@@ -20,6 +20,8 @@ distributions {
         contents {
             from("../deploy/install.sh") { filePermissions { unix("rwxr-xr-x") } }
             from("../deploy/mediasync.service")
+            from("../deploy/mediasync-gamedb.service")
+            from("../deploy/mediasync-gamedb.timer")
             // Optional backups (backup/install.sh), and the setup for the machine that holds them.
             from("../deploy/backup") {
                 into("backup")

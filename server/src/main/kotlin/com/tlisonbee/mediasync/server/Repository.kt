@@ -40,6 +40,12 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
     /** The WMA conversion running or last run (Convert.kt): one at a time. */
     internal val conversion = java.util.concurrent.atomic.AtomicReference<Conversion?>(null)
 
+    /** The game identification running or last run (Games.kt): one at a time. */
+    internal val gameJob = java.util.concurrent.atomic.AtomicReference<GameJob?>(null)
+
+    /** Runs background work such as game identification; tests run it in place. */
+    var inBackground: (name: String, work: () -> Unit) -> Unit = { name, work -> Thread(work, name).apply { isDaemon = true }.start() }
+
     private val _head = MutableStateFlow(db.read { head() })
 
     /** The newest revision, for GET /events. */
@@ -182,6 +188,7 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
         if (v.kind == AssetKind.VIDEO && v.category == RepoPaths.OTHER && RepoPaths.FILED.any { v.path.startsWith(it) }) {
             return "videos/${RepoPaths.OTHER}/" + RepoPaths.name(v.path)
         }
+        if (RepoPaths.followsFields(v.kind, v.path, v.category) && v.kind == AssetKind.GAME) return RepoPaths.game(v.tags, v.category, v.path) ?: v.path
         if (v.kind != AssetKind.AUDIO || !RepoPaths.isMusic(v.path)) return v.path
         val folder = RepoPaths.musicAlbumFolder(v.tags)
         val multiDisc = RepoPaths.saysMultiDisc(v.tags) ||
@@ -410,7 +417,7 @@ class RevisionScope(
         for ((from, targets) in moves) {
             val to = targets.singleOrNull() ?: continue
             val left = repo.liveUnder(from)
-            if (left.any { it.kind == AssetKind.AUDIO || it.kind == AssetKind.VIDEO }) continue
+            if (left.any { it.kind == AssetKind.AUDIO || it.kind == AssetKind.VIDEO || it.kind == AssetKind.GAME }) continue
             for (extra in left) moveExtra(extra, to + extra.path.removePrefix(from))
         }
     }

@@ -22,6 +22,20 @@ object TagField {
 
     /** A movie's title and year; an episode's show, season, episode and title. */
     val VIDEO = listOf(TITLE, YEAR, SHOW, SEASON, EPISODE)
+
+    // A game's details, kept in the repository only (a disc image can't hold tags). Its platform
+    // is its category. Most come from the game databases (Games.kt on the server).
+    const val REGION = "region"
+    const val PUBLISHER = "publisher"
+    const val DEVELOPER = "developer"
+    const val SERIAL = "serial"
+    const val PLAYERS = "players"
+
+    /** The name the disc or cartridge has in the No-Intro or Redump list: "Shadow of the Colossus (USA)". */
+    const val RELEASE = "release"
+
+    /** A game's title, region and the rest; [DISC_NUMBER] for a game on several discs. */
+    val GAME = listOf(TITLE, REGION, YEAR, PUBLISHER, DEVELOPER, GENRE, PLAYERS, SERIAL, DISC_NUMBER, RELEASE)
 }
 
 class Picture(val mimeType: String, val data: ByteArray) {

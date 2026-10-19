@@ -64,8 +64,10 @@ private fun Repository.applyChange(scope: RevisionScope, device: Device, change:
     }
     val assetId = change.assetId
     return if (assetId == null) {
-        checkSends(device, path, change.kind)
-        importNew(scope, device, change, path)
+        // Anything in games/ is a game file, whatever the device took it for.
+        val kind = if (path.startsWith(RepoPaths.GAMES)) AssetKind.GAME else change.kind
+        checkSends(device, path, kind)
+        importNew(scope, device, change.copy(kind = kind), path)
     } else {
         val head = headVersion(assetId) ?: notFound("no asset $assetId")
         checkSends(device, head.path, head.kind)
@@ -102,6 +104,12 @@ private fun Repository.importNew(scope: RevisionScope, device: Device, change: P
         val guess = VideoNames.guess(change.sourcePath ?: "$path.${media.format}")
         category = guess.category
         if (tags.isEmpty()) tags = policy.filter(change.kind, guess.tags)
+    }
+    // A game's platform and title come from its name and folders: a first guess, until it's identified.
+    if (change.kind == AssetKind.GAME) {
+        val (platform, guessed) = gameImport(path, change.sourcePath ?: path)
+        category = platform
+        tags = guessed + tags
     }
     // A photo's date comes from the camera, or else its name; corrected in the web UI.
     if (RepoPaths.isPhoto(change.kind, path) && tags[TagField.DATE] == null) {

@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Fields
+import com.tlisonbee.mediasync.library.Platforms
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.tags.TagField
 import java.text.Normalizer
@@ -101,9 +102,14 @@ fun Repository.editTags(deviceId: String, message: String?, edits: Map<String, M
         var category = head.category
         for ((field, values) in fields) {
             when {
+                // A video's kind (movie, episode, other), or a game's platform.
                 field == Fields.CATEGORY -> {
-                    category = values.firstOrNull()?.also { if (it !in RepoPaths.VIDEO_CATEGORIES) badRequest("no category $it") }
-                    if (head.kind != AssetKind.VIDEO) badRequest("only videos have a category")
+                    val allowed = when (head.kind) {
+                        AssetKind.VIDEO -> RepoPaths.VIDEO_CATEGORIES
+                        AssetKind.GAME -> Platforms.ALL.map { it.id }
+                        else -> badRequest("only videos and games have a category")
+                    }
+                    category = values.firstOrNull()?.also { if (it !in allowed) badRequest("no category $it") }
                 }
                 values.isEmpty() -> tags.remove(field)
                 else -> tags[field] = values
