@@ -118,18 +118,24 @@ class ReviewBuilder(private val config: ClientConfig, private val index: FileInd
             )
         }.filter { it.items.isNotEmpty() }.sortedBy { it.rev ?: Long.MAX_VALUE }
 
+        // By kind of change and by folder, so a folder's changes (a new folder's thousands of
+        // files, say) can be accepted or undone apart from the rest. Music keeps the plain keys.
         val stagedIds = staged.map { it.assetId }.toSet()
+        val folders = config.folders.map { it.prefix }
         val outgoing = rows.filter { row -> row.ignored == null && pending(row) }
-            .groupBy(::kindOf)
-            .map { (kind, list) ->
+            .groupBy { kindOf(it) to it.prefix }
+            .map { (group, list) ->
+                val (kind, prefix) = group
                 ReviewGroup(
-                    key = "out:${kind.name.lowercase()}",
+                    key = "out:${kind.name.lowercase()}" + if (prefix == RepoPaths.MUSIC) "" else ":$prefix",
                     incoming = false,
-                    title = kind.title,
+                    title = if (folders.size > 1) "${kind.title}, in $prefix" else kind.title,
                     subtitle = null,
                     items = list.map { outgoingItem(it, kind, it.assetId in stagedIds) }.sortedBy { it.path.lowercase() },
-                )
-            }.sortedBy { group -> LocalKind.entries.indexOfFirst { "out:${it.name.lowercase()}" == group.key } }
+                ) to group
+            }
+            .sortedWith(compareBy({ folders.indexOf(it.second.second) }, { it.second.first.ordinal }))
+            .map { it.first }
         return Review(incoming, outgoing, warnings)
     }
 

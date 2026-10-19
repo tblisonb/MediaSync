@@ -58,6 +58,28 @@ class ReviewTest {
     }
 
     @Test
+    fun eachFoldersChangesAreAcceptedApart() = TestWorld().use { world ->
+        world.repo.inBackground = { _, work -> work() }
+        val pc = world.client("PC", games = false)
+        val games = pc.music.resolveSibling("Games")
+        Fixtures.track(pc.file("new/x.flac"), album[0], variant = 3)
+        Files.createDirectories(games.resolve("SNES"))
+        Files.write(games.resolve("SNES/Chrono Trigger (USA).sfc"), ByteArray(4096) { it.toByte() })
+        Files.createDirectories(games.resolve("PS1/BIOS"))
+        Files.write(games.resolve("PS1/BIOS/SCPH1001.BIN"), ByteArray(1024) { 7 })
+
+        val review = pc.engine.check()
+        assertEquals(listOf("out:new", "out:new:games/"), review.outgoing.map { it.key })
+        assertEquals("New files here, in games/", review.group("out:new:games/")!!.title)
+
+        // The games go up; the track waits.
+        pc.engine.apply(review.accept("out:new:games/"))
+        assertEquals(listOf("out:new"), pc.engine.check().outgoing.map { it.key })
+        val filed = world.repo.liveUnder("games").map { it.path }.toSet()
+        assertEquals(setOf("games/Super NES/Chrono Trigger (USA)/Chrono Trigger (USA).sfc", "games/PS1/BIOS/SCPH1001.BIN"), filed, "a BIOS isn't filed as a game")
+    }
+
+    @Test
     fun localChangesWaitAndCanBeUndone() = TestWorld().use { world ->
         val (_, laptop) = world.twoPcs()
         val head = world.repo.head()
