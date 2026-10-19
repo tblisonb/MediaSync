@@ -38,15 +38,19 @@ class TestWorld : AutoCloseable {
         url = "http://127.0.0.1:" + runBlocking { server.engine.resolvedConnectors().first().port }
     }
 
-    /** [videos]: also sync videos/ to ~/Videos; true picks, false keeps everything. [photos]: photos/ to ~/Pictures. */
-    fun client(name: String, ignoresCase: Boolean? = null, videos: Boolean? = null, photos: Boolean = false): TestClient {
+    /**
+     * [videos]: also sync videos/ to ~/Videos; true picks, false keeps everything. [photos]: photos/
+     * to ~/Pictures. [games]: games/ to ~/Games, as [videos].
+     */
+    fun client(name: String, ignoresCase: Boolean? = null, videos: Boolean? = null, photos: Boolean = false, games: Boolean? = null): TestClient {
         val pairing = ApiClient(url, null).pair(PairRequest(repo.newPairingCode(), name, DeviceKind.DESKTOP))
         val home = root.resolve(name)
         val music = Files.createDirectories(home.resolve("Music"))
         val dirs = Dirs(home.resolve("config"), home.resolve("state"), home.resolve("cache"), home.resolve("run"))
         val videoFolder = videos?.let { FolderConfig("videos/", Files.createDirectories(home.resolve("Videos")).toString(), pick = it) }
         val photoFolder = if (photos) FolderConfig("photos/", Files.createDirectories(home.resolve("Pictures")).toString()) else null
-        val config = ClientConfig(url, pairing.deviceId, name, listOfNotNull(FolderConfig("music/", music.toString()), videoFolder, photoFolder))
+        val gameFolder = games?.let { FolderConfig("games/", Files.createDirectories(home.resolve("Games")).toString(), pick = it) }
+        val config = ClientConfig(url, pairing.deviceId, name, listOfNotNull(FolderConfig("music/", music.toString()), videoFolder, photoFolder, gameFolder))
         val api = ApiClient(url, pairing.token)
         api.putSubscription(config.subscription())
         val index = Index(dirs.index)

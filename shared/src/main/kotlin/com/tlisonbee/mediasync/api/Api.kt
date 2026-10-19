@@ -1,8 +1,13 @@
 package com.tlisonbee.mediasync.api
 
 import com.tlisonbee.mediasync.library.Subscription
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 
 /*
@@ -19,15 +24,32 @@ val ApiJson = Json {
 
 typealias Tags = Map<String, List<String>>
 
-@Serializable
+@Serializable(with = AssetKindSerializer::class)
 enum class AssetKind {
-    @SerialName("audio") AUDIO,
-    @SerialName("image") IMAGE,
-    @SerialName("video") VIDEO,
-    @SerialName("other") OTHER,
+    AUDIO,
+    IMAGE,
+    VIDEO,
+    OTHER,
+
+    /** A game's disc image, ROM or other file, in games/. */
+    GAME,
     ;
 
     val apiName get() = name.lowercase()
+
+    companion object {
+        /** A kind from a newer server reads as a plain file, so a device never stops syncing over one. */
+        fun of(apiName: String): AssetKind = entries.firstOrNull { it.apiName == apiName } ?: OTHER
+    }
+}
+
+/** Kinds by their API names ("audio"); one this version doesn't know is OTHER (see [AssetKind.of]). */
+object AssetKindSerializer : KSerializer<AssetKind> {
+    override val descriptor = PrimitiveSerialDescriptor("com.tlisonbee.mediasync.api.AssetKind", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: AssetKind) = encoder.encodeString(value.apiName)
+
+    override fun deserialize(decoder: Decoder): AssetKind = AssetKind.of(decoder.decodeString())
 }
 
 @Serializable
@@ -381,6 +403,27 @@ data class PickRequest(val pick: List<String> = emptyList(), val unpick: List<St
 /** Every asset whose place on the device changed: the videos, with their subtitles and posters. */
 @Serializable
 data class PickResponse(val changed: List<String>)
+
+/**
+ * A folder a device can keep whole, as it is now and whatever comes into it later: a game (all
+ * its discs and files) or a whole platform.
+ */
+@Serializable
+data class FolderPickItem(
+    val folder: String,
+    /** "Shadow of the Colossus (USA)"; a platform's name for a platform. */
+    val label: String,
+    /** The platform's id (see Platforms), if known. */
+    val platform: String?,
+    /** True for a platform's folder, false for a game's. */
+    val whole: Boolean,
+    val size: Long,
+    val files: Int,
+    val picked: Boolean,
+)
+
+@Serializable
+data class FolderPickRequest(val pick: List<String> = emptyList(), val unpick: List<String> = emptyList())
 
 /**
  * Field edits made on a device, such as a tag editor: one revision. [edits] maps an asset to the

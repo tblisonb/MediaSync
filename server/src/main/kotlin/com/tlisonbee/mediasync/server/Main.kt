@@ -28,6 +28,8 @@ private val USAGE = """
       fsck [--full]         Check the repository; --full also re-hashes every blob
       prune --older-than D  Drop history older than D (e.g. 90d, 1y) and the blobs nothing uses
       snapshot              Write a consistent copy of repo.db to snapshots/, for backups
+      fetch-games-db        Download the game databases that identify games, into gamedb/
+                            (run by the mediasync-gamedb service, which may reach the internet)
 
     The repository folder is --repo, else MEDIASYNC_REPO, else ${Config.DEFAULT_REPO}.
 """.trimIndent()
@@ -48,6 +50,8 @@ fun main(args: Array<String>) {
             "fsck" -> withRepo(dir) { Maintenance.fsck(it, full = "--full" in args) }
             "prune" -> withRepo(dir) { Maintenance.prune(it, option(args, "--older-than") ?: return@withRepo usage()) }
             "snapshot" -> withRepo(dir) { Maintenance.snapshot(it); 0 }
+            // Never opens the repository: the service that runs it can write only gamedb/.
+            "fetch-games-db" -> GameDbFetch.run(GameDbDir(dir.root.resolve("gamedb")))
             else -> usage()
         }
     } catch (e: IllegalArgumentException) {

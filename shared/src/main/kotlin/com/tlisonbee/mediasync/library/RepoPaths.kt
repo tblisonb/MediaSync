@@ -15,6 +15,7 @@ object RepoPaths {
     const val MUSIC = "music/"
     const val VIDEOS = "videos/"
     const val PHOTOS = "photos/"
+    const val GAMES = "games/"
 
     /** The folder in photos/ for photos without a date. */
     const val UNDATED = "Undated"
@@ -62,13 +63,45 @@ object RepoPaths {
 
     /**
      * Whether an asset's path is worked out from its fields rather than kept as given: music,
-     * movies and episodes, and photos (and the videos among them). A device can't move these by
-     * renaming; a retag moves them.
+     * movies and episodes, photos (and the videos among them), and games whose platform is known.
+     * A device can't move these by renaming; a retag moves them.
      */
     fun followsFields(kind: AssetKind, path: String, category: String?): Boolean =
         (kind == AssetKind.AUDIO && isMusic(path)) ||
             (kind == AssetKind.VIDEO && path.startsWith(VIDEOS) && (category == MOVIES || category == SHOWS)) ||
-            isPhoto(kind, path)
+            isPhoto(kind, path) ||
+            (kind == AssetKind.GAME && path.startsWith(GAMES) && Platforms.byId(category) != null)
+
+    /**
+     * `games/{platform}/{title} ({region})/{name}`: a game's files share its folder, each keeping
+     * its own name, since a .cue or .m3u refers to the others by theirs. Null for an unknown
+     * platform. Without a title, the folder is the one the file is in now.
+     */
+    fun game(tags: Tags, platformId: String?, path: String): String? {
+        val platform = Platforms.byId(platformId) ?: return null
+        val title = first(tags, TagField.TITLE)?.replace(": ", " - ")
+        val region = first(tags, TagField.REGION)
+        val folder = when {
+            title == null -> name(parent(path)).takeIf { parent(path).count { it == '/' } >= 2 } ?: name(path).substringBeforeLast('.')
+            region == null || title.endsWith("($region)") -> title
+            else -> "$title ($region)"
+        }
+        return listOf("games", segment(platform.name), segment(folder), name(path)).joinToString("/")
+    }
+
+    /**
+     * Whether a path keeps its file's extension, rather than each rendition adding its own. Game
+     * files do: a game's files often share a name ("Game.cue" and "Game.bin"), and refer to each
+     * other by their full names, so neither can be renamed to make room.
+     */
+    fun keepsExtension(path: String) = path.startsWith(GAMES)
+
+    /** The game folder [path] is in (games/{platform}/{game}), or null outside one. */
+    fun gameFolder(path: String): String? {
+        if (!path.startsWith(GAMES)) return null
+        val parts = path.split('/')
+        return if (parts.size >= 4) parts.take(3).joinToString("/") else null
+    }
 
     /** A photo, or a video kept with the photos (a phone's clip, say). */
     fun isPhoto(kind: AssetKind, path: String) = (kind == AssetKind.IMAGE || kind == AssetKind.VIDEO) && path.startsWith(PHOTOS)

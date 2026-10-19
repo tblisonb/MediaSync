@@ -1,0 +1,44 @@
+[Unit]
+Description=Download MediaSync's game databases (game identification)
+Documentation=https://github.com/tblisonb/MediaSync#games
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# install.sh adds a drop-in (mediasync-gamedb.service.d/repo.conf) setting MEDIASYNC_REPO and
+# showing this service the repository's gamedb/ folder, and nothing else of it.
+ExecStart=/opt/mediasync/bin/mediasync-server fetch-games-db
+# Even when it fails: the web UI's request is answered either way (it shows the error).
+ExecStopPost=/usr/bin/rm -f ${MEDIASYNC_REPO}/gamedb/update-requested
+User=mediasync
+Group=mediasync
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+
+# Network: this is the one part of MediaSync that reaches the internet, to download two public
+# databases (the libretro database on GitHub, and LaunchBox's). It sends nothing about the library.
+# The server itself stays on loopback.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Sandboxing
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

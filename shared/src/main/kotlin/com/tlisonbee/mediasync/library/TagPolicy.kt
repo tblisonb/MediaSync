@@ -40,7 +40,7 @@ data class TagPolicy(
 
     companion object {
         const val FRONT_COVER = "front"
-        val DEFAULT_FIELDS = mapOf(AssetKind.AUDIO to TagField.MUSIC, AssetKind.VIDEO to TagField.VIDEO)
+        val DEFAULT_FIELDS = mapOf(AssetKind.AUDIO to TagField.MUSIC, AssetKind.VIDEO to TagField.VIDEO, AssetKind.GAME to TagField.GAME)
 
         /** Fields MediaSync keeps itself and never writes into the files: a photo's (or a clip's) date. */
         val OWN_FIELDS = mapOf(AssetKind.IMAGE to listOf(TagField.DATE), AssetKind.VIDEO to listOf(TagField.DATE))

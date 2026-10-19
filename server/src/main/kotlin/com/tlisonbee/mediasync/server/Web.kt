@@ -196,6 +196,7 @@ fun Route.webRoutes(repo: Repository) {
 
         cleanupRoutes(repo)
         videoRoutes(repo)
+        gameRoutes(repo)
         photoRoutes(repo)
 
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
@@ -263,6 +264,7 @@ internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int
             if (loggedIn) {
                 nav {
                     a(href = "/browse") { +"Library" }
+                    a(href = "/games") { +"Games" }
                     a(href = "/revisions") { +"History" }
                     a(href = "/resolve") { +"Resolve" }
                     a(href = "/cleanup") { +"Cleanup" }
@@ -336,6 +338,10 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
         p { a(href = "/photos?path=" + enc(folder)) { +"Date these photos" } }
     } else if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
         p { a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" } }
+    } else if (listing.assets.any { it.kind == AssetKind.GAME }) {
+        p { a(href = "/games/game?folder=" + enc(folder)) { +"This game's details" } }
+    } else if (RepoPaths.GAMES.startsWith("$folder/") || folder.startsWith(RepoPaths.GAMES)) {
+        p { a(href = "/games") { +"Games, by platform" } }
     }
     artists.forEach { renameArtistForm(it) }
     if (listing.folders.isEmpty() && listing.assets.isEmpty()) p("empty") { +"Nothing here yet." }
@@ -388,6 +394,9 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
             }
         }
         video?.let { videoSections(head, it) }
+        if (head.kind == AssetKind.GAME && !head.deleted) {
+            p { a(href = "/games/game?folder=" + enc(RepoPaths.gameFolder(head.path) ?: RepoPaths.parent(head.path))) { +"This game's details and devices" } }
+        }
         h2 { +"Renditions" }
         table {
             thead { tr { th { +"Format" }; th { +"Size" }; th { +"Length" }; th { +"Media hash" } } }

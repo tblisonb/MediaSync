@@ -24,6 +24,7 @@ ExecStartPre=/opt/mediasync/bin/mediasync-server snapshot
 ExecStart=/usr/bin/restic backup --retry-lock 2h --tag nightly \
     --exclude ${MEDIASYNC_REPO}/repo.db --exclude ${MEDIASYNC_REPO}/repo.db-wal \
     --exclude ${MEDIASYNC_REPO}/repo.db-shm --exclude ${MEDIASYNC_REPO}/uploads \
+    --exclude ${MEDIASYNC_REPO}/gamedb \
     ${MEDIASYNC_REPO}
 Nice=10
 IOSchedulingClass=idle

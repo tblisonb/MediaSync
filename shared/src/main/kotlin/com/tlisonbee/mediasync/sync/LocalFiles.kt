@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.sync
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Tags
+import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.TagPolicy
 import com.tlisonbee.mediasync.media.MediaFormat
 import com.tlisonbee.mediasync.media.MediaHasher
@@ -95,6 +96,7 @@ object LocalFiles {
     /** "music/Radiohead/OK Computer/01 Airbag" for ~/Music/Radiohead/OK Computer/01 Airbag.flac. */
     fun repoPath(folder: FolderConfig, file: Path): String {
         val relative = folder.root.relativize(file).joinToString("/") { it.name }
+        if (RepoPaths.keepsExtension(folder.prefix + relative)) return folder.prefix + relative
         val dot = relative.lastIndexOf('.')
         val stem = if (dot > relative.lastIndexOf('/') + 1) relative.substring(0, dot) else relative
         return folder.prefix + stem
@@ -103,7 +105,7 @@ object LocalFiles {
     /** Where an asset's file goes in [folder], with extension [ext]. */
     fun localPath(folder: FolderConfig, assetPath: String, ext: String): Path {
         val relative = assetPath.removePrefix(folder.prefix)
-        val name = if (ext.isEmpty()) relative else "$relative.$ext"
+        val name = if (ext.isEmpty() || RepoPaths.keepsExtension(assetPath)) relative else "$relative.$ext"
         return folder.root.resolve(name).normalize()
     }
 

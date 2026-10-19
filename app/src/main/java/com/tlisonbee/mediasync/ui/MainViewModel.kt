@@ -6,6 +6,8 @@ import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tlisonbee.mediasync.api.DeviceKind
+import com.tlisonbee.mediasync.api.FolderPickItem
+import com.tlisonbee.mediasync.api.FolderPickRequest
 import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.api.PickRequest
 import com.tlisonbee.mediasync.api.PairRequest
@@ -62,6 +64,26 @@ data class VideosState(
     val chosenBytes get() = items.filter { it.assetId in chosen }.sumOf { it.size }
 }
 
+/**
+ * The game picker: every platform and game in the library, and which this phone keeps. [chosen]
+ * holds folders: a platform's keeps all its games, now and later; a game's keeps all its files.
+ */
+data class GamesState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val items: List<FolderPickItem> = emptyList(),
+    val chosen: Set<String> = emptySet(),
+    val saving: Boolean = false,
+    val error: String? = null,
+) {
+    val changes get() = items.count { (it.folder in chosen) != it.picked }
+
+    /** What the choice takes on the phone: whole platforms, and games outside them. */
+    val chosenBytes get() = items.filter { it.folder in chosen && (it.whole || platformOf(it) !in chosen) }.sumOf { it.size }
+
+    fun platformOf(game: FolderPickItem) = game.folder.split('/').take(2).joinToString("/")
+}
+
 data class UiState(
     val screen: Screen,
     val config: ClientConfig?,
@@ -78,8 +100,10 @@ data class UiState(
     val applying: Map<String, String> = emptyMap(),
     /** Why turning the photos folder on or off failed. */
     val photosError: String? = null,
+    val games: GamesState = GamesState(),
 ) {
     val videosEnabled get() = config?.folders?.any { it.prefix == VIDEOS } == true
+    val gamesEnabled get() = config?.folders?.any { it.prefix == RepoPaths.GAMES } == true
     val photosEnabled get() = config?.folders?.any { it.prefix == PHOTOS } == true
     val busy get() = activity != null
 }
@@ -98,6 +122,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val files = MutableStateFlow(0)
     private val review = MutableStateFlow(ReviewState())
     private val videos = MutableStateFlow(VideosState())
+    private val games = MutableStateFlow(GamesState())
     private val working = SyncScheduler.activity(app).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Set when a button queues work, until WorkManager reports it (a moment later). */
@@ -107,14 +132,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
-    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>, val photosError: String?)
+    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>, val photosError: String?, val games: GamesState)
 
     val state: StateFlow<UiState> = combine(
         app.settings.changes,
         SyncState.progress,
         allFilesAccess,
         combine(pairing, preview, files, review, videos, ::Extra),
-        combine(working, requested, applying, photosError) { now, asked, groups, photos -> Work(now ?: asked, groups, photos) },
+        combine(working, requested, applying, photosError, games) { now, asked, groups, photos, game -> Work(now ?: asked, groups, photos, game) },
     ) { _, progress, access, (pair, prev, count, rev, vids), work ->
         val settings = app.settings
         val screen = when {
@@ -124,7 +149,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> Screen.STATUS
         }
         val activity = work.activity ?: progress?.let { SyncActivity(SyncActivity.Kind.SYNC, started = true) }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.photosError)
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.photosError, work.games)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
     init {
@@ -199,6 +224,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Adds or removes the videos folder: only the videos picked for this phone, in Movies/MediaSync. */
     fun setVideos(enabled: Boolean) = setFolder(VIDEOS, Environment.DIRECTORY_MOVIES, pick = true, enabled) {
         videos.value = videos.value.copy(error = it)
+    }
+
+    /** Adds or removes the games folder: only the games and platforms picked for this phone, in ROMs/MediaSync. */
+    fun setGames(enabled: Boolean) = setFolder(RepoPaths.GAMES, "ROMs", pick = true, enabled) {
+        games.value = games.value.copy(error = it)
+    }
+
+    fun openGames() {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        games.value = GamesState(open = true, loading = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            games.value = try {
+                val items = ApiClient(config.serverUrl, token).folderPicks(RepoPaths.GAMES)
+                GamesState(open = true, items = items, chosen = items.filter { it.picked }.map { it.folder }.toSet())
+            } catch (e: Exception) {
+                GamesState(open = true, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun closeGames() {
+        games.value = GamesState()
+    }
+
+    fun chooseGames(folders: Collection<String>, keep: Boolean) {
+        val state = games.value
+        games.value = state.copy(chosen = if (keep) state.chosen + folders else state.chosen - folders.toSet())
+    }
+
+    /** Saves the picks; what they bring or take away is applied without asking again. */
+    fun saveGames() {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        val state = games.value
+        val pick = state.items.filter { it.folder in state.chosen && !it.picked }.map { it.folder }
+        val unpick = state.items.filter { it.folder !in state.chosen && it.picked }.map { it.folder }
+        games.value = state.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val changed = ApiClient(config.serverUrl, token).setFolderPicks(FolderPickRequest(pick, unpick)).changed
+                ReviewQueue.approvePicked(app, changed)
+                SyncScheduler.checkNow(app, replace = true)
+                games.value = GamesState()
+            } catch (e: Exception) {
+                games.value = state.copy(saving = false, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
     }
 
     /** Adds or removes the photos folder: every photo in the library, filed by year, in Pictures/MediaSync. */

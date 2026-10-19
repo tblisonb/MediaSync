@@ -159,7 +159,7 @@ class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 2
             prefix = str("prefix")!!,
             size = long("size")!!,
             mtime = long("mtime")!!,
-            kind = AssetKind.entries.first { it.apiName == str("kind") },
+            kind = AssetKind.of(str("kind")!!),
             media = str("media")!!,
             tags = decode(str("tags")!!),
             cover = str("cover"),

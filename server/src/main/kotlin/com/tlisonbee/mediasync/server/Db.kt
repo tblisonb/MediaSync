@@ -99,6 +99,28 @@ class Db(path: Path) : AutoCloseable {
                 exec("PRAGMA user_version = 3")
             }
         }
+        if (version < 4) {
+            tx {
+                script(
+                    """
+                    -- Folders a device keeps whole, under a pick rule: a game, or a whole platform.
+                    CREATE TABLE pick_folder (device_id TEXT NOT NULL, folder TEXT NOT NULL, PRIMARY KEY (device_id, folder));
+                    -- What a game file's contents say about it (Games.kt): its SHA-1, also without the
+                    -- copier header some cartridge dumps carry, and a PlayStation disc's serial.
+                    CREATE TABLE game_check (
+                        media_hash TEXT PRIMARY KEY,
+                        sha1 TEXT,
+                        bare_sha1 TEXT,
+                        serial TEXT,
+                        ps2 INTEGER NOT NULL DEFAULT 0
+                    );
+                    -- Game files identification has seen, and how it identified each.
+                    CREATE TABLE game_ident (asset_id TEXT PRIMARY KEY, how TEXT NOT NULL, at INTEGER NOT NULL)
+                    """.trimIndent(),
+                )
+                exec("PRAGMA user_version = 4")
+            }
+        }
     }
 }
 

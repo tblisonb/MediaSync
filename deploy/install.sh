@@ -3,6 +3,7 @@
 #
 # Installs or updates the MediaSync server as a system service (the mediasync service, run by its
 # own mediasync user), and publishes it on your tailnet at https://<this machine>.ts.net:8443.
+# Also installs mediasync-gamedb, which downloads the game databases that identify games.
 #
 # The first run creates the mediasync user and the repository, and asks for the web UI's admin
 # password and the music tag policy. Later runs only update the program, keeping the repository
@@ -112,9 +113,37 @@ ReadWritePaths=$REPO
 CONF
 
 install -m 644 "$HERE/mediasync.service" /etc/systemd/system/mediasync.service
+
+# The game databases (game identification) are downloaded by a service of their own, the only part
+# of MediaSync that reaches the internet: weekly, and when the web UI asks (it leaves
+# gamedb/update-requested). It sees only the repository's gamedb/ folder.
+install -d -o mediasync -g mediasync -m 700 "$REPO/gamedb"
+install -d -m 755 /etc/systemd/system/mediasync-gamedb.service.d
+cat > /etc/systemd/system/mediasync-gamedb.service.d/repo.conf <<CONF
+[Service]
+Environment=MEDIASYNC_REPO=$REPO
+TemporaryFileSystem=$REPO:ro
+BindPaths=$REPO/gamedb
+CONF
+cat > /etc/systemd/system/mediasync-gamedb.path <<UNIT
+[Unit]
+Description=Download MediaSync's game databases when the web UI asks
+
+[Path]
+PathExists=$REPO/gamedb/update-requested
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+install -m 644 "$HERE/mediasync-gamedb.service" /etc/systemd/system/mediasync-gamedb.service
+install -m 644 "$HERE/mediasync-gamedb.timer" /etc/systemd/system/mediasync-gamedb.timer
+
 systemctl daemon-reload
 systemctl enable mediasync.service
 systemctl restart mediasync.service
+systemctl enable --now mediasync-gamedb.timer mediasync-gamedb.path
+# The first download, in the background (about 150 MB; it takes a minute or so).
+[[ -f $REPO/gamedb/index.db ]] || systemctl start --no-block mediasync-gamedb.service
 
 # Publish it on the tailnet, with HTTPS (on 8443, leaving 443 for anything else on this machine).
 if [[ -n $PUBLIC_URL ]]; then

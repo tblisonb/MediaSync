@@ -92,3 +92,4 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | 2026-10-18 | **Release builds of the app**, signed with a dedicated release key, from app 0.5.0 on. The server tarball also carries the backup scripts. |
 | 2026-10-18 | **One format**: Cleanup converts tracks of any format (not only WMA) to MP3, and can keep converting new ones as they arrive (server 0.3.0). |
 | 2026-10-19 | While a conversion to MP3 runs, the Cleanup page shows it at the top with a progress bar and the time left, kept current as it goes (server 0.3.1). |
+| 2026-10-19 | **Games**: disc images and ROMs identified by checksum (No-Intro and Redump) or a PlayStation disc's serial, given their details from LaunchBox, filed by platform and title, and kept on devices by game or whole platform. A separate service downloads the databases; the server stays on loopback (server 0.4.0, desktop 0.2.0, app 0.6.0). |

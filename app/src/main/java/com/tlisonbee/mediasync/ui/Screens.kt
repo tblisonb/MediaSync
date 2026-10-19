@@ -53,6 +53,7 @@ import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.tlisonbee.mediasync.api.FolderPickItem
 import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.sync.ReviewAction
 import com.tlisonbee.mediasync.sync.bytes
@@ -74,6 +75,7 @@ fun MediaSyncRoot(viewModel: MainViewModel) {
         ) {
             when (state.screen) {
                 Screen.STATUS if state.videos.open -> VideosScreen(state, viewModel)
+                Screen.STATUS if state.games.open -> GamesScreen(state, viewModel)
                 Screen.PERMISSION -> PermissionScreen()
                 Screen.PAIR -> PairScreen(state, viewModel)
                 Screen.PREVIEW -> PreviewScreen(state, viewModel)
@@ -222,6 +224,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
     )
     PhotosCard(state, viewModel)
     VideosCard(state, viewModel)
+    GamesCard(state, viewModel)
     ReviewSettingsCard(state, viewModel)
     if (confirmUnpair) {
         Text("Unpair this phone? Its files stay; it stops syncing until paired again.")
@@ -447,6 +450,93 @@ private fun VideosCard(state: UiState, viewModel: MainViewModel) {
             }
             if (state.videosEnabled) TextButton(onClick = viewModel::openVideos) { Text("Choose videos…") }
             state.videos.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+private fun GamesCard(state: UiState, viewModel: MainViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Games", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Keep the games and platforms you pick in ROMs/MediaSync, for an emulator such as RetroArch. The rest stay on the server.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = state.gamesEnabled, onCheckedChange = viewModel::setGames)
+            }
+            if (state.gamesEnabled) TextButton(onClick = viewModel::openGames) { Text("Choose games…") }
+            state.games.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+/** Every platform with its games, to pick whole platforms (now and later) or single games from. */
+@Composable
+private fun GamesScreen(state: UiState, viewModel: MainViewModel) {
+    val games = state.games
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Choose games", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        TextButton(onClick = viewModel::closeGames) { Text("Cancel") }
+    }
+    Text("A picked game is kept on this phone with all its discs and files. Keeping a whole platform also brings the games added to it later.")
+    when {
+        games.loading -> CircularProgressIndicator()
+        games.error != null -> Text(games.error, color = MaterialTheme.colorScheme.error)
+        games.items.isEmpty() -> Text("The library has no games yet.")
+        else -> {
+            Text("${bytes(games.chosenBytes)} picked", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = viewModel::saveGames, enabled = games.changes > 0 && !games.saving) {
+                Text(if (games.saving) "Saving…" else "Save ${games.changes} ${if (games.changes == 1) "change" else "changes"}")
+            }
+            val platforms = games.items.filter { it.whole }
+            platforms.forEach { platform ->
+                PlatformGroup(platform, games.items.filter { !it.whole && games.platformOf(it) == platform.folder }, games.chosen, viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlatformGroup(platform: FolderPickItem, items: List<FolderPickItem>, chosen: Set<String>, viewModel: MainViewModel) {
+    var expanded by remember(platform.folder) { mutableStateOf(items.size <= 12) }
+    val whole = platform.folder in chosen
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                    Text(platform.label, style = MaterialTheme.typography.titleSmall)
+                    val picked = if (whole) items.size else items.count { it.folder in chosen }
+                    Text("$picked of ${items.size} kept · ${bytes(platform.size)}", style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp)) {
+                Text("Keep every ${platform.label} game", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = whole, onCheckedChange = { viewModel.chooseGames(listOf(platform.folder), it) })
+            }
+            if (expanded) {
+                items.sortedBy { it.label.lowercase() }.forEach { item ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = whole || item.folder in chosen,
+                            enabled = !whole,
+                            onCheckedChange = { viewModel.chooseGames(listOf(item.folder), it) },
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(item.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                bytes(item.size) + if (item.files > 1) " · ${item.files} files" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
