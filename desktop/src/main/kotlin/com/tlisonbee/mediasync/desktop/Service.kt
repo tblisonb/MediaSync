@@ -92,6 +92,7 @@ class Service(
     private val dirs: Dirs,
     val config: ClientConfig,
     private val token: String,
+    private val makeTray: (TrayActions) -> Tray = ::desktopTray,
     private val makeNotifier: () -> Notifier = ::desktopNotifier,
 ) {
     private val jobs = Channel<Job>(Channel.UNLIMITED)
@@ -203,8 +204,24 @@ class Service(
         launch(Dispatchers.IO) { serveControlSocket() }
 
         val tracker = Tracker(index, notifier, config, api, openReview = { openInBrowser(page.url) }, apply = { submit(Job.Apply(it)) })
+        val tray = makeTray(object : TrayActions {
+            override fun openReview() = openInBrowser(page.url)
+
+            override fun acceptAll(decisions: Decisions) {
+                if (!decisions.isEmpty) submit(Job.Apply(decisions))
+            }
+
+            override fun checkNow() {
+                submit(if (settings.enabled) Job.Check() else Job.Sync(allowDeletes = false))
+            }
+
+            override fun openWebUi() = openInBrowser(config.serverUrl)
+        })
+        fun refreshTray() = runCatching { tray.update(trayState(tracker.error)) }.onFailure { System.err.println("Tray: ${it.message}") }
+        refreshTray()
         for (job in jobs) {
             busy = job.describe()
+            refreshTray()
             val outcome = try {
                 withContext(Dispatchers.IO) {
                     when (job) {
@@ -227,11 +244,18 @@ class Service(
                 busy = null
                 progress = null
             }
+            refreshTray()
             job.reply?.complete(outcome)
         }
         page.stop()
+        tray.close()
         coroutineContext.cancelChildren()
         lock.release()
+    }
+
+    private fun trayState(error: String?): TrayState {
+        val review = review()
+        return TrayState(review.incomingCount + review.outgoingCount, review.summary("this PC"), busy, lastCheck(), error, settings.enabled, review.acceptAll())
     }
 
     /** Lets the CLI ask this process to sync or check instead of running a second one. */
@@ -303,6 +327,9 @@ private class Tracker(
     private val apply: (Decisions) -> Unit,
 ) {
     private var lastError: String? = null
+
+    /** The last failure, until a sync works again. */
+    val error: String? get() = lastError
 
     /** Says what waits for approval, once per distinct list. "Accept all" takes the list as notified, nothing newer. */
     fun reviewed(review: Review) {
