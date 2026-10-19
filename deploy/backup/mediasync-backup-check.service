@@ -15,6 +15,10 @@ Environment=RESTIC_PASSWORD_FILE=%d/password
 Environment=RESTIC_CACHE_DIR=%C/mediasync-backup
 CacheDirectory=mediasync-backup
 
+# A backup cut off midway (a dropped connection, a stopped service) leaves its lock behind, and the
+# check needs the repository to itself. First clear the locks no restic has refreshed for 30
+# minutes; a running backup keeps refreshing its own. rest-server lets locks go even append-only.
+ExecStartPre=/usr/bin/restic unlock
 # Checks the structure, and reads back a random 5% of the data each week.
 ExecStart=/usr/bin/restic check --retry-lock 2h --read-data-subset 5%
 Nice=10
