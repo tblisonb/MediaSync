@@ -232,8 +232,9 @@ private fun FlowContent.databases(status: GameDbStatus) {
         when {
             status.requested -> p { +"Downloading the databases now; it takes a minute or two. Reload this page to see when they're in." }
             status.ready -> p {
-                +"From ${DAY.format(Instant.ofEpochMilli(status.builtAt!!).atZone(ZoneId.systemDefault()))}: "
-                +"%,d known dumps, %,d games. They update every week.".format(status.dumps, status.games)
+                +"Downloaded ${DAY.format(Instant.ofEpochMilli(status.builtAt!!).atZone(ZoneId.systemDefault()))}, and updated every week. "
+                +"They know %,d dumps of %,d games across %d platforms: what your files are matched against, not what's in your library."
+                    .format(status.dumps, status.games, Platforms.ALL.size)
             }
             else -> p { +"Not downloaded yet. Games are identified once they are." }
         }
@@ -252,6 +253,10 @@ private fun FlowContent.databases(status: GameDbStatus) {
 private fun HTML.gamesPage(games: List<Game>, idents: Map<String, String>, status: GameDbStatus, job: GameJob?) = page("Games") {
     h1 { +"Games" }
     identification(job)
+    if (games.isNotEmpty()) {
+        val files = games.sumOf { it.files.size }
+        p { +"Your library has ${games.size} ${if (games.size == 1) "game" else "games"} (${"%,d".format(files)} files, ${bytes(games.sumOf { it.size })})." }
+    }
     if (games.isEmpty()) {
         p("empty") {
             +"No games yet. Sync a folder of disc images or ROMs with games/ (on a PC: mediasync-desktop add-folder games/ ~/Games), "

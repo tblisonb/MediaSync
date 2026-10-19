@@ -725,8 +725,8 @@ class SyncEngine(
         val others = index.byAsset(asset.assetId).filter { it.path != row.path && it.ignored == null && !it.missing }
         if (others.isNotEmpty()) {
             // A second local copy of something already synced from here: leave it be.
-            report.warn("${row.path} has the same audio as ${others.first().path}; it's left alone and not synced")
-            index.put(row.synced(asset).copy(ignored = "same audio as ${others.first().path}"))
+            report.warn("${row.path} has the ${Row.sameAs(row.kind)}${others.first().path}; it's left alone and not synced")
+            index.put(row.synced(asset).copy(ignored = Row.sameAs(row.kind) + others.first().path))
             return
         }
         // A track this device reads but the server still holds as a plain file (a server from

@@ -37,6 +37,25 @@ data class Row(
 ) {
     val file: Path get() = Path.of(path)
 
+    /**
+     * Why the file is left alone, worded for its kind. Indexes from before desktop 0.2.2 and app
+     * 0.6.2 call every second copy "same audio", photos included.
+     */
+    val ignoredReason: String?
+        get() = ignored?.let { if (it.startsWith(LEGACY_SAME)) sameAs(kind) + it.removePrefix(LEGACY_SAME) else it }
+
+    companion object {
+        private const val LEGACY_SAME = "same audio as "
+
+        /** "same picture as ", for a second local copy of an asset of [kind]. */
+        fun sameAs(kind: AssetKind) = "same " + when (kind) {
+            AssetKind.AUDIO -> "audio"
+            AssetKind.IMAGE -> "picture"
+            AssetKind.VIDEO -> "video"
+            else -> "contents"
+        } + " as "
+    }
+
     val extension: String get() = file.fileName.toString().substringAfterLast('.', "")
 
     val changed: Boolean

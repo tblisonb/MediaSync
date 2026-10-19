@@ -303,6 +303,23 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun aSecondCopyOfAPhotoIsCalledThat() = TestWorld().use { world ->
+        val desktop = world.client("Desktop", photos = true)
+        val pictures = desktop.music.resolveSibling("Pictures")
+        val jpeg = ByteArray(2000) { (it * 3).toByte() }
+        Files.createDirectories(pictures.resolve("Misc"))
+        Files.write(pictures.resolve("IMG_20140831_151422.jpg"), jpeg)
+        desktop.sync()
+        Files.write(pictures.resolve("Misc/copy.jpg"), jpeg)
+        val report = desktop.sync()
+        assertTrue(report.warnings.single().contains("same picture as"), report.warnings.single())
+        val row = desktop.index.all().single { it.path.endsWith("copy.jpg") }
+        assertTrue(row.ignoredReason!!.startsWith("same picture as"))
+        // An index from an older client said "same audio" of every copy; it's shown for what it is.
+        assertTrue(row.copy(ignored = "same audio as x.jpg").ignoredReason == "same picture as x.jpg")
+    }
+
+    @Test
     fun filesStillBeingWrittenWait() = TestWorld().use { world ->
         val desktop = world.client("Desktop")
         val engine = SyncEngine(

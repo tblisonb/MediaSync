@@ -230,7 +230,7 @@ private fun status(dirs: Dirs) = withConfig(dirs) { config, token ->
             val inFolder = rows.filter { it.prefix == folder.prefix }
             val waiting = inFolder.count { it.changed && it.ignored == null }
             println("${folder.folder} → ${folder.prefix} (${folder.mode.label}): ${inFolder.count { !it.missing }} files, $waiting waiting to sync")
-            inFolder.filter { it.ignored != null }.forEach { println("  left alone: ${it.path} (${it.ignored})") }
+            inFolder.filter { it.ignored != null }.forEach { println("  left alone: ${it.path} (${it.ignoredReason})") }
         }
         val since = index.state(SyncEngine.SINCE)
         val last = index.state(SyncEngine.LAST_SUCCESS)?.toLong()

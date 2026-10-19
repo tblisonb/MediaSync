@@ -6,7 +6,7 @@ plugins {
     application
 }
 
-version = "0.2.1"
+version = "0.2.2"
 
 // Runs on any Java 17+ runtime, not just the JDK it was built with.
 java {
