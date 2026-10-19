@@ -1,6 +1,6 @@
 # MediaSync
 
-Self-hosted version control for your music, photos and videos. One PC holds the library; your
+Self-hosted version control for your music, photos, videos and games. One PC holds the library; your
 other PCs and your Android phone keep copies of it in sync. Every change (a retag, a rename, a
 deleted file) is a revision you can look at and undo, and nothing changes on a device until you've
 seen what's coming.
@@ -13,6 +13,9 @@ seen what's coming.
 - **Photos are filed by year** (`2019/2019-07-14 IMG_1234.jpg`), dated from the camera's EXIF data
   or the file name. **Videos** are filed as movies or show episodes, and a device can keep only the
   ones you pick for it.
+- **Games** (disc images and ROMs of games you own) are identified by checksum against the
+  No-Intro and Redump lists, filed by platform and title, and given their year, publisher and
+  genre. A device can keep the games or whole platforms you pick for it.
 - **A web UI** for browsing the library, editing tags, dating photos, tidying a messy collection,
   going through the history and managing devices.
 - **Private by design.** It runs only on your own machines and is reached over your own
@@ -24,8 +27,8 @@ seen what's coming.
 flowchart LR
     subgraph tailnet["Your tailnet (Tailscale)"]
         server["<b>Server</b><br/>the library and its history<br/>web UI"]
-        pc["<b>Desktop client</b><br/>~/Music, ~/Pictures, ~/Videos"]
-        phone["<b>Android app</b><br/>Music, Pictures/MediaSync,<br/>Movies/MediaSync"]
+        pc["<b>Desktop client</b><br/>~/Music, ~/Pictures, ~/Videos, ~/Games"]
+        phone["<b>Android app</b><br/>Music, Pictures/MediaSync,<br/>Movies/MediaSync, ROMs/MediaSync"]
         browser["Web browser"]
         pc <--> server
         phone <--> server
@@ -38,7 +41,7 @@ flowchart LR
   the web UI.
 - **Devices** (the desktop client and the Android app) pair with the server once, using a code or
   QR code from the web UI. Each device syncs some of the library's top-level folders
-  (`music/`, `photos/`, `videos/`) with folders of its own, either both ways, receive-only or
+  (`music/`, `photos/`, `videos/`, `games/`) with folders of its own, either both ways, receive-only or
   send-only.
 - **Syncing asks first.** Every hour each device scans its folders and asks the server what
   changed, without changing anything. When something is waiting, it notifies you. You then accept
@@ -153,19 +156,21 @@ The first PC you set up fills the library, so set up the PC with your music on i
 5. The app previews what the first sync does to the phone's `Music` folder. It starts when you tap
    **Start syncing**.
 
-### 5. Photos and videos (optional)
+### 5. Photos, videos and games (optional)
 
-Music is synced from the start. Photos and videos are separate folders you add on each device:
+Music is synced from the start. Photos, videos and games are separate folders you add on each device:
 
 ```sh
 mediasync-desktop add-folder photos/ ~/Pictures                  # every photo, filed by year
 mediasync-desktop add-folder videos/ ~/Videos                    # every video
 mediasync-desktop add-folder videos/ ~/Videos --pick             # only the videos picked for this PC
+mediasync-desktop add-folder games/ ~/Games                      # every game, by platform
+mediasync-desktop add-folder games/ ~/Games --pick               # only the games and platforms picked for this PC
 ```
 
-On the phone, turn on **Photos** (kept in `Pictures/MediaSync`) or **Videos** (`Movies/MediaSync`,
-only the videos you pick) on the main screen. The rest of the phone's pictures, such as the
-camera's own folder, are left alone.
+On the phone, turn on **Photos** (kept in `Pictures/MediaSync`), **Videos** (`Movies/MediaSync`,
+only the videos you pick) or **Games** (`ROMs/MediaSync`, only the games and platforms you pick) on
+the main screen. The rest of the phone's pictures, such as the camera's own folder, are left alone.
 
 ## Using it
 
@@ -189,6 +194,7 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
 
 - **Library**: browse the folders. Each album has a tag editor (**Edit this album's tags**). Each
   video folder has **Edit these videos' details**, and each photo folder has **Date these photos**.
+- **Games**: the games by platform, each with its details, files and the devices that keep it.
 - **History**: every revision, with what it changed. You can revert a whole revision or restore
   a single field.
 - **Resolve**: conflicts, such as the same tag edited differently on two devices, wait here for
@@ -241,6 +247,41 @@ the file name when they're added.
 
 On a device set to `--pick`, only the videos you pick are kept. You pick them on a video's page or
 for a whole folder in the web UI, or under Videos > Choose videos… on the phone.
+
+### Games
+
+Disc images and ROMs (`.iso`, `.bin`/`.cue`, `.chd`, `.sfc`, `.gba`, …) of games you own go in
+`games/`. Each file keeps its own name, since a `.cue` or `.m3u` refers to its other files by name,
+and each game gets a folder: `games/{platform}/{title} ({region})/`.
+
+When files arrive, the server identifies them:
+
+1. **By checksum**, against the No-Intro (cartridges) and Redump (discs) lists of known good
+   dumps, from the [libretro database](https://github.com/libretro/libretro-database) that
+   RetroArch uses. This gives the title, region, disc number and serial.
+2. **By serial**, for a PlayStation or PlayStation 2 disc that isn't byte-for-byte the Redump
+   dump: the disc's `SYSTEM.CNF` names the game.
+3. **By name**, failing both: the platform comes from the extension or a folder named after it
+   (`PS2/`, `GameCube/`), and the title from the file name.
+
+The year, publisher, developer, genre and number of players then come from the
+[LaunchBox games database](https://gamesdb.launchbox-app.com). Files with no match of their own,
+such as a `.cue` or a disc's other tracks, join the game of the file they're named after.
+
+The platforms it knows: PlayStation, PlayStation 2, PSP, GameCube, Wii, Xbox, Saturn, Dreamcast,
+NES, Super NES, Nintendo 64, Game Boy, Game Boy Color, Game Boy Advance, Nintendo DS, Genesis,
+Master System and Game Gear. Games on other platforms sync as they are, where they are.
+
+In the web UI, **Games** lists them by platform. A game's page lets you correct its details for
+all its files at once, search the database to set it by hand, identify it again, and choose the
+devices that keep it. On a device set to `--pick`, keep single games or a whole platform, including
+games added to it later. On the phone, that's under Games > Choose games….
+
+The two databases are downloaded by `mediasync-gamedb`, a service of its own: weekly, and when
+you click **Update now** on the Games page. It's the only part of MediaSync that goes on the
+internet, it can only write to the repository's `gamedb/` folder, and it sends nothing about your
+library. The server itself stays on loopback. If a download fails, the Games page says why, and
+`journalctl -u mediasync-gamedb` has the details.
 
 ### The desktop client's commands
 
@@ -345,7 +386,7 @@ MediaSync is Kotlin throughout, built with Gradle.
 | Module | What |
 | --- | --- |
 | `shared/` | Plain Kotlin used everywhere: media hashing (`media/`), tag reading and writing with jaudiotagger (`tags/`), the sync API types (`api/`), tag policy, path rules, subscriptions and the three-way merge (`library/`), and the sync engine both clients run (`sync/`) |
-| `server/` | Ktor server: repository, sync API, web UI, and the `setup`, `fsck`, `prune` and `snapshot` commands |
+| `server/` | Ktor server: repository, sync API, web UI, game identification, and the `setup`, `fsck`, `prune`, `snapshot` and `fetch-games-db` commands |
 | `desktop/` | Desktop client: a systemd user service, the review page, tray icon, notifications and the CLI |
 | `app/` | Android app (Jetpack Compose and WorkManager) |
 | `spike/` | The first tag round-trip check (see [MILESTONES.md](MILESTONES.md)) |

@@ -26,8 +26,8 @@ private const val USAGE = """Usage: mediasync-desktop <command>
 
   setup                  Pair this PC with your MediaSync server and choose the music folder
   add-folder <prefix> <folder> [--mode two-way|receive-only|send-only] [--pick]
-                         Sync another folder, e.g. add-folder videos/ ~/Videos; --pick keeps only
-                         what you pick for this PC in the web UI
+                         Sync another folder, e.g. add-folder videos/ ~/Videos or games/ ~/Games;
+                         --pick keeps only what you pick for this PC in the web UI
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
