@@ -14,6 +14,10 @@ import java.util.Locale
 object RepoPaths {
     const val MUSIC = "music/"
     const val VIDEOS = "videos/"
+    const val PHOTOS = "photos/"
+
+    /** The folder in photos/ for photos without a date. */
+    const val UNDATED = "Undated"
 
     /** Video categories whose paths follow their fields; anything else in videos/ keeps its path. */
     const val MOVIES = "movies"
@@ -57,12 +61,28 @@ object RepoPaths {
     fun isMusic(path: String) = path.startsWith(MUSIC)
 
     /**
-     * Whether an asset's path is worked out from its fields rather than kept as given: music, and
-     * movies and episodes. A device can't move these by renaming; a retag moves them.
+     * Whether an asset's path is worked out from its fields rather than kept as given: music,
+     * movies and episodes, and photos (and the videos among them). A device can't move these by
+     * renaming; a retag moves them.
      */
     fun followsFields(kind: AssetKind, path: String, category: String?): Boolean =
         (kind == AssetKind.AUDIO && isMusic(path)) ||
-            (kind == AssetKind.VIDEO && path.startsWith(VIDEOS) && (category == MOVIES || category == SHOWS))
+            (kind == AssetKind.VIDEO && path.startsWith(VIDEOS) && (category == MOVIES || category == SHOWS)) ||
+            isPhoto(kind, path)
+
+    /** A photo, or a video kept with the photos (a phone's clip, say). */
+    fun isPhoto(kind: AssetKind, path: String) = (kind == AssetKind.IMAGE || kind == AssetKind.VIDEO) && path.startsWith(PHOTOS)
+
+    /**
+     * `photos/{year}/{date} {name}`, the date being as precise as it's known ("2019",
+     * "2019-07" or "2019-07-14"); `photos/Undated/{name}` without one.
+     */
+    fun photo(tags: Tags, originalName: String): String {
+        val date = first(tags, TagField.DATE)?.let(PhotoDates::normalize)
+            ?: return listOf("photos", UNDATED, segment(originalName, 255 - EXTENSION_ROOM)).joinToString("/")
+        val name = PhotoDates.withoutDate(originalName).ifEmpty { originalName }
+        return listOf("photos", date.take(4), segment("$date $name", 255 - EXTENSION_ROOM)).joinToString("/")
+    }
 
     /**
      * `videos/movies/{title} ({year})/{title} ({year})`, or for an episode

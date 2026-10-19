@@ -19,12 +19,17 @@ class RepoDir(val root: Path) {
     val blobs: Path = root.resolve("blobs")
     val uploads: Path = root.resolve("uploads")
     val snapshots: Path = root.resolve("snapshots")
+
+    /** Small JPEGs of the photos, for the web UI; made when first shown, and disposable. */
+    val thumbs: Path = root.resolve("thumbs")
     private val settingsFile: Path = root.resolve("settings.json")
     private val secretsFile: Path = root.resolve("admin.json")
 
     val isSetUp get() = Files.exists(secretsFile) && Files.exists(db)
 
     fun blob(hash: String): Path = blobs.resolve(hash.substring(0, 2)).resolve(hash.substring(2, 4)).resolve(hash)
+
+    fun thumb(hash: String): Path = thumbs.resolve(hash.substring(0, 2)).resolve("$hash.jpg")
 
     fun readSettings(): Settings =
         if (Files.exists(settingsFile)) ApiJson.decodeFromString(Files.readString(settingsFile)) else Settings()

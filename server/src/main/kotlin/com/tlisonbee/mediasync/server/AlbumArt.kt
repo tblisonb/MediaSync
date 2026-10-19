@@ -4,6 +4,8 @@ import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.TagPolicy
 import com.tlisonbee.mediasync.tags.TagField
+import java.awt.RenderingHints
+import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -224,6 +226,56 @@ internal object Images {
             }
         }
     } catch (e: IOException) {
+        null
+    }
+
+    /**
+     * [file] as a JPEG at most [size] pixels on its longer side, the right way up (phones often
+     * store photos sideways, with an EXIF orientation); null if Java can't decode it (HEIC, raw).
+     */
+    fun preview(file: Path, size: Int): ByteArray? = try {
+        ImageIO.createImageInputStream(file.toFile())?.use { input ->
+            val reader = ImageIO.getImageReaders(input).asSequence().firstOrNull() ?: return null
+            try {
+                reader.setInput(input, true, true)
+                val longer = maxOf(reader.getWidth(0), reader.getHeight(0))
+                // Decoding every nth pixel is much quicker, and still leaves at least twice the pixels needed.
+                val step = maxOf(1, longer / (size * 2))
+                val image = reader.read(0, reader.defaultReadParam.apply { setSourceSubsampling(step, step, 0, 0) })
+                val scale = minOf(1.0, size.toDouble() / maxOf(image.width, image.height))
+                val quarterTurns = when (PhotoMetadata.orientation(file)) {
+                    6 -> 1
+                    3 -> 2
+                    8 -> 3
+                    else -> 0
+                }
+                val w = maxOf(1, (image.width * scale).toInt())
+                val h = maxOf(1, (image.height * scale).toInt())
+                val turned = quarterTurns % 2 == 1
+                val out = BufferedImage(if (turned) h else w, if (turned) w else h, BufferedImage.TYPE_INT_RGB)
+                val g = out.createGraphics()
+                try {
+                    g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                    g.color = java.awt.Color.WHITE
+                    g.fillRect(0, 0, out.width, out.height)
+                    val t = AffineTransform()
+                    when (quarterTurns) {
+                        1 -> t.translate(h.toDouble(), 0.0)
+                        2 -> t.translate(w.toDouble(), h.toDouble())
+                        3 -> t.translate(0.0, w.toDouble())
+                    }
+                    t.rotate(quarterTurns * Math.PI / 2)
+                    t.scale(w.toDouble() / image.width, h.toDouble() / image.height)
+                    g.drawImage(image, t, null)
+                } finally {
+                    g.dispose()
+                }
+                ByteArrayOutputStream().also { ImageIO.write(out, "jpg", it) }.toByteArray()
+            } finally {
+                reader.dispose()
+            }
+        }
+    } catch (e: Exception) {
         null
     }
 

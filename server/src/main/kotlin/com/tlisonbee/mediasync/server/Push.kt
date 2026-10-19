@@ -12,10 +12,12 @@ import com.tlisonbee.mediasync.api.PushOutcome
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.api.PushResponse
 import com.tlisonbee.mediasync.api.PushResult
+import com.tlisonbee.mediasync.library.PhotoDates
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.SyncMode
 import com.tlisonbee.mediasync.library.ThreeWayMerge
 import com.tlisonbee.mediasync.library.VideoNames
+import com.tlisonbee.mediasync.tags.TagField
 import java.util.UUID
 import kotlin.math.abs
 
@@ -100,6 +102,11 @@ private fun Repository.importNew(scope: RevisionScope, device: Device, change: P
         val guess = VideoNames.guess(change.sourcePath ?: "$path.${media.format}")
         category = guess.category
         if (tags.isEmpty()) tags = policy.filter(change.kind, guess.tags)
+    }
+    // A photo's date comes from the camera, or else its name; corrected in the web UI.
+    if (RepoPaths.isPhoto(change.kind, path) && tags[TagField.DATE] == null) {
+        val date = PhotoMetadata.date(dir.blob(media.baseBlob)) ?: PhotoDates.fromName(RepoPaths.name((change.sourcePath ?: path).replace('\\', '/')))
+        if (date != null) tags = tags + (TagField.DATE to listOf(date))
     }
 
     // The repository already has this media: the file belongs to that asset.

@@ -220,6 +220,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         "The resolve queue, history and undo are in the web UI for now.",
         style = MaterialTheme.typography.bodySmall,
     )
+    PhotosCard(state, viewModel)
     VideosCard(state, viewModel)
     ReviewSettingsCard(state, viewModel)
     if (confirmUnpair) {
@@ -408,6 +409,26 @@ private fun Warnings(warnings: List<String>) {
     val shown = if (all) warnings else warnings.take(2)
     shown.forEach { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
     if (warnings.size > shown.size) TextButton(onClick = { all = true }) { Text("Show all ${warnings.size} warnings") }
+}
+
+@Composable
+private fun PhotosCard(state: UiState, viewModel: MainViewModel) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Photos", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Keep the library's photos in Pictures/MediaSync, filed by year. Photos you put there are added to it; " +
+                            "the rest of the phone's pictures (the camera's, screenshots) are left alone.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = state.photosEnabled, onCheckedChange = viewModel::setPhotos)
+            }
+            state.photosError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
 }
 
 @Composable

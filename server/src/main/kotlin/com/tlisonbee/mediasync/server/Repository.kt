@@ -172,8 +172,9 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
 
     // ---- Paths ----
 
-    /** Where [v] belongs: music, movie and episode paths follow their fields; anything else keeps the path it was given. */
+    /** Where [v] belongs: music, movie, episode and photo paths follow their fields; anything else keeps the path it was given. */
     fun placePath(v: Version): String {
+        if (RepoPaths.isPhoto(v.kind, v.path)) return RepoPaths.photo(v.tags, originalName(v.assetId) ?: RepoPaths.name(v.path))
         if (v.kind == AssetKind.VIDEO && RepoPaths.followsFields(v.kind, v.path, v.category)) {
             return RepoPaths.video(v.tags, v.category, originalName(v.assetId) ?: RepoPaths.name(v.path)) ?: v.path
         }

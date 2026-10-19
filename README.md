@@ -176,6 +176,24 @@ mediasync-desktop add-folder videos/ /mnt/other/media/videos            # everyt
 mediasync-desktop add-folder videos/ ~/Videos --pick                     # only what's picked
 ```
 
+## Photos
+
+Photos (and the videos among them, a phone's clips) have a date: a year, a month or a day
+(`2019`, `2019-07`, `2019-07-14`). They're filed as `photos/{year}/{date} {name}`, and as
+`photos/Undated/{name}` until they have one; anything else in `photos/` keeps its place. On
+import the date comes from the camera (EXIF's DateTimeOriginal, or a video's creation time), or
+else from the name (`IMG_20240714_…`, `PXL_…`, `Screenshot_…`, `IMG-20240714-WA…`). Fix it in
+the web UI: Library > a folder in photos/ > Date these photos, which shows thumbnails; tick some,
+type a date, and they move. The date is MediaSync's: the photo files themselves are never changed.
+
+```sh
+mediasync-desktop add-folder photos/ ~/Pictures     # this PC's pictures, filed in place
+```
+
+On the phone, Photos keeps every photo in Pictures/MediaSync, and adds what's put there; the
+camera's folder and the rest of the phone's pictures are left alone. Thumbnails are cached in
+the repository's `thumbs/` folder (HEIC and raw files have none: Java can't decode them).
+
 ## Releases
 
 Each part is versioned and released on its own, from master on GitHub, as a tag and a GitHub release
