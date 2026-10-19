@@ -62,6 +62,8 @@ object Platforms {
      */
     fun guess(path: String): Platform? {
         val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() }
+        // A console's BIOS isn't a game: it stays where it is, for the emulator to find.
+        if (parts.dropLast(1).any { it.equals("bios", ignoreCase = true) }) return null
         val ext = parts.lastOrNull()?.substringAfterLast('.', "")?.lowercase().orEmpty()
         ALL.firstOrNull { ext in it.extensions }?.let { return it }
         for (folder in parts.dropLast(1).asReversed()) {
