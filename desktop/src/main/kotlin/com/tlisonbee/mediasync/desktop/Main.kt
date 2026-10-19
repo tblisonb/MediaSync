@@ -124,7 +124,7 @@ private fun setup(dirs: Dirs) {
     writeSandboxDropIn(config)
     println()
     println("Paired as \"$name\"; $music syncs with music/ (${mode.label}).")
-    println("Photos and videos come with a later milestone.")
+    println("Sync your photos and videos too with: mediasync-desktop add-folder photos/ ~/Pictures (or videos/ ~/Videos)")
 }
 
 /** The service may write only to its state and to the synced folders; tell systemd which those are. */

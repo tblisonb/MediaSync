@@ -20,6 +20,11 @@ done
 wants() { [[ " ${parts[*]} " == *" $1 "* ]]; }
 
 [[ -n ${JAVA_HOME:-} || ! -d $HOME/Android/jdk-21 ]] || export JAVA_HOME=$HOME/Android/jdk-21
+# Building needs a full JDK (17 or newer), not just a Java runtime.
+if [[ ! -x ${JAVA_HOME:-/nonexistent}/bin/javac ]] && ! command -v javac >/dev/null; then
+    echo "Building needs a JDK: sudo apt install openjdk-21-jdk-headless (or set JAVA_HOME to one)." >&2
+    exit 1
+fi
 tasks=()
 wants server && tasks+=(:server:installDist)
 wants desktop && tasks+=(:desktop:installDist)

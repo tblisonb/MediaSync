@@ -4,7 +4,7 @@ plugins {
     application
 }
 
-version = "0.2.0"
+version = "0.2.1"
 
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
 tasks.jar { archiveVersion = "" }
@@ -12,6 +12,16 @@ tasks.jar { archiveVersion = "" }
 tasks.distTar {
     compression = Compression.GZIP
     archiveExtension = "tar.gz"
+}
+
+// The release tarball installs itself: unpack it and run `sudo ./install.sh`.
+distributions {
+    main {
+        contents {
+            from("../deploy/install.sh") { filePermissions { unix("rwxr-xr-x") } }
+            from("../deploy/mediasync.service")
+        }
+    }
 }
 
 // Java 17 bytecode like :shared, so the desktop client's tests can run this server in-process.
