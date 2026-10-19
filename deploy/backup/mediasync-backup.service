@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up the MediaSync repository to the Pi
+Description=Back up the MediaSync repository
 After=network-online.target
 Wants=network-online.target
 
@@ -28,7 +28,7 @@ ExecStart=/usr/bin/restic backup --retry-lock 2h --tag nightly \
 Nice=10
 IOSchedulingClass=idle
 
-# Network: only the tailnet (where the Pi and MagicDNS are).
+# Network: only the tailnet (where the backup machine and MagicDNS are).
 IPAddressDeny=any
 IPAddressAllow=localhost 100.64.0.0/10 fd7a:115c:a1e0::/48
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

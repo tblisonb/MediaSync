@@ -1,5 +1,5 @@
 [Unit]
-Description=Verify the MediaSync backup on the Pi
+Description=Verify the MediaSync backup
 After=network-online.target
 Wants=network-online.target
 

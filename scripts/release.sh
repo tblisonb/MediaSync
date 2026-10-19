@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tags one part of MediaSync and publishes it as a GitHub release, with its build attached:
 #
-#   scripts/release.sh app       # app-v<versionName>: the APK
+#   scripts/release.sh app       # app-v<versionName>: the APK, signed with the release key
 #   scripts/release.sh desktop   # desktop-v<version>: a tarball with its own Java (bundledDist)
 #   scripts/release.sh server    # server-v<version>: the server's distribution tarball
 #
@@ -33,10 +33,14 @@ fi
 export JAVA_HOME=${JAVA_HOME:-$HOME/Android/jdk-21}
 case $part in
     app)
-        # Signed with this PC's debug key, like ./gradlew installDebug, so it installs over that.
-        ./gradlew -q :shared:test :app:assembleDebug
-        asset=app/build/outputs/apk/debug/mediasync-$version.apk
-        cp app/build/outputs/apk/debug/app-debug.apk "$asset"
+        # A release build, signed with the release key (scripts/make-release-key.sh), so every
+        # release installs over the one before it.
+        [[ -f $HOME/.android/mediasync-release.properties ]] ||
+            { echo "No release key: restore ~/.android/mediasync-release.{jks,properties}, or make one with scripts/make-release-key.sh." >&2; exit 1; }
+        ./gradlew -q :shared:test :app:assembleRelease
+        [[ -f app/build/outputs/apk/release/app-release.apk ]] || { echo "The release build isn't signed." >&2; exit 1; }
+        asset=app/build/outputs/apk/release/mediasync-$version.apk
+        cp app/build/outputs/apk/release/app-release.apk "$asset"
         ;;
     desktop)
         ./gradlew -q :desktop:test :desktop:bundledDist

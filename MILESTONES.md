@@ -77,7 +77,7 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | When | What |
 | --- | --- |
 | 2026-10-15 | **The Android app**, with the sync engine moved into `:shared` so both clients run the same code. It pairs by QR code and previews the first sync of `Music/`. |
-| 2026-10-15 | **Backups**: nightly restic backups of the repository to a Raspberry Pi, append-only, with a weekly check (`deploy/backup/`). |
+| 2026-10-15 | **Backups**: nightly restic backups of the repository to a Raspberry Pi, append-only, with a weekly check (`deploy/backup/`). On 2026-10-18 this was generalized: backups go to any Linux machine on the tailnet at any path, or to a folder on the server. |
 | 2026-10-15 | **Cleanup** in the web UI: name variants, an album tag editor, and stray files moved to their album. |
 | 2026-10-15 | **Ask before syncing**: devices check, notify you, and apply only what you approve. This includes the review page on the desktop and the review on the phone's main screen. |
 | 2026-10-15 | **Videos**: movie and episode details, filing, subtitles and posters, and per-device picks. Clients can sync more than one folder. |
@@ -89,3 +89,4 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | 2026-10-18 | The Android app shows what it's doing from the moment a button is pressed. |
 | 2026-10-18 | **Photos**: dated from the camera or their name, filed by year, and dated in the web UI with thumbnails. |
 | 2026-10-18 | **Setup for everyone**: the server tarball installs itself and checks Tailscale, the build no longer needs the Android SDK, and the README covers setup from scratch. |
+| 2026-10-18 | **Release builds of the app**, signed with a dedicated release key, from app 0.5.0 on. The server tarball also carries the backup scripts. |
