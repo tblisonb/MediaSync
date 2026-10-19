@@ -115,6 +115,9 @@ label.pick { margin: 0; }
 .error { color: var(--danger); }
 .empty { color: var(--muted); }
 .notice { background: var(--surface); border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 4px; }
+.notice.conversion p:first-child { margin-top: 0; }
+.progress progress { display: block; width: 100%; height: 14px; accent-color: var(--accent); }
+.progress .progress-text { margin: 6px 0 0; }
 .badge { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 0.75rem; font-weight: 500; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

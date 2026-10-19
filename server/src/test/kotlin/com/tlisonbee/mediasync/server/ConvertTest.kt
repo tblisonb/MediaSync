@@ -129,4 +129,44 @@ class ConvertTest {
         web.submitForm("/cleanup/convert-later", parameters { })
         assertEquals(emptyList(), repo.settings.convertToMp3)
     }
+
+    @Test
+    fun cleanupShowsARunningConversion() = withServer {
+        val web = loggedIn()
+        assertTrue("data-progress" !in web.get("/cleanup").bodyAsText(), "nothing running, no bar")
+
+        val job = Conversion(total = 828, started = System.currentTimeMillis() - 60_000).apply { done = 41; failed += "drm.wma" }
+        repo.conversion.set(job)
+        val cleanup = web.get("/cleanup").bodyAsText()
+        assertTrue("Converting to MP3." in cleanup, cleanup)
+        assertTrue(Regex("""<progress value="41" max="828"""").containsMatchIn(cleanup), "a bar")
+        // A minute for 41 tracks: about 19 more for the other 787.
+        assertTrue(Regex("""41 of 828 converted \(4%\), 1 couldn’t be, about (19|20|21) minutes left\.""").containsMatchIn(cleanup), cleanup)
+        assertTrue("""src="/static/progress.js"""" in cleanup)
+        assertTrue("href=\"/cleanup/convert\"" in cleanup, "a way to the conversion's page")
+        assertTrue("Convert the ticked formats to MP3" !in cleanup, "no second conversion while one runs")
+        assertTrue("41 of 828 converted" in web.get("/cleanup/convert").bodyAsText())
+
+        val progress = web.get("/cleanup/convert/progress")
+        assertTrue("script-src 'self'" in progress.headers["Content-Security-Policy"].orEmpty())
+        val body = progress.bodyAsText()
+        assertTrue(""""done":41""" in body && """"finished":false""" in body && "minutes left" in body, body)
+        assertEquals(HttpStatusCode.OK, web.get("/static/progress.js").status)
+
+        job.done = 828
+        assertEquals("All 828 converted, 1 couldn’t be. Saving them as one revision…", progressText(job))
+        job.finished = true
+        assertTrue(""""finished":true""" in web.get("/cleanup/convert/progress").bodyAsText())
+        assertTrue("data-progress" !in web.get("/cleanup").bodyAsText(), "the bar goes once it's done")
+    }
+
+    @Test
+    fun timeLeftFollowsThePaceSoFar() {
+        val job = Conversion(total = 100, started = 0).apply { done = 0 }
+        assertEquals(null, job.millisLeft(now = 10_000), "no pace yet")
+        job.done = 10
+        assertEquals(90_000, job.millisLeft(now = 10_000))
+        job.done = 50
+        assertEquals(10_000, job.millisLeft(now = 10_000), "it speeds up as the pace does")
+    }
 }
