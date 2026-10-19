@@ -48,7 +48,7 @@ minus the comment packet. Anything unrecognised is hashed whole and is never wri
 
 ```sh
 ./gradlew :server:test                                # sync API, web UI and maintenance tests
-./gradlew :server:installDist && sudo deploy/install.sh   # install or update the service (needs a JDK; see Toolchain)
+scripts/update.sh server                              # build, then install or update the service (sudo; needs a JDK, see Toolchain)
 deploy/smoke-test.sh https://<server>.<tailnet>.ts.net:8443 ABCD-EFGH   # check it over the tailnet
 ```
 
@@ -93,11 +93,13 @@ Logs: `journalctl -u mediasync`. The API is under `/api/v1` (types in `shared/..
 
 ```sh
 ./gradlew :desktop:test                                                     # two clients + a real server, end to end
-./gradlew :desktop:installDist && desktop/build/install/mediasync-desktop/install.sh   # install for this user
+scripts/update.sh desktop                                                   # build, then install or update it for this user
 ./gradlew :desktop:bundledDist   # desktop/build/distributions/*.tar.gz: includes its own Java, for other PCs
 ```
 
-The first `install.sh` asks for the server URL and a pairing code (web UI > Devices > Pair a device),
+`scripts/update.sh` with no argument updates the server, then the desktop client (it runs
+`./gradlew :server:installDist :desktop:installDist`, `sudo deploy/install.sh` and the client's
+`install.sh`). The first `install.sh` asks for the server URL and a pairing code (web UI > Devices > Pair a device),
 then shows what the first sync will do to your files (`mediasync-desktop preview`: which tracks
 move, which tags go) and starts syncing only when you say yes. The client needs the server's
 `/api/v1/policy`, so update the server first.
@@ -114,6 +116,9 @@ How it behaves:
   notification says so, with Review and Accept all. The review page (`mediasync-desktop review`, in
   the browser) groups server changes by revision (Accept, or Revert on the server) and local ones
   by kind (Accept, or Undo here); anything left alone waits for the next look.
+- An icon in Plasma's system tray says what waits (it's highlighted when something does, or when
+  syncs keep failing). A click opens the review page, a middle click checks now, and its menu has
+  Review changes, Accept all, Check now (Sync now with asking off) and Open web UI.
 - With asking turned off on that page, a sync runs 10 s after local changes settle, every 15
   minutes, and within a second or two of a change pushed from elsewhere.
 - More than 20 files (and over 10% of them) disappearing at once, or the server asking to delete

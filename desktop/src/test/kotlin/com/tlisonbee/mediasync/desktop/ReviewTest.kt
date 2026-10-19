@@ -182,7 +182,7 @@ class ReviewTest {
     fun theServiceAsksAndTheReviewPageDecides() = TestWorld().use { world ->
         val (desktop, laptop) = world.twoPcs()
         val notes = RecordingNotifier()
-        val service = Service(laptop.dirs, laptop.config, laptop.token) { notes }
+        val service = Service(laptop.dirs, laptop.config, laptop.token, makeTray = { NoTray }) { notes }
         val thread = Thread { service.run() }.apply { isDaemon = true; start() }
         try {
             val url = waitFor("the page") { runCatching { Files.readString(laptop.dirs.reviewUrl).trim() }.getOrNull() }
