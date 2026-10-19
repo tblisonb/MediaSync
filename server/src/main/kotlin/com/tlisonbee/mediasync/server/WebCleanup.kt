@@ -6,6 +6,7 @@ import com.tlisonbee.mediasync.tags.TagField
 import io.ktor.http.Parameters
 import io.ktor.server.html.respondHtml
 import io.ktor.server.request.receiveParameters
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -29,7 +30,10 @@ import kotlinx.html.input
 import kotlinx.html.label
 import kotlinx.html.li
 import kotlinx.html.p
+import kotlinx.html.progress
+import kotlinx.html.script
 import kotlinx.html.section
+import kotlinx.html.strong
 import kotlinx.html.span
 import kotlinx.html.summary
 import kotlinx.html.table
@@ -39,6 +43,10 @@ import kotlinx.html.th
 import kotlinx.html.thead
 import kotlinx.html.tr
 import kotlinx.html.ul
+import kotlinx.serialization.Serializable
+
+@Serializable
+internal data class ConversionProgress(val finished: Boolean, val done: Int, val total: Int, val text: String)
 
 /** Fields the album editor sets once for every track. */
 private val ALBUM_FIELDS = listOf(TagField.ALBUM_ARTIST, TagField.ALBUM, TagField.DATE, TagField.GENRE)
@@ -61,9 +69,10 @@ fun Route.cleanupRoutes(repo: Repository) {
         val options = artOptions(call.parameters)
         val art = io { repo.artPlans(options) }
         val incomplete = io { repo.incompleteAlbums() }
+        val running = repo.conversion.get()?.takeIf { !it.finished }
         call.respondHtml {
             cleanupPage(
-                variants, strays, leftovers, convertible, repo.settings, options, art, incomplete, call.parameters["done"]?.toLongOrNull(),
+                variants, strays, leftovers, convertible, repo.settings, options, art, incomplete, running, call.parameters["done"]?.toLongOrNull(),
             )
         }
     }
@@ -105,6 +114,11 @@ fun Route.cleanupRoutes(repo: Repository) {
     get("/cleanup/convert") {
         val job = repo.conversion.get() ?: return@get call.respondRedirect("/cleanup")
         call.respondHtml { conversionPage(job) }
+    }
+    // What static/progress.js shows on the Cleanup page, worded here so the script only copies it.
+    get("/cleanup/convert/progress") {
+        val job = repo.conversion.get()
+        call.respond(job?.let { ConversionProgress(it.finished, it.done, it.total, progressText(it)) } ?: ConversionProgress(true, 0, 0, ""))
     }
     post("/cleanup/art") {
         val options = artOptions(call.receiveParameters())
@@ -175,9 +189,22 @@ private fun HTML.cleanupPage(
     artOptions: ArtOptions,
     art: List<ArtPlan>,
     incomplete: List<Pair<String, Int>>,
+    running: Conversion?,
     done: Long?,
 ) = page("Cleanup") {
     h1 { +"Cleanup" }
+    if (running != null) {
+        // static/progress.js keeps the bar current; without it, it shows where things stood on loading.
+        section("notice conversion") {
+            attributes["data-progress"] = "/cleanup/convert/progress"
+            p {
+                strong { +"Converting to MP3. " }
+                a(href = "/cleanup/convert") { +"See its progress page" }
+            }
+            conversionProgress(running)
+        }
+        script(src = "/static/progress.js") { }
+    }
     if (done != null) {
         p("notice") {
             +"Saved as "
@@ -229,7 +256,7 @@ private fun HTML.cleanupPage(
     }
 
     leftoverSection(leftovers, settings.deleteClutter)
-    convertSection(convertible, settings.convertToMp3)
+    convertSection(convertible, settings.convertToMp3, running != null)
     albumArtSection(artOptions, art)
 
     h2 { +"Albums with missing tags" }
@@ -301,8 +328,8 @@ private fun FlowContent.leftoverSection(leftovers: List<Leftovers>, deleteClutte
     }
 }
 
-private fun FlowContent.convertSection(convertible: Map<String, List<String>>, later: List<String>) {
-    if (convertible.isEmpty() && later.isEmpty()) return
+private fun FlowContent.convertSection(convertible: Map<String, List<String>>, later: List<String>, running: Boolean) {
+    if (convertible.isEmpty() && later.isEmpty() && !running) return
     h2 { id = "convert"; +"Convert to MP3" }
     p("muted") {
         +"Tracks in other formats, made MP3s (LAME’s best VBR setting) so every device and player gets one format. "
@@ -312,7 +339,13 @@ private fun FlowContent.convertSection(convertible: Map<String, List<String>>, l
         +"or two a track, and is one revision: reverting it brings the originals back, and they stay in the repository until pruned."
     }
     if (!Ffmpeg.available) p("error") { +"Converting needs ffmpeg on the server: sudo apt install ffmpeg" }
-    if (convertible.isEmpty()) {
+    if (running) {
+        // The tracks stay listed until the conversion is written, all at once, at the end.
+        p {
+            +"Converting now; its progress is at the top of this page. "
+            a(href = "/cleanup/convert") { +"See its progress page" }
+        }
+    } else if (convertible.isEmpty()) {
         p("empty") { +"Every track is an MP3." }
     } else if (Ffmpeg.available) {
         form(action = "/cleanup/convert", method = FormMethod.post) {
@@ -363,7 +396,10 @@ private fun HTML.conversionPage(job: Conversion) = page("Converting to MP3", ref
     h1 { +"Converting to MP3" }
     val rev = job.rev
     when {
-        !job.finished -> p { +"${job.done} of ${job.total} converted. This page follows along; you can leave it, too." }
+        !job.finished -> {
+            conversionProgress(job)
+            p("muted") { +"This page follows along. You can leave it, too: the Cleanup page shows the progress while it runs." }
+        }
         rev != null -> p("notice") {
             +"Saved as "
             a(href = "/revisions/$rev") { +"r$rev" }
@@ -375,7 +411,37 @@ private fun HTML.conversionPage(job: Conversion) = page("Converting to MP3", ref
         p("error") { +"${job.failed.size} couldn’t be converted (a DRM-protected file, say) and stay as they are:" }
         ul("list") { job.failed.forEach { li { +it } } }
     }
-    if (job.finished) p { a(href = "/cleanup") { +"Back to Cleanup" } }
+    p { a(href = "/cleanup") { +"Back to Cleanup" } }
+}
+
+/** A conversion's bar and how far along it is, as the Cleanup page and the conversion's own page show them. */
+private fun FlowContent.conversionProgress(job: Conversion) = div("progress") {
+    progress {
+        attributes["value"] = job.done.toString()
+        attributes["max"] = job.total.toString()
+        attributes["aria-label"] = "Tracks converted"
+    }
+    p("progress-text") { +progressText(job) }
+}
+
+/** "42 of 828 converted (5%), about 40 minutes left", and the same while it's being saved or once it's done. */
+internal fun progressText(job: Conversion): String {
+    val failed = job.failed.size.takeIf { it > 0 }?.let { ", $it couldn’t be" }.orEmpty()
+    val percent = if (job.total == 0) 100 else job.done * 100 / job.total
+    return when {
+        job.finished -> "Finished: ${job.done} of ${job.total} done$failed."
+        job.done == job.total -> "All ${job.total} converted$failed. Saving them as one revision…"
+        else -> "${job.done} of ${job.total} converted ($percent%)$failed" + job.millisLeft()?.let { ", ${timeLeft(it)}" }.orEmpty() + "."
+    }
+}
+
+private fun timeLeft(ms: Long): String {
+    val minutes = (ms + 59_999) / 60_000
+    return when {
+        minutes <= 1 -> "about a minute left"
+        minutes < 90 -> "about $minutes minutes left"
+        else -> "about ${(minutes + 30) / 60} hours left"
+    }
 }
 
 private fun FlowContent.albumArtSection(options: ArtOptions, plans: List<ArtPlan>) {

@@ -32,11 +32,14 @@ val CONVERTIBLE_FORMATS = setOf(
 val LOSSLESS_FORMATS = setOf("flac", "alac", "wav", "aif", "aiff", "ape", "wv", "tta")
 
 /** How a conversion is going. [rev] is set once it's written; [finished] also when nothing was. */
-class Conversion(val total: Int) {
+class Conversion(val total: Int, private val started: Long = System.currentTimeMillis()) {
     @Volatile var done = 0
     val failed: MutableList<String> = CopyOnWriteArrayList()
     @Volatile var rev: Long? = null
     @Volatile var finished = false
+
+    /** About how long the rest takes, at the pace so far; null until a track is done. */
+    fun millisLeft(now: Long = System.currentTimeMillis()): Long? = done.takeIf { it > 0 }?.let { (now - started) * (total - it) / it }
 }
 
 /** The tracks in the music folder that have no MP3, by the format of the one they have. */

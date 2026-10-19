@@ -91,3 +91,4 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | 2026-10-18 | **Setup for everyone**: the server tarball installs itself and checks Tailscale, the build no longer needs the Android SDK, and the README covers setup from scratch. |
 | 2026-10-18 | **Release builds of the app**, signed with a dedicated release key, from app 0.5.0 on. The server tarball also carries the backup scripts. |
 | 2026-10-18 | **One format**: Cleanup converts tracks of any format (not only WMA) to MP3, and can keep converting new ones as they arrive (server 0.3.0). |
+| 2026-10-19 | While a conversion to MP3 runs, the Cleanup page shows it at the top with a progress bar and the time left, kept current as it goes (server 0.3.1). |
