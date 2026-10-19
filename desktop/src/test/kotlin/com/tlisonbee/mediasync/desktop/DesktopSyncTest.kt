@@ -1,11 +1,16 @@
 package com.tlisonbee.mediasync.desktop
 
+import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.ChangeType
+import com.tlisonbee.mediasync.api.PushChange
+import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.media.MediaHasher
 import com.tlisonbee.mediasync.server.diff
 import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
+import com.tlisonbee.mediasync.sync.LocalFiles
 import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.sha256Hex
 import com.tlisonbee.mediasync.tags.AudioTags
 import java.nio.file.Files
 import kotlin.test.Test
@@ -54,6 +59,34 @@ class DesktopSyncTest {
         assertEquals(1, report.clutterDeleted)
         assertTrue("deleted 1 leftover file" in report.summary(), report.summary())
         assertEquals(0, report.pushed)
+    }
+
+    @Test
+    fun aTrackThatSyncedAsAPlainFileBecomesATrack() = TestWorld().use { world ->
+        // An ID3v1-only MP3, pushed as a plain file by a client from before it could read those.
+        val old = world.client("Old phone")
+        val mp3 = Fixtures.copy("tone-id3v1.mp3", old.file("old rips/06-Fixture_Tone.mp3"))
+        val media = LocalFiles.read(mp3).media
+        old.api.upload(mp3, sha256Hex(mp3), mp3.fileName.toString())
+        val plain = old.api.push(PushRequest(changes = listOf(PushChange(path = "music/old rips/06-Fixture_Tone", kind = AssetKind.OTHER, mediaHash = media)))).results.single().asset
+
+        // Received by that same old client too, which kept it as a plain file without tags.
+        val desktop = world.client("Desktop")
+        desktop.sync()
+        assertEquals(listOf("old rips/06-Fixture_Tone.mp3"), desktop.files())
+        val received = desktop.file("old rips/06-Fixture_Tone.mp3")
+        desktop.index.put(desktop.index.get(received)!!.copy(kind = AssetKind.OTHER, tags = emptyMap(), seenTags = emptyMap()))
+
+        // Now it reads the tags: they're a retag to push, which makes it a track and names it by them.
+        val report = desktop.sync()
+        assertEquals(1, report.pushed)
+        assertTrue(report.warnings.isEmpty(), report.warnings.joinToString())
+        val head = world.repo.headVersion(plain.assetId)!!
+        assertEquals(AssetKind.AUDIO, head.kind)
+        assertEquals("music/Fixture Artist", head.path.substringBeforeLast('/').substringBeforeLast('/'))
+        assertEquals(listOf(head.path.removePrefix("music/") + ".mp3"), desktop.files())
+        assertTrue(desktop.engine.review().isEmpty, "nothing left waiting")
+        assertEquals(0, desktop.sync().pushed)
     }
 
     @Test

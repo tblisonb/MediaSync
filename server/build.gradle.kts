@@ -9,6 +9,11 @@ version = "0.1.0"
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
 tasks.jar { archiveVersion = "" }
 
+tasks.distTar {
+    compression = Compression.GZIP
+    archiveExtension = "tar.gz"
+}
+
 // Java 17 bytecode like :shared, so the desktop client's tests can run this server in-process.
 java {
     sourceCompatibility = JavaVersion.VERSION_17
