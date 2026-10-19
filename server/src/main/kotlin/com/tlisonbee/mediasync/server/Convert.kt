@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.PictureRef
+import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.TagPolicy
 import com.tlisonbee.mediasync.tags.AudioTags
@@ -11,11 +12,24 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
 /**
- * WMA tracks to MP3, with ffmpeg. MediaSync can't tag WMA, so those tracks sync as plain files,
- * keep the path they came with, and many players can't play them. Each becomes an MP3 (LAME's
- * best VBR setting) carrying the tags and cover ffmpeg finds, and is filed by its tags like any
- * other track. All of them are one revision: reverting it brings the WMA files back.
+ * Tracks to MP3, with ffmpeg: WMA, AAC (.m4a), FLAC, Ogg and the rest. Each becomes an MP3 (LAME's
+ * best VBR setting), so every device and player gets one format. A track MediaSync already tags
+ * keeps its tags and cover, and its place. WMA and the other formats it can't tag sync as plain
+ * files under the names they came with; they take the tags and cover ffmpeg finds, and are filed
+ * by their tags like any other track. A conversion is one revision: reverting it brings the
+ * originals back, which stay in the repository until pruned.
  */
+
+/** Audio formats a track can be converted from. */
+val CONVERTIBLE_FORMATS = setOf(
+    "wma", "m4a", "m4b", "aac", "alac", "flac", "ogg", "oga", "opus", "wav", "aif", "aiff", "ape", "wv", "mpc", "tta", "mka", "ac3",
+)
+
+/**
+ * Formats that keep every bit of the recording: converting them gives that up for good, so the
+ * Cleanup page leaves them unticked. (An .m4a can be lossless ALAC too; it's listed as m4a.)
+ */
+val LOSSLESS_FORMATS = setOf("flac", "alac", "wav", "aif", "aiff", "ape", "wv", "tta")
 
 /** How a conversion is going. [rev] is set once it's written; [finished] also when nothing was. */
 class Conversion(val total: Int) {
@@ -25,25 +39,36 @@ class Conversion(val total: Int) {
     @Volatile var finished = false
 }
 
-/** The WMA tracks in the music folder. */
-fun Repository.wmaTracks(): List<Version> = db.read {
-    musicExtras().filter { it.kind == AssetKind.OTHER && formatOf(it) == "wma" }
+/** The tracks in the music folder that have no MP3, by the format of the one they have. */
+fun Repository.nonMp3Tracks(): Map<String, List<Version>> = db.read {
+    db.query(
+        """
+        SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
+        WHERE h.deleted = 0 AND v.kind IN (?, ?) AND h.path_key >= ? AND h.path_key < ? ORDER BY h.path_key
+        """.trimIndent(),
+        AssetKind.AUDIO.apiName, AssetKind.OTHER.apiName, RepoPaths.MUSIC, "music0",
+    ) { it.toVersion() }
+        .mapNotNull { v ->
+            val formats = v.renditions.mapNotNull { media(it)?.format }
+            formats.firstOrNull()?.takeIf { it in CONVERTIBLE_FORMATS && "mp3" !in formats }?.let { it to v }
+        }
+        .groupBy({ it.first }, { it.second })
 }
 
 /**
- * Starts converting every WMA track on [launch]'s thread; returns the conversion, or the one already
- * running.
+ * Starts converting every track in [formats] on [launch]'s thread; returns the conversion, or the
+ * one already running.
  */
-fun Repository.startWmaConversion(deviceId: String, launch: (() -> Unit) -> Unit): Conversion {
+fun Repository.startConversion(deviceId: String, formats: Set<String>, launch: (() -> Unit) -> Unit = ::inBackground): Conversion {
     if (!Ffmpeg.available) badRequest("converting needs ffmpeg on the server: sudo apt install ffmpeg")
-    val tracks = wmaTracks()
-    val job = Conversion(tracks.size)
     val running = conversion.get()
     if (running != null && !running.finished) return running
+    val tracks = nonMp3Tracks().filterKeys { it in formats }.values.flatten()
+    val job = Conversion(tracks.size)
     if (!conversion.compareAndSet(running, job)) return conversion.get()!!
     launch {
         try {
-            job.rev = convertWma(deviceId, tracks, job)
+            job.rev = convertToMp3(deviceId, tracks, job)
         } finally {
             job.finished = true
         }
@@ -51,13 +76,30 @@ fun Repository.startWmaConversion(deviceId: String, launch: (() -> Unit) -> Unit
     return job
 }
 
+/**
+ * After a push: converts what it brought in a format [Settings.convertToMp3] lists, in the
+ * background, so tracks added later end up MP3s too. A conversion that's already running is left
+ * to finish; the next push picks up what it missed.
+ */
+fun Repository.convertArrivals(request: PushRequest) {
+    val formats = settings.convertToMp3.toSet()
+    if (formats.isEmpty() || !Ffmpeg.available) return
+    val arrived = request.changes.any { change ->
+        !change.deleted && change.path.startsWith(RepoPaths.MUSIC) && change.mediaHash?.let { media(it)?.format } in formats
+    }
+    if (arrived) startConversion(webDeviceId(), formats)
+}
+
+private fun inBackground(work: () -> Unit) = Thread(work, "mp3-conversion").apply { isDaemon = true }.start()
+
 /** Converts [tracks], then writes them as one revision; a track changed meanwhile is left as it is. */
-internal fun Repository.convertWma(deviceId: String, tracks: List<Version>, job: Conversion): Long? {
-    class Converted(val track: Version, val media: MediaRow, val tags: Map<String, List<String>>, val pictures: List<PictureRef>)
+internal fun Repository.convertToMp3(deviceId: String, tracks: List<Version>, job: Conversion): Long? {
+    class Converted(val track: Version, val from: String, val media: MediaRow, val tags: Map<String, List<String>>, val pictures: List<PictureRef>)
     val converted = mutableListOf<Converted>()
     for (track in tracks) {
-        val name = "${RepoPaths.name(track.path)}.wma"
-        val mp3 = track.renditions.firstOrNull()?.let(::media)?.let { Ffmpeg.toMp3(dir.blob(it.baseBlob), dir.uploads) }
+        val original = track.renditions.firstOrNull()?.let(::media)
+        val name = "${RepoPaths.name(track.path)}.${original?.format}"
+        val mp3 = original?.let { Ffmpeg.toMp3(dir.blob(it.baseBlob), dir.uploads) }
         if (mp3 == null) {
             job.failed += name
         } else {
@@ -68,7 +110,7 @@ internal fun Repository.convertWma(deviceId: String, tracks: List<Version>, job:
                     val blob = blobs.putBytes(picture.data, if ("png" in picture.mimeType) "cover.png" else "cover.jpg").baseBlob
                     PictureRef(TagPolicy.FRONT_COVER, blob, picture.mimeType)
                 }
-                converted += Converted(track, media, read.tags.fields, listOfNotNull(cover))
+                converted += Converted(track, original.format, media, read.tags.fields, listOfNotNull(cover))
             } catch (e: Exception) {
                 job.failed += name
             } finally {
@@ -78,16 +120,20 @@ internal fun Repository.convertWma(deviceId: String, tracks: List<Version>, job:
         job.done++
     }
     if (converted.isEmpty()) return null
+    val from = converted.groupingBy { it.from.uppercase() }.eachCount().entries.sortedByDescending { it.value }
+        .joinToString { "${it.value} ${it.key}" }
     return write {
-        val scope = RevisionScope(this, deviceId, "Converted ${converted.size} WMA ${if (converted.size == 1) "track" else "tracks"} to MP3")
+        val scope = RevisionScope(this, deviceId, "Converted ${converted.size} ${if (converted.size == 1) "track" else "tracks"} to MP3 ($from)")
         for (c in converted) {
             val head = headVersion(c.track.assetId)?.takeIf { it.rev == c.track.rev } ?: continue
+            // A track MediaSync tags keeps its tags and cover; one it couldn't takes what ffmpeg read.
+            val managed = head.kind == AssetKind.AUDIO
             scope.write(
                 head.copy(
                     kind = AssetKind.AUDIO,
                     renditions = listOf(c.media.mediaHash),
-                    tags = policy.filter(AssetKind.AUDIO, c.tags),
-                    pictures = policy.filterPictures(AssetKind.AUDIO, c.pictures),
+                    tags = if (managed) head.tags else policy.filter(AssetKind.AUDIO, c.tags),
+                    pictures = if (managed) head.pictures else policy.filterPictures(AssetKind.AUDIO, c.pictures),
                 ),
             )
         }

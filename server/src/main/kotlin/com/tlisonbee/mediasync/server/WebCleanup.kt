@@ -57,12 +57,14 @@ fun Route.cleanupRoutes(repo: Repository) {
         val variants = io { repo.nameVariants() }
         val strays = io { repo.strayPlan() }
         val leftovers = io { repo.leftovers() }
-        val wma = io { repo.wmaTracks() }.map { it.path + ".wma" }
+        val convertible = io { repo.nonMp3Tracks() }.mapValues { (format, tracks) -> tracks.map { it.path + "." + format } }
         val options = artOptions(call.parameters)
         val art = io { repo.artPlans(options) }
         val incomplete = io { repo.incompleteAlbums() }
         call.respondHtml {
-            cleanupPage(variants, strays, leftovers, wma, repo.settings.deleteClutter, options, art, incomplete, call.parameters["done"]?.toLongOrNull())
+            cleanupPage(
+                variants, strays, leftovers, convertible, repo.settings, options, art, incomplete, call.parameters["done"]?.toLongOrNull(),
+            )
         }
     }
     post("/cleanup/rename") {
@@ -86,11 +88,21 @@ fun Route.cleanupRoutes(repo: Repository) {
         io { repo.updateSettings(repo.settings.copy(deleteClutter = on)) }
         call.respondRedirect("/cleanup#leftovers")
     }
-    post("/cleanup/wma") {
-        io { repo.startWmaConversion(repo.webDeviceId()) { work -> Thread(work, "wma-conversion").apply { isDaemon = true }.start() } }
-        call.respondRedirect("/cleanup/wma")
+    // Converts the ticked formats now and, if asked, as tracks in them arrive later.
+    post("/cleanup/convert") {
+        val form = call.receiveParameters()
+        val formats = form.getAll("format").orEmpty().filter { it in CONVERTIBLE_FORMATS }.toSet()
+        val later = if (form["later"] != null) formats.sorted() else emptyList()
+        io { repo.updateSettings(repo.settings.copy(convertToMp3 = later)) }
+        val started = formats.isNotEmpty() && io { repo.nonMp3Tracks().keys.any { it in formats } }
+        if (started) io { repo.startConversion(repo.webDeviceId(), formats) }
+        call.respondRedirect(if (started) "/cleanup/convert" else "/cleanup#convert")
     }
-    get("/cleanup/wma") {
+    post("/cleanup/convert-later") {
+        io { repo.updateSettings(repo.settings.copy(convertToMp3 = emptyList())) }
+        call.respondRedirect("/cleanup#convert")
+    }
+    get("/cleanup/convert") {
         val job = repo.conversion.get() ?: return@get call.respondRedirect("/cleanup")
         call.respondHtml { conversionPage(job) }
     }
@@ -158,8 +170,8 @@ private fun HTML.cleanupPage(
     variants: List<NameVariants>,
     strays: StrayPlan,
     leftovers: List<Leftovers>,
-    wma: List<String>,
-    deleteClutter: Boolean,
+    convertible: Map<String, List<String>>,
+    settings: Settings,
     artOptions: ArtOptions,
     art: List<ArtPlan>,
     incomplete: List<Pair<String, Int>>,
@@ -216,8 +228,8 @@ private fun HTML.cleanupPage(
         }
     }
 
-    leftoverSection(leftovers, deleteClutter)
-    wmaSection(wma)
+    leftoverSection(leftovers, settings.deleteClutter)
+    convertSection(convertible, settings.convertToMp3)
     albumArtSection(artOptions, art)
 
     h2 { +"Albums with missing tags" }
@@ -289,37 +301,73 @@ private fun FlowContent.leftoverSection(leftovers: List<Leftovers>, deleteClutte
     }
 }
 
-private fun FlowContent.wmaSection(wma: List<String>) {
-    if (wma.isEmpty()) return
-    h2 { id = "wma"; +"WMA tracks" }
+private fun FlowContent.convertSection(convertible: Map<String, List<String>>, later: List<String>) {
+    if (convertible.isEmpty() && later.isEmpty()) return
+    h2 { id = "convert"; +"Convert to MP3" }
     p("muted") {
-        +"Windows Media Audio, which MediaSync can’t tag and many players can’t play, so these sync as plain files under the names "
-        +"they came with. Converting makes each an MP3 (LAME’s best VBR setting) with the tags and cover it had, filed by its tags. "
-        +"One lossy format to another loses a little more, though rarely audibly at this setting. It takes a second or two a track, "
-        +"and is one revision: reverting it brings the WMA files back."
+        +"Tracks in other formats, made MP3s (LAME’s best VBR setting) so every device and player gets one format. "
+        +"A track keeps its tags, cover and place; a WMA file, which MediaSync can’t tag, takes the tags and cover it had "
+        +"and is filed by them. One lossy format to another (AAC, WMA, Ogg) loses a little more, though rarely audibly at "
+        +"this setting. Lossless ones (FLAC, ALAC, WAV) give that up for good, so they start unticked. It takes a second "
+        +"or two a track, and is one revision: reverting it brings the originals back, and they stay in the repository until pruned."
     }
     if (!Ffmpeg.available) p("error") { +"Converting needs ffmpeg on the server: sudo apt install ffmpeg" }
-    details {
-        summary { +"${wma.size} ${if (wma.size == 1) "track" else "tracks"}" }
-        ul("list") { wma.take(200).forEach { li { +it.removePrefix(RepoPaths.MUSIC) } } }
-        if (wma.size > 200) p("muted") { +"And ${wma.size - 200} more." }
+    if (convertible.isEmpty()) {
+        p("empty") { +"Every track is an MP3." }
+    } else if (Ffmpeg.available) {
+        form(action = "/cleanup/convert", method = FormMethod.post) {
+            table("leftovers") {
+                thead { tr { th { }; th { +"Format" }; th { +"Tracks" } } }
+                tbody {
+                    convertible.entries.sortedByDescending { it.value.size }.forEach { (format, paths) ->
+                        tr {
+                            td {
+                                input(type = InputType.checkBox, name = "format") {
+                                    value = format
+                                    checked = format !in LOSSLESS_FORMATS
+                                    attributes["aria-label"] = ".$format tracks"
+                                }
+                            }
+                            td { +".$format"; if (format in LOSSLESS_FORMATS) span("muted") { +" (lossless)" } }
+                            td {
+                                details {
+                                    summary { +"${paths.size} ${if (paths.size == 1) "track" else "tracks"}" }
+                                    ul("list") { paths.take(200).forEach { li { +it.removePrefix(RepoPaths.MUSIC) } } }
+                                    if (paths.size > 200) p("muted") { +"And ${paths.size - 200} more." }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            p {
+                label {
+                    input(type = InputType.checkBox, name = "later") { checked = true }
+                    +" Also convert tracks in the ticked formats when they’re added later"
+                }
+            }
+            div("actions") {
+                button(classes = "primary") { +"Convert the ticked formats to MP3" }
+            }
+        }
     }
-    if (Ffmpeg.available) {
-        form(action = "/cleanup/wma", method = FormMethod.post) {
-            button(classes = "primary") { +"Convert ${wma.size} to MP3" }
+    if (later.isNotEmpty()) {
+        form(action = "/cleanup/convert-later", method = FormMethod.post, classes = "actions") {
+            span { +"Tracks added in ${later.joinToString { ".$it" }} are converted to MP3 as they arrive. " }
+            button { +"Stop converting them" }
         }
     }
 }
 
-private fun HTML.conversionPage(job: Conversion) = page("Converting WMA tracks", refresh = if (job.finished) null else 3) {
-    h1 { +"Converting WMA tracks" }
+private fun HTML.conversionPage(job: Conversion) = page("Converting to MP3", refresh = if (job.finished) null else 3) {
+    h1 { +"Converting to MP3" }
     val rev = job.rev
     when {
         !job.finished -> p { +"${job.done} of ${job.total} converted. This page follows along; you can leave it, too." }
         rev != null -> p("notice") {
             +"Saved as "
             a(href = "/revisions/$rev") { +"r$rev" }
-            +". Devices get the MP3 files at their next sync, and drop the WMA ones."
+            +". Devices get the MP3 files at their next sync, and drop the originals."
         }
         else -> p { +"Nothing was converted." }
     }

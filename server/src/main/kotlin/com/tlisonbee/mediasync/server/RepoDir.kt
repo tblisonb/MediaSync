@@ -69,6 +69,8 @@ data class Settings(
     val tagPolicy: TagPolicy = TagPolicy(),
     /** Devices delete the clutter they never sync (Cleanup > Leftover files on devices). */
     val deleteClutter: Boolean = false,
+    /** Audio formats converted to MP3 as tracks in them arrive (Cleanup > Convert to MP3). */
+    val convertToMp3: List<String> = emptyList(),
 )
 
 @Serializable
