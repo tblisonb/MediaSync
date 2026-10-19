@@ -22,8 +22,8 @@ android {
         applicationId = "com.tlisonbee.mediasync"
         minSdk = 33
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.6.1"
+        versionCode = 16
+        versionName = "0.6.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

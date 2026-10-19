@@ -230,7 +230,8 @@ class GameTest {
         val web = browser().also { it.submitForm("/login", io.ktor.http.parameters { append("password", ADMIN_PASSWORD) }) }
         val games = web.get("/games").bodyAsText()
         assertTrue("PlayStation 2" in games && "Game Boy Advance" in games)
-        assertTrue("known dumps" in games, "the databases' state")
+        assertTrue("not what's in your library" in games, "the databases' state, told apart from the library")
+        assertTrue("Your library has 2 games (2 files" in games)
 
         val folder = "games/PlayStation 2/Shadow of the Colossus (USA)"
         assertTrue("Shadow of the Colossus" in web.get("/games/platform?folder=" + enc("games/PlayStation 2")).bodyAsText())
