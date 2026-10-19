@@ -44,7 +44,7 @@ case $part in
         ;;
     server)
         ./gradlew -q :server:test :server:distTar
-        asset=server/build/distributions/mediasync-server-$version.tar
+        asset=server/build/distributions/mediasync-server-$version.tar.gz
         ;;
 esac
 

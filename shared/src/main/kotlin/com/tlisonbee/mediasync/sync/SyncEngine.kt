@@ -664,11 +664,13 @@ class SyncEngine(
         }
         val pictures = if (coverChanged) base.pictures.filter { it.type != TagPolicy.FRONT_COVER } + listOfNotNull(cover) else base.pictures
         val music = RepoPaths.followsFields(base.kind, base.path, base.category)
+        // A plain file on the server that this device reads as a track: saying so makes it one.
+        val kind = if (base.kind == AssetKind.OTHER && row.kind == AssetKind.AUDIO) AssetKind.AUDIO else base.kind
         return PushChange(
             assetId = row.assetId,
             baseRev = base.rev,
             path = if (music) base.path else LocalFiles.repoPath(folder, row.file),
-            kind = base.kind,
+            kind = kind,
             mediaHash = row.media,
             baseMediaHash = row.seenMedia,
             durationMs = row.durationMs,
