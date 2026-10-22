@@ -83,6 +83,9 @@ PrivateTmp=yes
 [Install]
 WantedBy=graphical-session.target
 UNIT
+# Before 0.2.4 the drop-in's folders were required, so one that wasn't there stopped the service.
+DROP_IN="$UNIT_DIR/mediasync-desktop.service.d/folders.conf"
+[[ ! -f $DROP_IN ]] || sed -i 's|"/|"-/|g' "$DROP_IN"
 
 systemctl --user daemon-reload
 CLI="$DEST/bin/mediasync-desktop"

@@ -97,3 +97,4 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | 2026-10-19 | Clearer wording: a second copy of a photo or video is called that, not "same audio", and the Games page tells the game databases' size apart from the library's (server 0.4.2, desktop 0.2.2, app 0.6.2). |
 | 2026-10-19 | PS1 discs: a `.cue` joins only the disc it's named after (not any game whose title begins its name), and an ECM-packed image is known by its serial. Doubtful identifications are made again on update (server 0.4.3). |
 | 2026-10-21 | `mediasync-desktop move-folder` moves a synced folder, such as onto another drive, without uploading it again; `mediasync-desktop version` names its version and the server's (desktop 0.2.3, server 0.4.4). |
+| 2026-10-21 | A synced folder that isn't there (an unmounted drive, a folder moved away) no longer stops the desktop service from starting; it's skipped, and `status` says so (desktop 0.2.4). |

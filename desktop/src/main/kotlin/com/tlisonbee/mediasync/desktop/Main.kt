@@ -141,7 +141,9 @@ private fun setup(dirs: Dirs) {
 private fun writeSandboxDropIn(config: ClientConfig) {
     val unitDir = Path.of(System.getenv("XDG_CONFIG_HOME") ?: (System.getProperty("user.home") + "/.config"), "systemd/user/mediasync-desktop.service.d")
     Files.createDirectories(unitDir)
-    val paths = config.folders.joinToString(" ") { "\"${it.folder}\"" }
+    // "-": a folder that isn't there (an unmounted drive) mustn't stop the service starting; the
+    // sync skips it until it's back.
+    val paths = config.folders.joinToString(" ") { "\"-${it.folder}\"" }
     Files.writeString(unitDir.resolve("folders.conf"), "# Written by `mediasync-desktop setup`.\n[Service]\nReadWritePaths=$paths\n")
     runCatching {
         ProcessBuilder("systemctl", "--user", "daemon-reload").redirectOutput(ProcessBuilder.Redirect.DISCARD)
@@ -313,6 +315,10 @@ private fun status(dirs: Dirs) = withConfig(dirs) { config, token ->
         for (folder in config.folders) {
             val inFolder = rows.filter { it.prefix == folder.prefix }
             val waiting = inFolder.count { it.changed && it.ignored == null }
+            if (!Files.isDirectory(folder.root)) {
+                println("${folder.folder} → ${folder.prefix} (${folder.mode.label}): not there, so it isn't synced until it's back")
+                continue
+            }
             println("${folder.folder} → ${folder.prefix} (${folder.mode.label}): ${inFolder.count { !it.missing }} files, $waiting waiting to sync")
             inFolder.filter { it.ignored != null }.forEach { println("  left alone: ${it.path} (${it.ignoredReason})") }
         }
