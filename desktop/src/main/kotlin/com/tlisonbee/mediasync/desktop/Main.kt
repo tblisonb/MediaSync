@@ -21,6 +21,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
+import kotlinx.serialization.json.JsonPrimitive
 
 private const val USAGE = """Usage: mediasync-desktop <command>
 
@@ -28,6 +29,9 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   add-folder <prefix> <folder> [--mode two-way|receive-only|send-only] [--pick]
                          Sync another folder, e.g. add-folder videos/ ~/Videos or games/ ~/Games;
                          --pick keeps only what you pick for this PC in the web UI
+  move-folder <prefix> <folder>
+                         Move a synced folder's files somewhere else and sync them there,
+                         e.g. move-folder games/ /mnt/other/media/games
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
@@ -39,7 +43,11 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   diff <rev>             What one revision changed, field by field
   revert <rev>           Undo a revision (as a new revision)
   open [resolve]         Open the web UI, or its resolve queue, in the browser
+  version                This program's version, and the server's
 """
+
+/** From the jar's manifest; null when not run from a built jar. */
+private val VERSION: String? = object {}.javaClass.`package`?.implementationVersion
 
 fun main(args: Array<String>) {
     val dirs = Dirs.xdg()
@@ -47,6 +55,7 @@ fun main(args: Array<String>) {
         when (args.firstOrNull()) {
             "setup" -> setup(dirs)
             "add-folder" -> addFolder(dirs, args.drop(1))
+            "move-folder" -> moveFolder(dirs, args.drop(1))
             "preview" -> preview(dirs)
             "run" -> withConfig(dirs) { config, token -> Service(dirs, config, token).run() }
             "status" -> status(dirs)
@@ -57,6 +66,7 @@ fun main(args: Array<String>) {
             "diff" -> diff(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
             "revert" -> revert(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
             "open" -> withConfig(dirs) { config, _ -> openInBrowser(config.serverUrl + if (args.getOrNull(1) == "resolve") "/resolve" else "/") }
+            "version", "--version" -> version(dirs)
             "-h", "--help", "help", null -> print(USAGE)
             else -> usage()
         }
@@ -166,6 +176,80 @@ private fun addFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { confi
         runCatching { ProcessBuilder("systemctl", "--user", "restart", "mediasync-desktop").inheritIO().start().waitFor() }
         println("The service restarted with it; its next check lists what the folder holds (mediasync-desktop check).")
     }
+}
+
+private fun moveFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { config, token ->
+    val prefix = args.getOrNull(0)?.let { if (it.endsWith("/")) it else "$it/" } ?: usage()
+    val to = expandHome(args.getOrNull(1) ?: usage())
+    val folder = config.folders.firstOrNull { it.prefix == prefix }
+        ?: fail("$prefix isn't synced here; these are: ${config.folders.joinToString { it.prefix }}.")
+    if (to == folder.root) fail("$prefix already syncs with $to.")
+    if (to.startsWith(folder.root) || folder.root.startsWith(to)) fail("$to and ${folder.folder} are inside one another; choose a folder beside it.")
+    config.folders.firstOrNull { it != folder && (to.startsWith(it.root) || it.root.startsWith(to)) }?.let {
+        fail("$to overlaps ${it.folder}, which syncs with ${it.prefix}.")
+    }
+    Index(dirs.index).use { index -> FolderMove(folder, to).problem(index) }?.let(::fail)
+
+    // The service mustn't look at the folder while its files are on their way.
+    val wasRunning = systemctl("is-active", "--quiet", "mediasync-desktop") == 0
+    if (wasRunning) {
+        println("Stopping the sync service while the files move…")
+        systemctl("stop", "mediasync-desktop")
+    }
+    val lock = Service.acquireLock(dirs) ?: fail("Another mediasync-desktop holds the index; stop it first (systemctl --user stop mediasync-desktop).")
+    val moved = Index(dirs.index).use { index ->
+        // Listed again now that nothing else writes to the folder.
+        val move = FolderMove(folder, to)
+        move.problem(index)?.let {
+            if (wasRunning) systemctl("start", "mediasync-desktop")
+            fail(it)
+        }
+        if (move.files.isEmpty()) {
+            println("${folder.folder} is empty or gone; its files are taken to be in $to already.")
+        } else {
+            println("Moving ${move.files.size} files (${FolderMove.size(move.bytes)}) from ${folder.folder} to $to…")
+        }
+        try {
+            move.run(index) { files, bytes ->
+                print("\r  ${files}/${move.files.size} files, ${FolderMove.size(bytes)} of ${FolderMove.size(move.bytes)}")
+                System.out.flush()
+            }.also { if (move.files.isNotEmpty()) println() }
+        } catch (e: java.io.IOException) {
+            println()
+            fail(
+                "The move stopped: ${e.message ?: e.javaClass.simpleName}\nWhat moved is synced from $to already; " +
+                    "run the same command again to move the rest. The sync service stays stopped until then.",
+            )
+        }
+    }
+    val updated = config.copy(folders = config.folders.map { if (it == folder) moved else it })
+    ConfigStore(dirs).save(updated, token)
+    writeSandboxDropIn(updated)
+    lock.release()
+    runCatching { ApiClient(config.serverUrl, token).putSubscription(updated.subscription()) }
+        .onFailure { System.err.println("Warning: couldn't tell the server (${it.message}); it learns the new folder at the next sync.") }
+    println("$to now syncs with $prefix (${folder.mode.label}).")
+    if (wasRunning) {
+        systemctl("start", "mediasync-desktop")
+        println("The sync service started again.")
+    }
+}
+
+private fun systemctl(vararg args: String): Int = runCatching {
+    ProcessBuilder(listOf("systemctl", "--user") + args).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.INHERIT).start().waitFor()
+}.getOrDefault(-1)
+
+private fun version(dirs: Dirs) {
+    println("mediasync-desktop ${VERSION ?: "(a development build)"}")
+    val config = ConfigStore(dirs).load()?.first ?: return
+    val server = runCatching { (ApiClient(config.serverUrl, null).health()["version"] as? JsonPrimitive)?.content }
+    println(
+        "Server at ${config.serverUrl}: " + server.fold(
+            { it ?: "0.4.3 or older (it doesn't say)" },
+            { "not reachable (${it.message ?: it.javaClass.simpleName})" },
+        ),
+    )
 }
 
 private fun normalizeUrl(text: String): String? {

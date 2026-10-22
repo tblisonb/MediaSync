@@ -6,7 +6,7 @@ plugins {
     application
 }
 
-version = "0.2.2"
+version = "0.2.3"
 
 // Runs on any Java 17+ runtime, not just the JDK it was built with.
 java {
@@ -17,6 +17,9 @@ java {
 kotlin {
     compilerOptions { jvmTarget = JvmTarget.JVM_17 }
 }
+
+// Read back by `mediasync-desktop version`.
+tasks.jar { manifest { attributes("Implementation-Version" to project.version) } }
 
 application {
     mainClass = "com.tlisonbee.mediasync.desktop.MainKt"

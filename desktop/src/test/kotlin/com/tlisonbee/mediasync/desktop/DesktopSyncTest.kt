@@ -11,6 +11,7 @@ import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.LocalFiles
 import com.tlisonbee.mediasync.sync.SyncEngine
+import com.tlisonbee.mediasync.sync.SyncReport
 import com.tlisonbee.mediasync.sync.sha256Hex
 import com.tlisonbee.mediasync.tags.AudioTags
 import java.nio.file.Files
@@ -358,5 +359,50 @@ class DesktopSyncTest {
             assertEquals(2, Files.walk(home).use { s -> s.filter { Files.isRegularFile(it) }.count() }.toInt(), pc.name)
         }
         assertTrue(world.repo.openIssues().isEmpty(), "no path collisions")
+    }
+
+    @Test
+    fun aMovedFolderIsTheSameFilesSomewhereElse() = TestWorld().use { world ->
+        world.repo.inBackground = { _, work -> work() }
+        val desktop = world.client("Desktop", games = false)
+        val games = desktop.music.resolveSibling("Games")
+        Files.createDirectories(games.resolve("Nintendo 64"))
+        Files.write(games.resolve("Nintendo 64/Mario Kart 64 (USA).z64"), ByteArray(100_000) { (it % 241).toByte() })
+        Files.write(games.resolve("Nintendo 64/Star Fox 64 (USA).z64"), ByteArray(100_000) { (it % 239).toByte() })
+        assertEquals(2, desktop.sync().pushed)
+        desktop.sync()
+
+        fun syncFrom(folder: FolderConfig): SyncReport {
+            val config = desktop.config.copy(folders = desktop.config.folders.map { if (it.prefix == "games/") folder else it })
+            return SyncEngine(config, desktop.api, desktop.index, desktop.dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 }).sync()
+        }
+
+        // Moved by move-folder: the files and their rows; nothing is read, sent or deleted again.
+        val drive = world.root.resolve("drive/games")
+        val move = FolderMove(desktop.config.folders.first { it.prefix == "games/" }, drive)
+        assertEquals(null, move.problem(desktop.index))
+        val moved = move.run(desktop.index)
+        assertEquals(drive.toString(), moved.folder)
+        assertFalse(Files.exists(games), "the old folder is gone")
+        val files = Files.walk(drive).use { s -> s.filter { Files.isRegularFile(it) }.count() }
+        assertEquals(2, files.toInt())
+        var report = syncFrom(moved)
+        assertEquals(listOf(0, 0, 0), listOf(report.filesRead, report.pushed, report.deleted))
+
+        // Moved by hand first, then told: the same.
+        val other = world.root.resolve("other/games")
+        Files.createDirectories(other.parent)
+        Files.move(drive, other)
+        val told = FolderMove(moved, other)
+        assertEquals(null, told.problem(desktop.index))
+        report = syncFrom(told.run(desktop.index))
+        assertEquals(listOf(0, 0, 0), listOf(report.filesRead, report.pushed, report.deleted))
+        val laptop = world.client("Laptop", games = false)
+        laptop.sync()
+        assertEquals(2, Files.walk(laptop.music.resolveSibling("Games")).use { s -> s.filter { Files.isRegularFile(it) }.count() }.toInt())
+
+        // Neither here nor there: refused, as an unmounted drive would be.
+        Files.move(other, world.root.resolve("hidden"))
+        assertTrue(FolderMove(moved.copy(folder = other.toString()), world.root.resolve("nowhere")).problem(desktop.index)!!.contains("not mounted"))
     }
 }
