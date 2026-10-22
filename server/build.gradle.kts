@@ -4,10 +4,14 @@ plugins {
     application
 }
 
-version = "0.4.3"
+version = "0.4.4"
 
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
-tasks.jar { archiveVersion = "" }
+tasks.jar {
+    archiveVersion = ""
+    // Read back by /api/v1/health.
+    manifest { attributes("Implementation-Version" to project.version) }
+}
 
 tasks.distTar {
     compression = Compression.GZIP

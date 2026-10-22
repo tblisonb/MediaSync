@@ -172,6 +172,11 @@ On the phone, turn on **Photos** (kept in `Pictures/MediaSync`), **Videos** (`Mo
 only the videos you pick) or **Games** (`ROMs/MediaSync`, only the games and platforms you pick) on
 the main screen. The rest of the phone's pictures, such as the camera's own folder, are left alone.
 
+To keep a folder somewhere else later, such as on another drive, move it with MediaSync rather than
+by hand: `mediasync-desktop move-folder games/ /mnt/other/media/games`. It stops the sync service,
+moves the files and starts the service again. The files keep their place in the sync, so nothing is
+uploaded again.
+
 ## Using it
 
 ### Reviewing changes

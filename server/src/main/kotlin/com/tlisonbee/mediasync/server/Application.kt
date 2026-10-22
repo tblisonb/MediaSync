@@ -66,6 +66,8 @@ import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.nio.file.Files
 import java.util.Base64
 import kotlin.time.Duration.Companion.days
@@ -81,6 +83,9 @@ class DevicePrincipal(val device: Device)
 val SESSION_LIFETIME = 30.days
 val LOGIN_RATE_LIMIT = RateLimitName("login")
 val PAIR_RATE_LIMIT = RateLimitName("pair")
+
+/** From the jar's manifest; null when not run from the built jar (in tests). */
+val VERSION: String? = Repository::class.java.`package`?.implementationVersion
 
 fun Application.mediaSyncModule(repo: Repository) {
     install(ContentNegotiation) { json(ApiJson) }
@@ -126,7 +131,14 @@ fun Application.mediaSyncModule(repo: Repository) {
     routing {
         staticResources("/static", "static")
         route("/api/v1") {
-            get("/health") { call.respond(mapOf("ok" to true)) }
+            get("/health") {
+                call.respond(
+                    buildJsonObject {
+                        put("ok", true)
+                        VERSION?.let { put("version", it) }
+                    },
+                )
+            }
             rateLimit(PAIR_RATE_LIMIT) {
                 post("/pair") {
                     val request = call.receive<PairRequest>()
