@@ -5,7 +5,8 @@
 # works: a Raspberry Pi, a NAS, an old PC. It installs restic's rest-server in append-only mode,
 # keeping the backups in DIR, and publishes it on the tailnet with HTTPS (`tailscale serve`).
 # It installs Tailscale too, if needed. Run it on that machine, from a copy of the backup folder.
-# It's safe to run again: it updates the program, the login and the folder.
+# It's safe to run again: it updates the program, the login and the folder. Logins already on the
+# machine for other backups are kept.
 #
 #   --path DIR          Where the backups are kept, best on a drive of its own. If the folder is
 #                       missing (the drive isn't mounted), the service doesn't start, rather than
@@ -89,7 +90,16 @@ if ! id restic >/dev/null 2>&1; then
 fi
 install -d -o restic -g restic -m 700 "$DATA"
 install -d -m 755 /etc/rest-server
-install -o root -g restic -m 640 "$HTPASSWD" /etc/rest-server/htpasswd
+# Merge the login in rather than replacing the file: the same rest-server may hold other backups
+# with logins of their own. A login with the same name is replaced; the others are kept.
+HTFILE=/etc/rest-server/htpasswd
+MERGED=$(mktemp)
+{
+    [[ ! -f $HTFILE ]] || awk -F: 'NR == FNR { if (NF) ours[$1] = 1; next } NF && !($1 in ours)' "$HTPASSWD" "$HTFILE"
+    awk NF "$HTPASSWD"
+} > "$MERGED"
+install -o root -g restic -m 640 "$MERGED" "$HTFILE"
+rm -f "$MERGED"
 
 sed "s|@DATA@|$DATA|g" rest-server.service > /etc/systemd/system/rest-server.service
 chmod 644 /etc/systemd/system/rest-server.service
