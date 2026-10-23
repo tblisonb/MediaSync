@@ -129,6 +129,19 @@ If the server PC is lost, set up a new one:
    sudo mv /var/lib/mediasync/snapshots/repo.db /var/lib/mediasync/repo.db
    ```
 
+   Then have every device compare all its files with the server on its next sync. The backup is
+   from the night before, and devices only ask for what's newer than the last revision they saw,
+   so a device that synced after the backup would skip the changes made from now on:
+
+   ```sh
+   sudo apt install sqlite3
+   sudo sqlite3 /var/lib/mediasync/repo.db 'UPDATE device SET rescan = 1'
+   ```
+
+   On their next sync, the devices come back in line with the backup: files added after it are
+   removed from them. Copy any you want to keep out of their synced folders first, and add them
+   back after (see [Restoring from a backup](README.md#restoring-from-a-backup)).
+
 3. Install the server as usual. It sees the existing repository and keeps it, along with your
    admin password and devices. If the mediasync user doesn't exist yet, the installer creates it;
    then hand it the files and check them:
@@ -138,6 +151,17 @@ If the server PC is lost, set up a new one:
    sudo chown -R mediasync:mediasync /var/lib/mediasync
    sudo systemctl restart mediasync
    sudo -u mediasync /opt/mediasync/bin/mediasync-server fsck --full --repo /var/lib/mediasync
+   ```
+
+4. The game databases aren't in the backup: download them now rather than waiting for the weekly
+   run. Then carry on backing up to the same place, with the note's two values:
+
+   ```sh
+   sudo systemctl start mediasync-gamedb
+   sudo install -d -m 700 /etc/mediasync/backup
+   sudo sh -c 'umask 077; cat > /etc/mediasync/backup/password'     # paste the password, Enter, Ctrl-D
+   sudo sh -c 'umask 077; cat > /etc/mediasync/backup/repository'   # the same for the repository
+   sudo /opt/mediasync/backup/install.sh
    ```
 
 If the new PC has a different tailnet name, the devices need the new address: pair them again.

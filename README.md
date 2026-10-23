@@ -361,6 +361,72 @@ Back up now with `sudo systemctl start --no-block mediasync-backup`, and follow 
 `journalctl -fu mediasync-backup`. To move the backups somewhere else, remove
 `/etc/mediasync/backup/repository` and set them up again.
 
+### Restoring from a backup
+
+A backup is for when the repository itself is lost or damaged. To get back an older version of a
+file, or undo a change, use History in [the web UI](#the-web-ui) instead: it's quicker, and
+nothing else rolls back.
+
+**If the server PC is gone**, set up a new one from the backup: [KEYS.md](KEYS.md) has the steps,
+using the password and repository you saved.
+
+**To roll the server back** to an earlier backup (the repository is damaged, or something went
+wrong that History can't undo). It needs free space for the library again, since the current
+repository is kept until you've checked the restore:
+
+1. Point restic at the backup (the setup's own files say where it is and hold the password), and
+   choose a snapshot. Each nightly backup is one snapshot; note its ID, or use `latest`:
+
+   ```sh
+   export RESTIC_REPOSITORY_FILE=/etc/mediasync/backup/repository RESTIC_PASSWORD_FILE=/etc/mediasync/backup/password
+   sudo -E restic snapshots
+   ```
+
+2. Stop the server and its backups, and set the current repository aside:
+
+   ```sh
+   sudo systemctl stop mediasync mediasync-backup.timer
+   sudo mv /var/lib/mediasync /var/lib/mediasync.before-restore
+   ```
+
+3. Restore the snapshot (use your `--repo` folder in place of `/var/lib/mediasync` if you chose
+   another). The live database isn't in the backup, so use the consistent copy made just before
+   each backup. The game databases aren't backed up either; bring them back from the old copy:
+
+   ```sh
+   sudo -E restic restore <ID> --target /var/lib/mediasync-restore
+   sudo mv /var/lib/mediasync-restore/var/lib/mediasync /var/lib/mediasync
+   sudo rm -r /var/lib/mediasync-restore
+   sudo mv /var/lib/mediasync/snapshots/repo.db /var/lib/mediasync/repo.db
+   sudo mv /var/lib/mediasync.before-restore/gamedb /var/lib/mediasync/
+   ```
+
+4. Have every device compare all its files with the restored server on its next sync. Devices
+   only ask for what's newer than the last revision they saw, and the restored server is back
+   at an older one, so without this they would skip the changes made from now on:
+
+   ```sh
+   sudo apt install sqlite3        # if it isn't installed
+   sudo sqlite3 /var/lib/mediasync/repo.db 'UPDATE device SET rescan = 1'
+   ```
+
+5. Hand the files back to the service, start it, and check every file:
+
+   ```sh
+   sudo chown -R mediasync:mediasync /var/lib/mediasync
+   sudo systemctl start mediasync mediasync-backup.timer
+   sudo -u mediasync /opt/mediasync/bin/mediasync-server fsck --full --repo /var/lib/mediasync
+   ```
+
+6. Once the library looks right, remove the old copy:
+   `sudo rm -r /var/lib/mediasync.before-restore`.
+
+On their next sync, the devices come back in line with the server: files changed since the
+backup go back to how they were then, and files added since are removed from the devices (past
+the [safety net](#safety-nets), the desktop client waits for `sync --allow-deletes`). Changes a
+device hadn't synced yet are pushed as usual. If a device holds files added since the backup that
+you want to keep, copy them out of its synced folders before it syncs, and add them back after.
+
 Maintenance commands run as the service's user:
 
 ```sh
