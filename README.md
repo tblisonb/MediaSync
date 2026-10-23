@@ -349,7 +349,8 @@ nothing on the server, not even a mistake or malware, can delete or rewrite old 
    `sudo bash target-setup.sh --path /mnt/backup/mediasync backup.htpasswd`. Choose any folder
    for `--path`, ideally on its own drive: when the drive isn't mounted, backups stop rather than
    filling the system disk. The machine publishes the backups on port 443. If that port is taken,
-   add `--https-port 8444` here, and `--port 8444` on the server in the next step.
+   add `--https-port 8444` here, and `--port 8444` on the server in the next step. If the
+   machine's rest-server already holds other backups, their logins are kept.
 3. On the server, run step 1 again. It creates the backup repository and starts the timers.
 
 **To a folder on the server**, on another drive: `sudo backup/install.sh --local /mnt/usb/mediasync-backup`.
