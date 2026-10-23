@@ -32,6 +32,7 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   move-folder <prefix> <folder>
                          Move a synced folder's files somewhere else and sync them there,
                          e.g. move-folder games/ /mnt/other/media/games
+  remove-folder <prefix> Stop syncing a folder here; its files stay where they are, and on the server
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
   status                 Show the server, the folders and what is waiting to sync
@@ -56,6 +57,7 @@ fun main(args: Array<String>) {
             "setup" -> setup(dirs)
             "add-folder" -> addFolder(dirs, args.drop(1))
             "move-folder" -> moveFolder(dirs, args.drop(1))
+            "remove-folder" -> removeFolder(dirs, args.drop(1))
             "preview" -> preview(dirs)
             "run" -> withConfig(dirs) { config, token -> Service(dirs, config, token).run() }
             "status" -> status(dirs)
@@ -235,6 +237,33 @@ private fun moveFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { conf
         systemctl("start", "mediasync-desktop")
         println("The sync service started again.")
     }
+}
+
+private fun removeFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { config, token ->
+    val prefix = args.getOrNull(0)?.let { if (it.endsWith("/")) it else "$it/" } ?: usage()
+    val folder = config.folders.firstOrNull { it.prefix == prefix }
+        ?: fail("$prefix isn't synced here; these are: ${config.folders.joinToString { it.prefix }}.")
+    if (config.folders.size == 1) fail("$prefix is the only folder synced here; pair again with `mediasync-desktop setup` to start over.")
+    val updated = config.copy(folders = config.folders - folder)
+
+    // The service mustn't sync the folder halfway through being forgotten.
+    val wasRunning = systemctl("is-active", "--quiet", "mediasync-desktop") == 0
+    if (wasRunning) systemctl("stop", "mediasync-desktop")
+    val lock = Service.acquireLock(dirs) ?: run {
+        if (wasRunning) systemctl("start", "mediasync-desktop")
+        fail("Another mediasync-desktop holds the index; stop it first (systemctl --user stop mediasync-desktop).")
+    }
+    try {
+        // The server first: if it can't be told, nothing changes here either.
+        ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
+        Index(dirs.index).use { it.forget(prefix, updated) }
+        ConfigStore(dirs).save(updated, token)
+        writeSandboxDropIn(updated)
+    } finally {
+        lock.release()
+        if (wasRunning) systemctl("start", "mediasync-desktop")
+    }
+    println("${folder.folder} no longer syncs with $prefix. Its files are left as they are, here and on the server.")
 }
 
 private fun systemctl(vararg args: String): Int = runCatching {

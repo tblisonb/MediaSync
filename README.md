@@ -177,6 +177,9 @@ by hand: `mediasync-desktop move-folder games/ /mnt/other/media/games`. It stops
 moves the files and starts the service again. The files keep their place in the sync, so nothing is
 uploaded again.
 
+To stop syncing a folder on one PC, remove it: `mediasync-desktop remove-folder videos/`. Its files
+stay where they are, on the PC and on the server, and other devices keep syncing them.
+
 ## Using it
 
 ### Reviewing changes

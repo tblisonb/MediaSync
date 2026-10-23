@@ -4,6 +4,7 @@ import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Tags
+import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FileIndex
 import com.tlisonbee.mediasync.sync.RemoteChange
 import com.tlisonbee.mediasync.sync.Row
@@ -153,6 +154,20 @@ class Index(path: Path) : FileIndex, AutoCloseable {
             it.execute("DELETE FROM file")
             it.execute("DELETE FROM state")
             it.execute("DELETE FROM remote")
+        }
+    }
+
+    /**
+     * Forgets a folder that no longer syncs here: its rows, and server changes staged for it, so
+     * the review doesn't offer them. [config] is what still syncs.
+     */
+    @Synchronized
+    fun forget(prefix: String, config: ClientConfig) = transaction {
+        val assets = inFolder(prefix).mapNotNull { it.assetId }.toSet()
+        conn.prepareStatement("DELETE FROM file WHERE prefix = ?").use { it.setString(1, prefix); it.executeUpdate() }
+        for (change in remote()) {
+            val gone = change.asset?.let { config.folderFor(it.path) == null } ?: (change.assetId in assets && byAsset(change.assetId).isEmpty())
+            if (gone) deleteRemote(change.assetId)
         }
     }
 
