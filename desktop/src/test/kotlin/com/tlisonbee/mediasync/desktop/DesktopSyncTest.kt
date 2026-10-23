@@ -405,4 +405,57 @@ class DesktopSyncTest {
         Files.move(other, world.root.resolve("hidden"))
         assertTrue(FolderMove(moved.copy(folder = other.toString()), world.root.resolve("nowhere")).problem(desktop.index)!!.contains("not mounted"))
     }
+
+    @Test
+    fun aRemovedFolderIsForgottenHereOnly() = TestWorld().use { world ->
+        world.repo.inBackground = { _, work -> work() }
+        val desktop = world.client("Desktop", games = false)
+        val games = desktop.music.resolveSibling("Games")
+        Files.createDirectories(games.resolve("Nintendo 64"))
+        Files.write(games.resolve("Nintendo 64/Mario Kart 64 (USA).z64"), ByteArray(100_000) { (it % 241).toByte() })
+        Files.write(games.resolve("Nintendo 64/Star Fox 64 (USA).z64"), ByteArray(100_000) { (it % 239).toByte() })
+        assertEquals(2, desktop.sync().pushed)
+        desktop.sync()
+        val gamesFolder = desktop.config.folders.first { it.prefix == "games/" }
+
+        fun engine(vararg folders: FolderConfig): SyncEngine {
+            val config = desktop.config.copy(folders = listOf(desktop.config.folders.first()) + folders)
+            desktop.api.putSubscription(config.subscription())
+            return SyncEngine(config, desktop.api, desktop.index, desktop.dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 })
+        }
+
+        // Moved by hand, then added again under another prefix instead of moved: read as new files.
+        val drive = world.root.resolve("drive/games")
+        Files.createDirectories(drive.parent)
+        Files.move(games, drive)
+        val copies = FolderConfig("copies/", drive.toString())
+        assertEquals(2, engine(gamesFolder, copies).check().outgoing.sumOf { it.items.size })
+
+        // Removed again, the move can be made after all, and nothing is sent.
+        val left = desktop.config.copy(folders = listOf(desktop.config.folders.first(), gamesFolder))
+        desktop.index.forget("copies/", left)
+        assertTrue(desktop.index.inFolder("copies/").isEmpty())
+        val move = FolderMove(gamesFolder, drive)
+        assertEquals(null, move.problem(desktop.index))
+        val moved = move.run(desktop.index)
+        var review = engine(moved).check()
+        assertTrue(review.isEmpty, "nothing waits: ${review.outgoing}")
+        var report = engine(moved).sync()
+        assertEquals(listOf(0, 0), listOf(report.pushed, report.deleted))
+
+        // A folder with a server change waiting for review: the change goes, the files stay.
+        val laptop = world.client("Laptop", games = false)
+        laptop.sync()
+        Files.write(laptop.music.resolveSibling("Games/Nintendo 64/F-Zero X (USA).z64"), ByteArray(100_000) { (it % 233).toByte() })
+        assertEquals(1, laptop.sync().pushed)
+        review = engine(moved).check()
+        assertEquals(1, review.incoming.sumOf { it.items.size })
+        val musicOnly = desktop.config.copy(folders = listOf(desktop.config.folders.first()))
+        desktop.index.forget("games/", musicOnly)
+        assertTrue(desktop.index.remote().isEmpty())
+        report = engine().sync()
+        assertEquals(listOf(0, 0, 0), listOf(report.pushed, report.deleted, report.downloadedFiles))
+        assertEquals(2, Files.walk(drive).use { s -> s.filter { Files.isRegularFile(it) }.count() }.toInt(), "left as they were")
+        assertEquals(3, laptop.sync().let { Files.walk(laptop.music.resolveSibling("Games")).use { s -> s.filter { Files.isRegularFile(it) }.count() }.toInt() })
+    }
 }
