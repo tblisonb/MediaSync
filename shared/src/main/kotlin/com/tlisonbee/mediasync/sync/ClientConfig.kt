@@ -16,8 +16,16 @@ data class FolderConfig(
     val prefer: List<String> = emptyList(),
     /** Only what is picked for this device (in the web UI or the app), as with videos on a phone. */
     val pick: Boolean = false,
+    /**
+     * A file deleted here stays in the library, rather than being deleted there too: for a phone's
+     * camera folder, cleared to make room. Only a send-only folder keeps them; a folder that
+     * receives would get them back.
+     */
+    val keepDeleted: Boolean = false,
 ) {
     val root: Path get() = Path.of(folder)
+
+    val keepsDeleted get() = keepDeleted && mode == SyncMode.SEND_ONLY
 
     fun rule() = SubscriptionRule(prefix, folder, mode, filter, prefer, pick)
 }
@@ -49,7 +57,7 @@ data class ClientConfig(
         for (folder in folders) {
             if (server.rules.any { it.prefix == folder.prefix }) continue
             val rule = unknown.singleOrNull { it.localFolder == folder.folder } ?: continue
-            renamed[folder.prefix] = FolderConfig(rule.prefix, folder.folder, rule.mode, rule.filter, rule.prefer, rule.pick)
+            renamed[folder.prefix] = folder.copy(prefix = rule.prefix, mode = rule.mode, filter = rule.filter, prefer = rule.prefer, pick = rule.pick)
         }
         return renamed
     }

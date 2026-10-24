@@ -26,9 +26,10 @@ import kotlinx.serialization.json.JsonPrimitive
 private const val USAGE = """Usage: mediasync-desktop <command>
 
   setup                  Pair this PC with your MediaSync server and choose the music folder
-  add-folder <prefix> <folder> [--mode two-way|receive-only|send-only] [--pick]
+  add-folder <prefix> <folder> [--mode two-way|receive-only|send-only] [--pick] [--keep-deleted]
                          Sync another folder, e.g. add-folder videos/ ~/Videos or games/ ~/Games;
-                         --pick keeps only what you pick for this PC in the web UI
+                         --pick keeps only what you pick for this PC in the web UI;
+                         --keep-deleted (send-only) keeps files in the library when deleted here
   move-folder <prefix> <folder>
                          Move a synced folder's files somewhere else and sync them there,
                          e.g. move-folder games/ /mnt/other/media/games
@@ -163,6 +164,8 @@ private fun addFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { confi
         "send-only" -> SyncMode.SEND_ONLY
         else -> fail("Choose two-way, receive-only or send-only.")
     }
+    val keepDeleted = "--keep-deleted" in args
+    if (keepDeleted && mode != SyncMode.SEND_ONLY) fail("--keep-deleted is for send-only folders: one that receives would get the files back.")
     if (config.folders.any { it.prefix == prefix }) fail("$prefix is already synced, to ${config.folders.first { it.prefix == prefix }.folder}.")
     config.folders.firstOrNull { folder.startsWith(it.root) || it.root.startsWith(folder) }?.let {
         fail("$folder overlaps ${it.folder}, which is already synced.")
@@ -171,11 +174,12 @@ private fun addFolder(dirs: Dirs, args: List<String>) = withConfig(dirs) { confi
         if (ask("$folder doesn't exist. Create it? [Y/n]", "y").lowercase().startsWith("n")) exitProcess(1)
         Files.createDirectories(folder)
     }
-    val updated = config.copy(folders = config.folders + FolderConfig(prefix, folder.toString(), mode, pick = "--pick" in args))
+    val updated = config.copy(folders = config.folders + FolderConfig(prefix, folder.toString(), mode, pick = "--pick" in args, keepDeleted = keepDeleted))
     ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
     ConfigStore(dirs).save(updated, token)
     writeSandboxDropIn(updated)
-    println("$folder now syncs with $prefix (${mode.label}${if ("--pick" in args) ", only what you pick" else ""}).")
+    val notes = listOfNotNull(mode.label, "only what you pick".takeIf { "--pick" in args }, "kept in the library when deleted here".takeIf { keepDeleted })
+    println("$folder now syncs with $prefix (${notes.joinToString(", ")}).")
     if (Files.exists(dirs.socket)) {
         runCatching { ProcessBuilder("systemctl", "--user", "restart", "mediasync-desktop").inheritIO().start().waitFor() }
         println("The service restarted with it; its next check lists what the folder holds (mediasync-desktop check).")
@@ -349,7 +353,8 @@ private fun status(dirs: Dirs) = withConfig(dirs) { config, token ->
                 println("${folder.folder} → ${folder.prefix} (${folder.mode.label}): not there, so it isn't synced until it's back")
                 continue
             }
-            println("${folder.folder} → ${folder.prefix} (${folder.mode.label}): ${inFolder.count { !it.missing }} files, $waiting waiting to sync")
+            val mode = folder.mode.label + if (folder.keepsDeleted) ", kept in the library when deleted here" else ""
+            println("${folder.folder} → ${folder.prefix} ($mode): ${inFolder.count { !it.missing }} files, $waiting waiting to sync")
             inFolder.filter { it.ignored != null }.forEach { println("  left alone: ${it.path} (${it.ignoredReason})") }
         }
         val since = index.state(SyncEngine.SINCE)

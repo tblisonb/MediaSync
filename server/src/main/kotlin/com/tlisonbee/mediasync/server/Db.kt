@@ -136,7 +136,7 @@ class Db(path: Path) : AutoCloseable {
                 exec("PRAGMA user_version = 5")
             }
         }
-        // 6 moves photos/ to images/: a revision, not a schema change, made at startup (Images.kt).
+        // 6 moves photos/ to images/, 7 corrects that move: revisions, not schema changes, made at startup (Images.kt).
     }
 }
 

@@ -8,20 +8,21 @@ import com.tlisonbee.mediasync.library.SubscriptionRule
 /** The database version once photos/ has moved to images/ (Db.migrate goes up to 5). */
 private const val IMAGES_VERSION = 6L
 
+/** The database version once [putImportsBack] has run. */
+private const val IMPORTS_BACK_VERSION = 7L
+
+private const val MOVE_MESSAGE = "Moved photos/ to images/photos/, and the folders kept by hand in it to images/other/"
+
 /**
  * Server 0.5.0 keeps pictures of every sort in images/: the photos that were in photos/ move to
  * images/photos/, filed by date as before, and the folders kept by hand there ("Mom's Stuff") to
- * images/other/, as one revision. A photo that came from such a folder but was filed by date goes
- * back to its folder, in images/other/. The devices' rules are renamed in the same transaction,
- * keeping their local folders, and each device follows (followRenames) once it's updated; until
- * then it leaves the moved files alone. Paths are kept as they are: nothing is renamed on the way.
+ * images/other/, as one revision. The devices' rules are renamed in the same transaction, keeping
+ * their local folders, and each device follows (followRenames) once it's updated; until then it
+ * leaves the moved files alone. Paths are kept as they are: nothing is renamed on the way.
  */
 fun Repository.moveToImages() {
     if (db.read { db.long("PRAGMA user_version") } >= IMAGES_VERSION) return
     write {
-        val devices = devices().filter { it.revokedAt == null }
-        // Where each device kept photos/, for finding the folder an import came from.
-        val roots = devices.mapNotNull { d -> d.subscription.rules.firstOrNull { it.prefix == RepoPaths.OLD_PHOTOS }?.let { d.id to it.localFolder.trimEnd('/', '\\') } }.toMap()
         val old = db.query(
             """
             SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
@@ -30,11 +31,11 @@ fun Repository.moveToImages() {
             RepoPaths.OLD_PHOTOS, RepoPaths.OLD_PHOTOS.trimEnd('/') + "0",
         ) { it.toVersion() }.filter { it.path.startsWith(RepoPaths.OLD_PHOTOS) }
         if (old.isNotEmpty()) {
-            val scope = RevisionScope(this, webDeviceId(), "Moved photos/ to images/photos/, and the folders kept by hand in it to images/other/")
-            for (v in old) scope.write(v.copy(path = imagesPath(v, roots)), raiseCollision = false, place = false)
+            val scope = RevisionScope(this, webDeviceId(), MOVE_MESSAGE)
+            for (v in old) scope.write(v.copy(path = RepoPaths.fromOldPhotos(v.path)), raiseCollision = false, place = false)
             scope.finish()
         }
-        for (device in devices) {
+        for (device in devices().filter { it.revokedAt == null }) {
             val rules = device.subscription.rules.map(::movedRule)
             if (rules == device.subscription.rules) continue
             // No full listing: a device that isn't updated yet would read one as "everything left".
@@ -48,19 +49,29 @@ fun Repository.moveToImages() {
     }
 }
 
-/** Where [v], in photos/, goes in images/. [roots] are the devices' photos/ folders, by device id. */
-private fun Repository.imagesPath(v: Version, roots: Map<String, String>): String {
-    val moved = RepoPaths.fromOldPhotos(v.path)
-    if (!moved.startsWith(RepoPaths.PHOTOS)) return moved
-    val (device, source) = db.one("SELECT device_id, source_path FROM asset_import WHERE asset_id = ?", v.assetId) {
-        it.getString(1) to it.getString(2).replace('\\', '/')
-    } ?: return moved
-    val root = roots[device]?.replace('\\', '/') ?: return moved
-    val inFolder = source.removePrefix("$root/").takeIf { it != source } ?: return moved
-    if (!inFolder.contains('/') || RepoPaths.isDateFolder(inFolder.substringBefore('/'))) return moved
-    val name = RepoPaths.name(inFolder)
-    val withoutExtension = RepoPaths.parent(inFolder) + "/" + (if (name.contains('.')) name.substringBeforeLast('.') else name)
-    return runCatching { "${RepoPaths.IMAGES}other/" + RepoPaths.clean(withoutExtension) }.getOrDefault(moved)
+/**
+ * Server 0.5.0 also sent a photo filed by date to images/other/ when it had first been imported
+ * from a folder kept by hand, though the devices had filed it by date long since. This puts each
+ * such photo back where the move found it, in images/photos/, unless it has changed since.
+ */
+fun Repository.putImportsBack() {
+    if (db.read { db.long("PRAGMA user_version") } >= IMPORTS_BACK_VERSION) return
+    write {
+        val move = db.one("SELECT rev FROM revision WHERE message = ? ORDER BY rev LIMIT 1", MOVE_MESSAGE) { it.getLong(1) }
+        if (move != null) {
+            val untouched = db.query(
+                "SELECT v.* FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev WHERE h.rev = ?",
+                move,
+            ) { it.toVersion() }
+            val scope = RevisionScope(this, webDeviceId(), "Moved the photos filed by date back to images/photos/, from images/other/")
+            for (v in untouched) {
+                val back = versionAt(v.assetId, move - 1)?.path?.let(RepoPaths::fromOldPhotos) ?: continue
+                if (back.startsWith(RepoPaths.PHOTOS) && back != v.path) scope.write(v.copy(path = back), raiseCollision = false, place = false)
+            }
+            scope.finish()
+        }
+        db.exec("PRAGMA user_version = $IMPORTS_BACK_VERSION")
+    }
 }
 
 /** A rule (or its path: filters) on photos/, on where photos/ went. */
