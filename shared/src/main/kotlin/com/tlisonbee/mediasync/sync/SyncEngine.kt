@@ -367,9 +367,13 @@ class SyncEngine(
         }
     }
 
-    /** Music paths follow the tags, so a track renamed by hand goes back where its tags put it. */
+    /**
+     * Music paths follow the tags, so a track renamed by hand goes back where its tags put it. A
+     * send-only folder keeps its own names (a phone's camera folder isn't filed by date).
+     */
     private fun moveBackIfMusic(folder: FolderConfig, row: Row, report: SyncReport) {
         val base = row.base ?: return
+        if (folder.mode == SyncMode.SEND_ONLY) return
         if (row.ignored != null || !RepoPaths.followsFields(base.kind, base.path, base.category)) return
         val expected = LocalFiles.localPath(folder, base.path, row.extension)
         if (expected == row.file || Files.exists(expected)) return

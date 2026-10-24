@@ -14,10 +14,18 @@ import java.util.Locale
 object RepoPaths {
     const val MUSIC = "music/"
     const val VIDEOS = "videos/"
-    const val PHOTOS = "photos/"
     const val GAMES = "games/"
 
-    /** The folder in photos/ for photos without a date. */
+    /** Pictures of any sort; each subfolder is synced on its own (photos/, screenshots/, art/…). */
+    const val IMAGES = "images/"
+
+    /** The camera's photos (and the videos among them), filed by date; the rest of images/ keeps its paths. */
+    const val PHOTOS = "images/photos/"
+
+    /** Where server 0.4 kept photos, before images/: [fromOldPhotos] says where each path went. */
+    const val OLD_PHOTOS = "photos/"
+
+    /** The folder in images/photos/ for photos without a date. */
     const val UNDATED = "Undated"
 
     /** Video categories whose paths follow their fields; anything else in videos/ keeps its path. */
@@ -107,14 +115,28 @@ object RepoPaths {
     fun isPhoto(kind: AssetKind, path: String) = (kind == AssetKind.IMAGE || kind == AssetKind.VIDEO) && path.startsWith(PHOTOS)
 
     /**
-     * `photos/{year}/{date} {name}`, the date being as precise as it's known ("2019",
-     * "2019-07" or "2019-07-14"); `photos/Undated/{name}` without one.
+     * `images/photos/{year}/{date} {name}`, the date being as precise as it's known ("2019",
+     * "2019-07" or "2019-07-14"); `images/photos/Undated/{name}` without one.
      */
     fun photo(tags: Tags, originalName: String): String {
         val date = first(tags, TagField.DATE)?.let(PhotoDates::normalize)
-            ?: return listOf("photos", UNDATED, segment(originalName, 255 - EXTENSION_ROOM)).joinToString("/")
+            ?: return PHOTOS + listOf(UNDATED, segment(originalName, 255 - EXTENSION_ROOM)).joinToString("/")
         val name = PhotoDates.withoutDate(originalName).ifEmpty { originalName }
-        return listOf("photos", date.take(4), segment("$date $name", 255 - EXTENSION_ROOM)).joinToString("/")
+        return PHOTOS + listOf(date.take(4), segment("$date $name", 255 - EXTENSION_ROOM)).joinToString("/")
+    }
+
+    /** Whether a folder of photos is one they're filed in: a year, or Undated. */
+    fun isDateFolder(name: String) = name == UNDATED || (name.length == 4 && name.all { it.isDigit() })
+
+    /**
+     * Where a path in the old photos/ went: the year and Undated folders to images/photos/, any
+     * other folder (one kept by hand, such as "Mom's Stuff") to images/other/; photos/ itself is
+     * images/photos/. Other paths stay.
+     */
+    fun fromOldPhotos(path: String): String {
+        if (!path.startsWith(OLD_PHOTOS)) return path
+        val rest = path.removePrefix(OLD_PHOTOS)
+        return if (rest.isEmpty() || isDateFolder(rest.substringBefore('/'))) PHOTOS + rest else "${IMAGES}other/$rest"
     }
 
     /**

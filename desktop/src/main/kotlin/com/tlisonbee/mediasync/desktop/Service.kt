@@ -11,6 +11,7 @@ import com.tlisonbee.mediasync.sync.SyncListener
 import com.tlisonbee.mediasync.sync.SyncStage
 import com.tlisonbee.mediasync.sync.SyncReport
 import com.tlisonbee.mediasync.sync.bytes
+import com.tlisonbee.mediasync.sync.followRenames
 import java.io.IOException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -90,11 +91,14 @@ sealed class Job(val reply: CompletableDeferred<String>? = null) {
  */
 class Service(
     private val dirs: Dirs,
-    val config: ClientConfig,
+    initialConfig: ClientConfig,
     private val token: String,
     private val makeTray: (TrayActions) -> Tray = ::desktopTray,
     private val makeNotifier: () -> Notifier = ::desktopNotifier,
 ) {
+    /** The config, once it follows any folders the server renamed (at [run]). */
+    var config: ClientConfig = initialConfig
+        private set
     private val jobs = Channel<Job>(Channel.UNLIMITED)
     private val lastLocalChange = AtomicLong(0)
     private lateinit var index: Index
@@ -145,6 +149,7 @@ class Service(
         index = Index(dirs.index)
         settings = ReviewSettings(index)
         val api = ApiClient(config.serverUrl, token)
+        config = followServerRenames(dirs, config, token, api, index)
         engine = SyncEngine(config, api, index, dirs.pictures, listener = listener)
         val notifier = makeNotifier()
         val page = ReviewPage(this@Service).apply { start() }
@@ -420,4 +425,21 @@ fun openInBrowser(url: String) {
         ProcessBuilder("systemd-run", "--user", "--quiet", "--collect", "xdg-open", url).inheritIO().start().waitFor() == 0
     }.getOrDefault(false)
     if (!viaSystemd) ProcessBuilder("xdg-open", url).inheritIO().start()
+}
+
+/**
+ * [config] once it follows the folders the server renamed (followRenames), saved; as it is when
+ * the server can't be asked, until next time.
+ */
+fun followServerRenames(dirs: Dirs, config: ClientConfig, token: String, api: ApiClient, index: Index): ClientConfig {
+    val renamed = try {
+        followRenames(config, api, index)
+    } catch (e: IOException) {
+        System.err.println("Couldn't ask the server whether it renamed any folders: ${e.message}")
+        null
+    } ?: return config
+    ConfigStore(dirs).save(renamed, token)
+    val names = config.folders.zip(renamed.folders).filter { (old, new) -> old.prefix != new.prefix }
+    println("The server renamed " + names.joinToString { (old, new) -> "${old.prefix} to ${new.prefix} (${new.folder})" } + "; the files stay where they are.")
+    return renamed
 }

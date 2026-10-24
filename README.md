@@ -10,9 +10,9 @@ seen what's coming.
 - **Tags are versioned apart from the audio.** A retag only sends the new tags, never the whole
   file again. Tags you don't want (ripper comments and the like) are stripped, and the server keeps
   the originals.
-- **Photos are filed by year** (`2019/2019-07-14 IMG_1234.jpg`), dated from the camera's EXIF data
-  or the file name. **Videos** are filed as movies or show episodes, and a device can keep only the
-  ones you pick for it.
+- **Photos are filed by year** (`images/photos/2019/2019-07-14 IMG_1234.jpg`), dated from the
+  camera's EXIF data or the file name. **Videos** are filed as movies or show episodes, and a device
+  can keep only the ones you pick for it.
 - **Games** (disc images and ROMs of games you own) are identified by checksum against the
   No-Intro and Redump lists, filed by platform and title, and given their year, publisher and
   genre. A device can keep the games or whole platforms you pick for it.
@@ -28,7 +28,7 @@ flowchart LR
     subgraph tailnet["Your tailnet (Tailscale)"]
         server["<b>Server</b><br/>the library and its history<br/>web UI"]
         pc["<b>Desktop client</b><br/>~/Music, ~/Pictures, ~/Videos, ~/Games"]
-        phone["<b>Android app</b><br/>Music, Pictures/MediaSync,<br/>Movies/MediaSync, ROMs/MediaSync"]
+        phone["<b>Android app</b><br/>Music, DCIM, Pictures/…,<br/>Movies/MediaSync, ROMs/MediaSync"]
         browser["Web browser"]
         pc <--> server
         phone <--> server
@@ -41,8 +41,8 @@ flowchart LR
   the web UI.
 - **Devices** (the desktop client and the Android app) pair with the server once, using a code or
   QR code from the web UI. Each device syncs some of the library's top-level folders
-  (`music/`, `photos/`, `videos/`, `games/`) with folders of its own, either both ways, receive-only or
-  send-only.
+  (`music/`, `images/`, `videos/`, `games/`), or folders inside them such as `images/photos/`, with
+  folders of its own, either both ways, receive-only or send-only.
 - **Syncing asks first.** Every hour each device scans its folders and asks the server what
   changed, without changing anything. When something is waiting, it notifies you. You then accept
   each change, or undo it, or revert it on the server. You can turn asking off on a device so it
@@ -156,21 +156,26 @@ The first PC you set up fills the library, so set up the PC with your music on i
 5. The app previews what the first sync does to the phone's `Music` folder. It starts when you tap
    **Start syncing**.
 
-### 5. Photos, videos and games (optional)
+### 5. Pictures, videos and games (optional)
 
-Music is synced from the start. Photos, videos and games are separate folders you add on each device:
+Music is synced from the start. Pictures, videos and games are separate folders you add on each device:
 
 ```sh
-mediasync-desktop add-folder photos/ ~/Pictures                  # every photo, filed by year
+mediasync-desktop add-folder images/ ~/Pictures                  # every picture: photos/, screenshots/, art/…
+mediasync-desktop add-folder images/photos/ ~/Pictures           # or only the photos, filed by year
 mediasync-desktop add-folder videos/ ~/Videos                    # every video
 mediasync-desktop add-folder videos/ ~/Videos --pick             # only the videos picked for this PC
 mediasync-desktop add-folder games/ ~/Games                      # every game, by platform
 mediasync-desktop add-folder games/ ~/Games --pick               # only the games and platforms picked for this PC
 ```
 
-On the phone, turn on **Photos** (kept in `Pictures/MediaSync`), **Videos** (`Movies/MediaSync`,
-only the videos you pick) or **Games** (`ROMs/MediaSync`, only the games and platforms you pick) on
-the main screen. The rest of the phone's pictures, such as the camera's own folder, are left alone.
+On the phone, add folders under **Pictures**: each pairs a folder of the library's `images/` with a
+folder on the phone, one way or both. For example `images/photos/` with `DCIM`, sent to the library
+only, so the camera's photos are backed up and filed by date without the phone's names changing or
+the whole library landing on the phone; and `images/screenshots/` with `Pictures/Screenshots`, both
+ways. Turn on **Videos** (`Movies/MediaSync`, only the videos you pick) or **Games**
+(`ROMs/MediaSync`, only the games and platforms you pick) the same way. Other folders on the phone
+are left alone.
 
 To keep a folder somewhere else later, such as on another drive, move it with MediaSync rather than
 by hand: `mediasync-desktop move-folder games/ /mnt/other/media/games`. It stops the sync service,
@@ -231,14 +236,25 @@ device deletes its own copies.
 
 ### Photos
 
+Pictures of every sort are in `images/`, one folder for each sort: `images/photos/` for the camera's
+photos, and any others you like (`images/screenshots/`, `images/art/`). Only the photos are filed
+by date; anything else in `images/` keeps the path you give it.
+
 A photo has a date: a year, a month or a day (`2019`, `2019-07` or `2019-07-14`). Photos are filed
-as `photos/{year}/{date} {name}`, or as `photos/Undated/{name}` until they have a date. Anything
-else you keep in `photos/` stays where it is.
+as `images/photos/{year}/{date} {name}`, or as `images/photos/Undated/{name}` until they have a
+date.
+
+Servers before 0.5.0 kept photos in `photos/`. The server moves them when it's updated:
+`photos/{year}/` and `photos/Undated/` to `images/photos/`, and every other folder in `photos/`
+(ones kept by hand) to `images/other/`, along with any photos that came from those folders. The
+devices' folders are renamed with them, so a PC's `photos/` folder becomes `images/photos/` and its
+files stay where they are. Update the server first, then each device: until a device is updated,
+it leaves the moved files alone, and the server refuses its photo changes.
 
 The date comes from the camera (EXIF data, or a video's creation time) or, failing that, from the
 file name (`IMG_20240714_…`, `PXL_…`, `Screenshot_…`, WhatsApp's `IMG-20240714-WA…`).
 
-To fix dates, go to Library > a folder in `photos/` > **Date these photos**. Tick some
+To fix dates, go to Library > a folder in `images/photos/` > **Date these photos**. Tick some
 thumbnails, type a date, and they move. The date is stored in MediaSync, so your photo files are
 never modified.
 

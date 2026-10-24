@@ -90,4 +90,18 @@ interface FileIndex {
     fun remote(): List<RemoteChange>
     fun putRemote(change: RemoteChange)
     fun deleteRemote(assetId: String)
+
+    /**
+     * Forgets a folder that no longer syncs here: its rows, and server changes staged for it, so
+     * the review doesn't offer them. [config] is what still syncs. The files stay.
+     */
+    fun forget(prefix: String, config: ClientConfig) = transaction {
+        val rows = inFolder(prefix)
+        rows.forEach { delete(it.path) }
+        val assets = rows.mapNotNull { it.assetId }.toSet()
+        for (change in remote()) {
+            val gone = change.asset?.let { config.folderFor(it.path) == null } ?: (change.assetId in assets && byAsset(change.assetId).isEmpty())
+            if (gone) deleteRemote(change.assetId)
+        }
+    }
 }

@@ -99,3 +99,4 @@ scripts/update.sh desktop        # build, then install or update it for this use
 | 2026-10-21 | `mediasync-desktop move-folder` moves a synced folder, such as onto another drive, without uploading it again; `mediasync-desktop version` names its version and the server's (desktop 0.2.3, server 0.4.4). |
 | 2026-10-21 | A synced folder that isn't there (an unmounted drive, a folder moved away) no longer stops the desktop service from starting; it's skipped, and `status` says so (desktop 0.2.4). |
 | 2026-10-23 | `mediasync-desktop remove-folder` stops syncing a folder on a PC, leaving its files where they are (desktop 0.2.5). |
+| 2026-10-23 | Pictures of every sort live in `images/`: the server moves `photos/` to `images/photos/` (folders kept by hand to `images/other/`) and renames the devices' folders, which follow it. The app syncs any `images/` folder with any phone folder, such as `DCIM` sent to the library only (server 0.5.0, desktop 0.3.0, app 0.7.0). |

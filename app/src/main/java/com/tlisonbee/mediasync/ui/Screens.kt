@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.ui
 
 import android.Manifest
 import android.content.Intent
+import android.os.Environment
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +27,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -55,6 +57,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.tlisonbee.mediasync.api.FolderPickItem
 import com.tlisonbee.mediasync.api.PickItem
+import com.tlisonbee.mediasync.library.SyncMode
 import com.tlisonbee.mediasync.sync.ReviewAction
 import com.tlisonbee.mediasync.sync.bytes
 import com.tlisonbee.mediasync.sync.ReviewGroup
@@ -222,7 +225,7 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
         "The resolve queue, history and undo are in the web UI for now.",
         style = MaterialTheme.typography.bodySmall,
     )
-    PhotosCard(state, viewModel)
+    ImagesCard(state, viewModel)
     VideosCard(state, viewModel)
     GamesCard(state, viewModel)
     ReviewSettingsCard(state, viewModel)
@@ -414,23 +417,84 @@ private fun Warnings(warnings: List<String>) {
     if (warnings.size > shown.size) TextButton(onClick = { all = true }) { Text("Show all ${warnings.size} warnings") }
 }
 
+/** The folders of the library's images/ this phone syncs, each with a folder of its own. */
 @Composable
-private fun PhotosCard(state: UiState, viewModel: MainViewModel) {
+private fun ImagesCard(state: UiState, viewModel: MainViewModel) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Photos", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Keep the library's photos in Pictures/MediaSync, filed by year. Photos you put there are added to it; " +
-                            "the rest of the phone's pictures (the camera's, screenshots) are left alone.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            Text("Pictures", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Sync folders of the library's images/ with folders on this phone, each its own way: the camera's photos " +
+                    "from DCIM, say, and screenshots from Pictures/Screenshots.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            for (folder in state.imageFolders) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${folder.prefix} ↔ ${viewModel.local(folder.folder)}")
+                        Text(describe(folder.mode), style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { viewModel.removeImages(folder.prefix) }, enabled = !state.images.saving) { Text("Remove") }
                 }
-                Switch(checked = state.photosEnabled, onCheckedChange = viewModel::setPhotos)
             }
-            state.photosError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (state.images.adding) {
+                AddImages(state.images, viewModel)
+            } else {
+                TextButton(onClick = viewModel::openAddImages) { Text("Add a folder…") }
+            }
+            state.images.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
+    }
+}
+
+/** What an image folder's mode does, for this phone. */
+private fun describe(mode: SyncMode) = when (mode) {
+    SyncMode.TWO_WAY -> "Both ways: what's added on either side comes to the other."
+    SyncMode.SEND_ONLY -> "To the library only: nothing comes back, and the names here stay as they are."
+    SyncMode.RECEIVE_ONLY -> "From the library only: changes made here aren't sent."
+}
+
+/** Picks a folder of the library's images/, a folder on the phone, and which way they sync. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var folder by rememberSaveable { mutableStateOf("") }
+    var mode by rememberSaveable { mutableStateOf(SyncMode.TWO_WAY) }
+    OutlinedTextField(
+        value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        label = { Text("Library folder") }, prefix = { Text("images/") },
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("photos", "screenshots", "art", "other").forEach { FilterChip(selected = name == it, onClick = { name = it }, label = { Text(it) }) }
+    }
+    OutlinedTextField(
+        value = folder, onValueChange = { folder = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        label = { Text("Folder on this phone") }, supportingText = { Text("In the phone's storage, such as DCIM or Pictures/Screenshots") },
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        images.suggestions.forEach {
+            FilterChip(
+                selected = folder == it,
+                onClick = {
+                    folder = it
+                    // The camera's folder sends: the library files photos by date, the camera keeps its names.
+                    mode = if (it.startsWith(Environment.DIRECTORY_DCIM)) SyncMode.SEND_ONLY else SyncMode.TWO_WAY
+                },
+                label = { Text(it) },
+            )
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(SyncMode.TWO_WAY to "Both ways", SyncMode.SEND_ONLY to "To the library", SyncMode.RECEIVE_ONLY to "From the library").forEach { (m, label) ->
+            FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(label) })
+        }
+    }
+    Text(describe(mode), style = MaterialTheme.typography.bodySmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = { viewModel.addImages(name, folder, mode) }, enabled = !images.saving && name.isNotBlank() && folder.isNotBlank()) { Text("Add") }
+        TextButton(onClick = viewModel::closeAddImages) { Text("Cancel") }
+        if (images.saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
     }
 }
 

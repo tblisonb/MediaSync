@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.server
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.PushChange
+import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.SubscriptionRule
 import com.tlisonbee.mediasync.tags.TagField
 import io.ktor.client.HttpClient
@@ -27,37 +28,78 @@ class PhotosTest {
     private suspend fun TestDevice.addPhoto(name: String, bytes: ByteArray, kind: AssetKind = AssetKind.IMAGE): AssetDto {
         val file = TestDevice.file(name, bytes)
         upload(file)
-        val change = PushChange(path = "photos/import/${name.substringBeforeLast('.')}", kind = kind, mediaHash = file.mediaHash, sourcePath = "/home/test/Pictures/$name")
+        val change = PushChange(path = "images/photos/import/${name.substringBeforeLast('.')}", kind = kind, mediaHash = file.mediaHash, sourcePath = "/home/test/Pictures/$name")
         return push(change).results.single().asset
     }
 
     @Test
     fun photosAreDatedByTheCameraOrTheirNameAndFiledByYear() = withServer {
-        val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures"), SubscriptionRule("music/", "/home/test/Music")) }
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("images/photos/", "/home/test/Pictures"), SubscriptionRule("music/", "/home/test/Music")) }
 
         val exif = pc.addPhoto("IMG_1234.jpg", jpeg(seed = 1, taken = "2019:07:14 12:30:05"))
-        assertEquals("photos/2019/2019-07-14 IMG_1234", exif.path)
+        assertEquals("images/photos/2019/2019-07-14 IMG_1234", exif.path)
         assertEquals(listOf("2019-07-14"), exif.tags[TagField.DATE])
 
         // EXIF wins over the name; without EXIF, the name tells.
-        assertEquals("photos/2018/2018-01-02 IMG_20240714_153012", pc.addPhoto("IMG_20240714_153012.jpg", jpeg(seed = 2, taken = "2018:01:02 08:00:00")).path)
-        assertEquals("photos/2024/2024-07-14 PXL_20240714_153012345", pc.addPhoto("PXL_20240714_153012345.jpg", jpeg(seed = 3)).path)
-        assertEquals("photos/2023/2023-12-25 VID_20231225_090000", pc.addPhoto("VID_20231225_090000.mp4", TestDevice.fakeFile("v").bytes, AssetKind.VIDEO).path)
+        assertEquals("images/photos/2018/2018-01-02 IMG_20240714_153012", pc.addPhoto("IMG_20240714_153012.jpg", jpeg(seed = 2, taken = "2018:01:02 08:00:00")).path)
+        assertEquals("images/photos/2024/2024-07-14 PXL_20240714_153012345", pc.addPhoto("PXL_20240714_153012345.jpg", jpeg(seed = 3)).path)
+        assertEquals("images/photos/2023/2023-12-25 VID_20231225_090000", pc.addPhoto("VID_20231225_090000.mp4", TestDevice.fakeFile("v").bytes, AssetKind.VIDEO).path)
 
         val scan = pc.addPhoto("scan_017.png", png(seed = 1))
-        assertEquals("photos/Undated/scan_017", scan.path)
+        assertEquals("images/photos/Undated/scan_017", scan.path)
         assertEquals(null, scan.tags[TagField.DATE])
 
         // Dating it later moves it; a year is enough.
         repo.editTags(repo.webDeviceId(), "Dated a scan", mapOf(scan.assetId to mapOf(TagField.DATE to listOf("2008"))), mapOf(scan.assetId to scan.rev))
-        assertEquals("photos/2008/2008 scan_017", repo.headVersion(scan.assetId)!!.path)
+        assertEquals("images/photos/2008/2008 scan_017", repo.headVersion(scan.assetId)!!.path)
 
         // A rename on a device doesn't stick: the date names it.
-        val renamed = pc.push(PushChange(exif.assetId, exif.rev, "photos/elsewhere/holiday", AssetKind.IMAGE, exif.renditions.single().mediaHash, exif.renditions.single().mediaHash, tags = exif.tags))
-        assertEquals("photos/2019/2019-07-14 IMG_1234", renamed.results.single().asset.path)
+        val renamed = pc.push(PushChange(exif.assetId, exif.rev, "images/photos/elsewhere/holiday", AssetKind.IMAGE, exif.renditions.single().mediaHash, exif.renditions.single().mediaHash, tags = exif.tags))
+        assertEquals("images/photos/2019/2019-07-14 IMG_1234", renamed.results.single().asset.path)
 
         // Pictures outside photos/ (album art) are left where they are.
         assertEquals("music/Radiohead/OK Computer/cover", pc.addPhotoAt("cover.jpg", jpeg(seed = 4, taken = "2019:07:14 12:30:05"), "music/Radiohead/OK Computer/cover").path)
+    }
+
+    @Test
+    fun oldPhotosMoveToImages() = withServer {
+        // As server 0.4 left them: photos filed by date, a folder kept by hand, and a photo from
+        // that folder filed by date anyway. (This server keeps photos/ paths as given.)
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures"), SubscriptionRule("music/", "/home/test/Music")) }
+        val phone = pair("Phone").apply { subscribe(SubscriptionRule("photos/2019/", "/sdcard/Pictures", filter = listOf("not path:photos/2019/secret*", "kind:image"))) }
+        suspend fun add(path: String, source: String, bytes: ByteArray, kind: AssetKind = AssetKind.IMAGE): AssetDto {
+            val file = TestDevice.file(RepoPaths.name(source), bytes)
+            pc.upload(file)
+            return pc.push(PushChange(path = path, kind = kind, mediaHash = file.mediaHash, sourcePath = "/home/test/Pictures/$source")).results.single().asset
+        }
+        val dated = add("photos/2019/2019-07-14 IMG_1", "2019/2019-07-14 IMG_1.jpg", jpeg(seed = 11))
+        val card = add("photos/Undated/card", "Mom's Stuff/Cards/card.jpg", jpeg(seed = 12))
+        val letter = add("photos/Mom's Stuff/letter", "Mom's Stuff/letter.txt", "dear".toByteArray(), AssetKind.OTHER)
+        val gone = add("photos/2018/gone", "2018/gone.jpg", jpeg(seed = 13))
+        repo.write { RevisionScope(repo, pc.id).apply { write(repo.headVersion(gone.assetId)!!.copy(deleted = true), place = false) }.finish() }
+        repo.db.exec("UPDATE device SET rescan = 0") // as after their last sync
+        val head = repo.head()
+
+        repo.moveToImages()
+        assertEquals(head + 1, repo.head(), "one revision")
+        assertEquals("images/photos/2019/2019-07-14 IMG_1", repo.headVersion(dated.assetId)!!.path)
+        assertEquals("images/other/Mom's Stuff/Cards/card", repo.headVersion(card.assetId)!!.path, "back in the folder it came from")
+        assertEquals("images/other/Mom's Stuff/letter", repo.headVersion(letter.assetId)!!.path)
+        assertEquals("images/photos/2018/gone", repo.headVersion(gone.assetId)!!.path.also { assertTrue(repo.headVersion(gone.assetId)!!.deleted) })
+
+        // The rules follow, keeping their folders, and without a full listing.
+        val pcRules = repo.device(pc.id)!!
+        assertEquals(listOf("images/photos/", "music/"), pcRules.subscription.rules.map { it.prefix })
+        assertEquals("/home/test/Pictures", pcRules.subscription.rules.first().localFolder)
+        assertEquals(false, pcRules.rescan)
+        val phoneRule = repo.device(phone.id)!!.subscription.rules.single()
+        assertEquals("images/photos/2019/", phoneRule.prefix)
+        assertEquals(listOf("not path:images/photos/2019/secret*", "kind:image"), phoneRule.filter)
+
+        // Once only; and a photo filed now goes to images/photos/ by its date.
+        repo.moveToImages()
+        assertEquals(head + 1, repo.head())
+        assertEquals("images/photos/2024/2024-07-14 PXL_20240714_153012345", pc.addPhoto("PXL_20240714_153012345.jpg", jpeg(seed = 14)).path)
     }
 
     private suspend fun ServerFixture.loggedIn(): HttpClient = browser().also {
@@ -66,13 +108,13 @@ class PhotosTest {
 
     @Test
     fun photosAreDatedInTheWebUi() = withServer {
-        val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures")) }
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("images/photos/", "/home/test/Pictures")) }
         val first = pc.addPhoto("scan_017.png", png(seed = 1))
         val second = pc.addPhoto("scan_018.png", png(seed = 2))
         val web = loggedIn()
 
-        assertTrue("Date these photos" in web.get("/browse?path=photos/Undated").bodyAsText())
-        val page = web.get("/photos?path=photos/Undated").bodyAsText()
+        assertTrue("Date these photos" in web.get("/browse?path=images/photos/Undated").bodyAsText())
+        val page = web.get("/photos?path=images/photos/Undated").bodyAsText()
         assertTrue("scan_017" in page && "scan_018" in page && "No date" in page, page)
 
         val thumb = web.get("/web/thumbs/${first.renditions.single().blob}")
@@ -81,7 +123,7 @@ class PhotosTest {
         assertTrue(ImageIO.read(thumb.bodyAsBytes().inputStream()) != null)
 
         fun form(which: String, date: String, vararg ticked: AssetDto) = parameters {
-            append("folder", "photos/Undated")
+            append("folder", "images/photos/Undated")
             append("which", which)
             append("date", date)
             listOf(first, second).forEach { append("rev.${it.assetId}", repo.headVersion(it.assetId)!!.rev.toString()) }
@@ -90,20 +132,20 @@ class PhotosTest {
 
         val refused = web.submitForm("/photos/date", form("selected", "May", first))
         assertTrue("isn't a date" in URLDecoder.decode(refused.headers["Location"]!!, Charsets.UTF_8))
-        assertEquals("photos/Undated/scan_017", repo.headVersion(first.assetId)!!.path)
+        assertEquals("images/photos/Undated/scan_017", repo.headVersion(first.assetId)!!.path)
 
         web.submitForm("/photos/date", form("selected", "2008-05", first))
-        assertEquals("photos/2008/2008-05 scan_017", repo.headVersion(first.assetId)!!.path)
+        assertEquals("images/photos/2008/2008-05 scan_017", repo.headVersion(first.assetId)!!.path)
         assertEquals("Dated 1 photo 2008-05", repo.revisions(null, 1).revisions.single().message)
 
         // "All on this page" covers what's left in Undated.
         web.submitForm("/photos/date", form("page", "2010"))
-        assertEquals("photos/2010/2010 scan_018", repo.headVersion(second.assetId)!!.path)
+        assertEquals("images/photos/2010/2010 scan_018", repo.headVersion(second.assetId)!!.path)
     }
 
     @Test
     fun thumbnailsAreTheRightWayUp() = withServer {
-        val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures")) }
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("images/photos/", "/home/test/Pictures")) }
         // Stored 40×20 and marked "turn a quarter clockwise", as phones do with portrait photos.
         val sideways = pc.addPhoto("IMG_0001.jpg", jpeg(seed = 5, taken = "2020:01:01 10:00:00", orientation = 6, width = 40, height = 20))
         val thumb = ImageIO.read(repo.thumbnail(sideways.renditions.single().blob)!!.toFile())
