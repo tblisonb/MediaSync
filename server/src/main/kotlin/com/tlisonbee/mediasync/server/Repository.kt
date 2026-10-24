@@ -291,11 +291,12 @@ class RevisionScope(
     /**
      * Writes [proposed] as the asset's new version, after placing it at its path (music follows its
      * tags; a taken path gets " (2)" and a resolve-queue entry). Returns the asset's resulting
-     * version, which is the old head if nothing changed.
+     * version, which is the old head if nothing changed. Without [place], the proposed path is
+     * kept (with " (2)" if it's taken), for moves that mustn't rename anything.
      */
-    fun write(proposed: Version, raiseCollision: Boolean = true): Version {
+    fun write(proposed: Version, raiseCollision: Boolean = true, place: Boolean = true): Version {
         val head = repo.headVersion(proposed.assetId)
-        var v = proposed.copy(path = repo.placePath(proposed))
+        var v = if (place) proposed.copy(path = repo.placePath(proposed)) else proposed
         if (!v.deleted) {
             val free = repo.freePath(v.path, v.assetId)
             if (free != v.path) {

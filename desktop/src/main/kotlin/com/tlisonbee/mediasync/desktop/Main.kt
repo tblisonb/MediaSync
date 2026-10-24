@@ -136,7 +136,7 @@ private fun setup(dirs: Dirs) {
     writeSandboxDropIn(config)
     println()
     println("Paired as \"$name\"; $music syncs with music/ (${mode.label}).")
-    println("Sync your photos and videos too with: mediasync-desktop add-folder photos/ ~/Pictures (or videos/ ~/Videos)")
+    println("Sync your pictures and videos too with: mediasync-desktop add-folder images/ ~/Pictures (or images/photos/ for just the photos, videos/ ~/Videos)")
 }
 
 /** The service may write only to its state and to the synced folders; tell systemd which those are. */
@@ -322,7 +322,8 @@ private fun sync(dirs: Dirs, allowDeletes: Boolean) = withConfig(dirs) { config,
     }
     val lock = Service.acquireLock(dirs) ?: fail("Another mediasync-desktop holds the index and doesn't answer; try again shortly.")
     Index(dirs.index).use { index ->
-        val report = SyncEngine(config, ApiClient(config.serverUrl, token), index, dirs.pictures).sync(allowDeletes)
+        val api = ApiClient(config.serverUrl, token)
+        val report = SyncEngine(followServerRenames(dirs, config, token, api, index), api, index, dirs.pictures).sync(allowDeletes)
         report.warnings.forEach { System.err.println("Warning: $it") }
         println(report.summary())
     }

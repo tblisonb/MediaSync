@@ -301,8 +301,9 @@ private val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
     }
 }
 
-/** Startup housekeeping: partial uploads abandoned for a week are removed. */
+/** Startup housekeeping: photos/ moves to images/ (once), and partial uploads abandoned for a week are removed. */
 fun Repository.startup() {
+    moveToImages()
     blobs.cleanStaleUploads()
     // Leftover partial files without a database row (a crash between the two).
     Files.list(dir.uploads).use { files ->

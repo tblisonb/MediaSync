@@ -73,6 +73,9 @@ class ApiClient(serverUrl: String, private val token: String?) {
         if (e.status == 404) DeviceCleanup() else throw e
     }
 
+    /** This device's rules as the server holds them. */
+    fun subscription(): Subscription = get("/devices/me/subscription", Subscription.serializer())
+
     fun putSubscription(subscription: Subscription): Subscription =
         send(request("/devices/me/subscription").put(json(Subscription.serializer(), subscription)).build(), Subscription.serializer())
 

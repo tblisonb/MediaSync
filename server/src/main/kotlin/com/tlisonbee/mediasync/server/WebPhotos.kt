@@ -94,8 +94,8 @@ private fun HTML.photosPage(folder: String, photos: List<Photo>, page: Int, done
     done?.let { p("notice") { +"$it." } }
     error?.let { p("notice error") { +it } }
     p("muted") {
-        +"Photos are filed as photos/{year}/{date} {name}, by the date the camera recorded or their name gives, "
-        +"and photos/Undated/ without one. A date can be a year, a month or a day: 2019, 2019-07 or 2019-07-14."
+        +"Photos are filed as images/photos/{year}/{date} {name}, by the date the camera recorded or their name gives, "
+        +"and images/photos/Undated/ without one. A date can be a year, a month or a day: 2019, 2019-07 or 2019-07-14."
     }
     form(action = "/photos/date", method = FormMethod.post, classes = "card photos") {
         hiddenInput(name = "folder") { value = folder }

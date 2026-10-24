@@ -41,15 +41,15 @@ class PhotoDatesTest {
     @Test
     fun photosAreFiledByYearWithTheDateLeadingTheName() {
         fun dated(date: String?) = date?.let { mapOf(TagField.DATE to listOf(it)) } ?: emptyMap()
-        assertEquals("photos/2024/2024-07-14 IMG_1234", RepoPaths.photo(dated("2024-07-14"), "IMG_1234"))
-        assertEquals("photos/2019/2019 Christmas", RepoPaths.photo(dated("2019"), "Christmas"))
-        assertEquals("photos/2019/2019-12 Christmas", RepoPaths.photo(dated("2019-12"), "2019 Christmas"), "its own date isn't repeated")
-        assertEquals("photos/Undated/scan_017", RepoPaths.photo(dated(null), "scan_017"))
-        assertEquals("photos/Undated/scan_017", RepoPaths.photo(dated("someday"), "scan_017"))
+        assertEquals("images/photos/2024/2024-07-14 IMG_1234", RepoPaths.photo(dated("2024-07-14"), "IMG_1234"))
+        assertEquals("images/photos/2019/2019 Christmas", RepoPaths.photo(dated("2019"), "Christmas"))
+        assertEquals("images/photos/2019/2019-12 Christmas", RepoPaths.photo(dated("2019-12"), "2019 Christmas"), "its own date isn't repeated")
+        assertEquals("images/photos/Undated/scan_017", RepoPaths.photo(dated(null), "scan_017"))
+        assertEquals("images/photos/Undated/scan_017", RepoPaths.photo(dated("someday"), "scan_017"))
 
-        assertTrue(RepoPaths.followsFields(AssetKind.IMAGE, "photos/2024/x", null))
-        assertTrue(RepoPaths.followsFields(AssetKind.VIDEO, "photos/Undated/clip", null), "a phone's clips stay with its photos")
-        assertFalse(RepoPaths.followsFields(AssetKind.OTHER, "photos/2024/notes", null))
+        assertTrue(RepoPaths.followsFields(AssetKind.IMAGE, "images/photos/2024/x", null))
+        assertTrue(RepoPaths.followsFields(AssetKind.VIDEO, "images/photos/Undated/clip", null), "a phone's clips stay with its photos")
+        assertFalse(RepoPaths.followsFields(AssetKind.OTHER, "images/photos/2024/notes", null))
         assertFalse(RepoPaths.followsFields(AssetKind.IMAGE, "music/Radiohead/OK Computer/cover", null), "album art keeps its place")
     }
 
