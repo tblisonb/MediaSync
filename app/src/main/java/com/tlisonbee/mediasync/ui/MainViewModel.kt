@@ -305,7 +305,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Syncs images/[name]/ with [folder], given relative to the phone's storage ("DCIM",
-     * "Pictures/Screenshots"). A camera's folder is best [SyncMode.SEND_ONLY]: the library files
+     * "Pictures/Screenshots"), or in full (an SD card's). A camera's folder is best [SyncMode.SEND_ONLY]: the library files
      * photos by date, and the phone's names stay as they are. With [keepDeleted], what's deleted
      * here stays in the library.
      */
@@ -314,7 +314,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val token = app.settings.token ?: return
         val subfolder = name.trim().trim('/')
         val prefix = "${RepoPaths.IMAGES}$subfolder/"
-        val dir = storage.resolve(folder.trim().trim('/'))
+        val dir = folder.trim().let { if (it.startsWith("/")) File(it.trimEnd('/')) else storage.resolve(it.trim('/')) }
         val overlap = config.folders.firstOrNull { dir.toPath().startsWith(it.root) || it.root.startsWith(dir.toPath()) }
         val nested = config.folders.firstOrNull { it.prefix.startsWith(prefix) || prefix.startsWith(it.prefix) }
         val problem = when {

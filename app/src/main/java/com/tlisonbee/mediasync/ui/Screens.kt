@@ -2,7 +2,9 @@ package com.tlisonbee.mediasync.ui
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +66,7 @@ import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewSettings
 import com.tlisonbee.mediasync.sync.label
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
@@ -132,7 +135,7 @@ private fun PairScreen(state: UiState, viewModel: MainViewModel) {
     OutlinedTextField(url, { url = it }, label = { Text("Server address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(code, { code = it }, label = { Text("Pairing code") }, singleLine = true, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(name, { name = it }, label = { Text("Name for this phone") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-    OutlinedTextField(folder, { folder = it }, label = { Text("Music folder") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    FolderField(folder, { folder = it }, "Music folder")
     state.pairing.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     Button(onClick = { viewModel.pair(url, code, name, folder) }, enabled = !state.pairing.busy && code.isNotBlank()) {
         Text(if (state.pairing.busy) "Pairing…" else "Pair")
@@ -464,6 +467,47 @@ private fun KeepDeleted(checked: Boolean, onChange: (Boolean) -> Unit) {
     }
 }
 
+/**
+ * A folder's path, typed in or chosen with the system's folder picker (Browse…). [onPicked] gets
+ * the picked folder's full path; by default it becomes the value.
+ */
+@Composable
+private fun FolderField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    hint: String? = null,
+    onPicked: (String) -> Unit = onValueChange,
+) {
+    var error by remember { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val path = folderPath(uri)
+        error = if (path == null) "Choose a folder in the phone's storage or on its SD card." else null
+        path?.let(onPicked)
+    }
+    OutlinedTextField(
+        value = value, onValueChange = { error = null; onValueChange(it) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) }, isError = error != null,
+        supportingText = (error ?: hint)?.let { { Text(it) } },
+        trailingIcon = { TextButton(onClick = { picker.launch(null) }) { Text("Browse…") } },
+    )
+}
+
+/**
+ * The file path of a folder the system's picker chose ("primary:DCIM/Camera" is
+ * /storage/emulated/0/DCIM/Camera), or null for one that isn't in the phone's storage or on an SD
+ * card. With All files access, the path is all the sync needs.
+ */
+private fun folderPath(uri: Uri): String? {
+    if (uri.authority != "com.android.externalstorage.documents") return null
+    val id = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return null
+    val volume = id.substringBefore(':')
+    val inside = id.substringAfter(':', "")
+    val root = if (volume == "primary") Environment.getExternalStorageDirectory() else File("/storage/$volume")
+    return (if (inside.isEmpty()) root else root.resolve(inside)).path
+}
+
 /** Picks a folder of the library's images/, a folder on the phone, and which way they sync. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -479,25 +523,20 @@ private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("photos", "screenshots", "art", "other").forEach { FilterChip(selected = name == it, onClick = { name = it }, label = { Text(it) }) }
     }
-    OutlinedTextField(
-        value = folder, onValueChange = { folder = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-        label = { Text("Folder on this phone") }, supportingText = { Text("In the phone's storage, such as DCIM or Pictures/Screenshots") },
+    fun choose(chosen: String) {
+        folder = chosen
+        // The camera's folder sends: the library files photos by date, the camera keeps its names,
+        // and clearing the phone to make room leaves the library alone.
+        val camera = chosen.startsWith(Environment.DIRECTORY_DCIM)
+        mode = if (camera) SyncMode.SEND_ONLY else SyncMode.TWO_WAY
+        keepDeleted = camera
+    }
+    FolderField(
+        folder, { folder = it }, "Folder on this phone", "In the phone's storage, such as DCIM or Pictures/Screenshots",
+        onPicked = { choose(viewModel.local(it)) },
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        images.suggestions.forEach {
-            FilterChip(
-                selected = folder == it,
-                onClick = {
-                    folder = it
-                    // The camera's folder sends: the library files photos by date, the camera keeps its
-                    // names, and clearing the phone to make room leaves the library alone.
-                    val camera = it.startsWith(Environment.DIRECTORY_DCIM)
-                    mode = if (camera) SyncMode.SEND_ONLY else SyncMode.TWO_WAY
-                    keepDeleted = camera
-                },
-                label = { Text(it) },
-            )
-        }
+        images.suggestions.forEach { FilterChip(selected = folder == it, onClick = { choose(it) }, label = { Text(it) }) }
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(SyncMode.TWO_WAY to "Both ways", SyncMode.SEND_ONLY to "To the library", SyncMode.RECEIVE_ONLY to "From the library").forEach { (m, label) ->
@@ -507,7 +546,7 @@ private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
     Text(describe(mode), style = MaterialTheme.typography.bodySmall)
     if (mode == SyncMode.SEND_ONLY) KeepDeleted(keepDeleted) { keepDeleted = it }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { viewModel.addImages(name, folder, mode, keepDeleted) },enabled = !images.saving && name.isNotBlank() && folder.isNotBlank()) { Text("Add") }
+        Button(onClick = { viewModel.addImages(name, folder, mode, keepDeleted) }, enabled =!images.saving && name.isNotBlank() && folder.isNotBlank()) { Text("Add") }
         TextButton(onClick = viewModel::closeAddImages) { Text("Cancel") }
         if (images.saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
     }
