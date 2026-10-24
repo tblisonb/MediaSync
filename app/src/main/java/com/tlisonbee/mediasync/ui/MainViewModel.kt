@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.net.URI
 
 enum class Screen { PERMISSION, PAIR, PREVIEW, STATUS }
@@ -84,6 +85,17 @@ data class GamesState(
     fun platformOf(game: FolderPickItem) = game.folder.split('/').take(2).joinToString("/")
 }
 
+/**
+ * Adding an image folder: [suggestions] are folders on the phone that hold pictures (DCIM, and
+ * the folders in DCIM and Pictures), relative to its storage.
+ */
+data class ImagesState(
+    val adding: Boolean = false,
+    val suggestions: List<String> = emptyList(),
+    val saving: Boolean = false,
+    val error: String? = null,
+)
+
 data class UiState(
     val screen: Screen,
     val config: ClientConfig?,
@@ -98,21 +110,19 @@ data class UiState(
     val activity: SyncActivity? = null,
     /** The review groups whose button was pressed, with what's happening to them ("Accepting"). */
     val applying: Map<String, String> = emptyMap(),
-    /** Why turning the photos folder on or off failed. */
-    val photosError: String? = null,
+    val images: ImagesState = ImagesState(),
     val games: GamesState = GamesState(),
 ) {
     val videosEnabled get() = config?.folders?.any { it.prefix == VIDEOS } == true
     val gamesEnabled get() = config?.folders?.any { it.prefix == RepoPaths.GAMES } == true
-    val photosEnabled get() = config?.folders?.any { it.prefix == PHOTOS } == true
+
+    /** The folders of the library's images/ this phone syncs, each with a folder of its own. */
+    val imageFolders get() = config?.folders?.filter { it.prefix.startsWith(RepoPaths.IMAGES) }.orEmpty()
     val busy get() = activity != null
 }
 
 /** Where this phone keeps the videos picked for it. */
 const val VIDEOS = "videos/"
-
-/** The library's photos, all of them, filed by year. */
-const val PHOTOS = RepoPaths.PHOTOS
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application.app
@@ -128,18 +138,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Set when a button queues work, until WorkManager reports it (a moment later). */
     private val requested = MutableStateFlow<SyncActivity?>(null)
     private val applying = MutableStateFlow<Map<String, String>>(emptyMap())
-    private val photosError = MutableStateFlow<String?>(null)
+    private val images = MutableStateFlow(ImagesState())
 
     private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
-    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>, val photosError: String?, val games: GamesState)
+    private data class Work(val activity: SyncActivity?, val applying: Map<String, String>, val images: ImagesState, val games: GamesState)
 
     val state: StateFlow<UiState> = combine(
         app.settings.changes,
         SyncState.progress,
         allFilesAccess,
         combine(pairing, preview, files, review, videos, ::Extra),
-        combine(working, requested, applying, photosError, games) { now, asked, groups, photos, game -> Work(now ?: asked, groups, photos, game) },
+        combine(working, requested, applying, images, games) { now, asked, groups, pictures, game -> Work(now ?: asked, groups, pictures, game) },
     ) { _, progress, access, (pair, prev, count, rev, vids), work ->
         val settings = app.settings
         val screen = when {
@@ -149,7 +159,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> Screen.STATUS
         }
         val activity = work.activity ?: progress?.let { SyncActivity(SyncActivity.Kind.SYNC, started = true) }
-        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.photosError, work.games)
+        UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.images, work.games)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
     init {
@@ -274,8 +284,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Adds or removes the photos folder: every photo in the library, filed by year, in Pictures/MediaSync. */
-    fun setPhotos(enabled: Boolean) = setFolder(PHOTOS, Environment.DIRECTORY_PICTURES, pick = false, enabled) { photosError.value = it }
+    /** The phone's storage, which image folders are given relative to. */
+    val storage: File = Environment.getExternalStorageDirectory()
+
+    fun openAddImages() {
+        images.value = ImagesState(adding = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            val folders = listOf(Environment.DIRECTORY_DCIM, Environment.DIRECTORY_PICTURES).flatMap { top ->
+                val dir = storage.resolve(top)
+                val inside = dir.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().map { "$top/${it.name}" }.sorted()
+                (if (top == Environment.DIRECTORY_DCIM && dir.isDirectory) listOf(top) else emptyList()) + inside
+            }
+            images.value = images.value.copy(suggestions = folders)
+        }
+    }
+
+    fun closeAddImages() {
+        images.value = ImagesState()
+    }
+
+    /**
+     * Syncs images/[name]/ with [folder], given relative to the phone's storage ("DCIM",
+     * "Pictures/Screenshots"). A camera's folder is best [SyncMode.SEND_ONLY]: the library files
+     * photos by date, and the phone's names stay as they are.
+     */
+    fun addImages(name: String, folder: String, mode: SyncMode) {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        val subfolder = name.trim().trim('/')
+        val prefix = "${RepoPaths.IMAGES}$subfolder/"
+        val dir = storage.resolve(folder.trim().trim('/'))
+        val overlap = config.folders.firstOrNull { dir.toPath().startsWith(it.root) || it.root.startsWith(dir.toPath()) }
+        val nested = config.folders.firstOrNull { it.prefix.startsWith(prefix) || prefix.startsWith(it.prefix) }
+        val problem = when {
+            subfolder.isEmpty() || runCatching { RepoPaths.clean(subfolder) }.getOrNull() != subfolder ->
+                "Name a folder of the library's images/, such as photos or screenshots, without characters like : or *."
+            folder.isBlank() -> "Choose a folder on this phone."
+            nested != null -> "${nested.prefix} already syncs, with ${local(nested.folder)}."
+            overlap != null -> "${local(dir.path)} overlaps ${local(overlap.folder)}, which already syncs."
+            else -> null
+        }
+        if (problem != null) {
+            images.value = images.value.copy(error = problem)
+            return
+        }
+        images.value = images.value.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dir.mkdirs()
+                val updated = config.copy(folders = config.folders + FolderConfig(prefix, dir.path, mode))
+                ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
+                app.settings.updateConfig(updated)
+                images.value = ImagesState()
+                request(SyncActivity.Kind.CHECK)
+                SyncScheduler.checkNow(app, replace = true)
+            } catch (e: Exception) {
+                images.value = images.value.copy(saving = false, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Stops syncing [prefix] on this phone. Its files stay where they are, here and on the server. */
+    fun removeImages(prefix: String) {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        images.value = images.value.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val updated = config.copy(folders = config.folders.filter { it.prefix != prefix })
+                ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
+                app.index.forget(prefix, updated)
+                app.settings.updateConfig(updated)
+                images.value = images.value.copy(saving = false)
+                loadReview()
+            } catch (e: Exception) {
+                images.value = images.value.copy(saving = false, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** [path] as the image folders show it: relative to the phone's storage. */
+    fun local(path: String): String = File(path).relativeToOrSelf(storage).path
 
     /** A MediaSync folder inside one of the phone's public folders (Movies, Pictures), apart from what other apps put there. */
     private fun setFolder(prefix: String, publicFolder: String, pick: Boolean, enabled: Boolean, onError: (String?) -> Unit) {

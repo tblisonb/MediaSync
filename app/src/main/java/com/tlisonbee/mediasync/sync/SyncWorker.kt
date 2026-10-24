@@ -117,6 +117,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         return lock.withLock {
             withContext(Dispatchers.IO) {
                 try {
+                    // Folders the server renamed (photos/ to images/photos/ in server 0.5.0) are followed first.
+                    val config = followRenames(config, ApiClient(config.serverUrl, token), app.index)?.also(settings::updateConfig) ?: config
                     val engine = engine(config, token)
                     when (mode) {
                         MODE_CHECK -> {
