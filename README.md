@@ -170,7 +170,8 @@ mediasync-desktop add-folder games/ ~/Games --pick               # only the game
 ```
 
 On the phone, add folders under **Pictures**: each pairs a folder of the library's `images/` with a
-folder on the phone, one way or both. For example `images/photos/` with `DCIM`, sent to the library
+folder on the phone (typed in, tapped from the suggestions, or chosen with **Browse…**), one way or
+both. For example `images/photos/` with `DCIM`, sent to the library
 only, so the camera's photos are backed up and filed by date without the phone's names changing or
 the whole library landing on the phone; and `images/screenshots/` with `Pictures/Screenshots`, both
 ways. A send-only folder can **keep in the library** what's deleted on the phone, so clearing the
