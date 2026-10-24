@@ -436,6 +436,7 @@ private fun ImagesCard(state: UiState, viewModel: MainViewModel) {
                     }
                     TextButton(onClick = { viewModel.removeImages(folder.prefix) }, enabled = !state.images.saving) { Text("Remove") }
                 }
+                if (folder.mode == SyncMode.SEND_ONLY) KeepDeleted(folder.keepDeleted) { viewModel.setKeepDeleted(folder.prefix, it) }
             }
             if (state.images.adding) {
                 AddImages(state.images, viewModel)
@@ -454,6 +455,15 @@ private fun describe(mode: SyncMode) = when (mode) {
     SyncMode.RECEIVE_ONLY -> "From the library only: changes made here aren't sent."
 }
 
+/** For a send-only folder: clearing it to make room leaves the library alone. */
+@Composable
+private fun KeepDeleted(checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Text("Keep in the library when deleted here", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 /** Picks a folder of the library's images/, a folder on the phone, and which way they sync. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -461,6 +471,7 @@ private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
     var name by rememberSaveable { mutableStateOf("") }
     var folder by rememberSaveable { mutableStateOf("") }
     var mode by rememberSaveable { mutableStateOf(SyncMode.TWO_WAY) }
+    var keepDeleted by rememberSaveable { mutableStateOf(false) }
     OutlinedTextField(
         value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         label = { Text("Library folder") }, prefix = { Text("images/") },
@@ -478,8 +489,11 @@ private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
                 selected = folder == it,
                 onClick = {
                     folder = it
-                    // The camera's folder sends: the library files photos by date, the camera keeps its names.
-                    mode = if (it.startsWith(Environment.DIRECTORY_DCIM)) SyncMode.SEND_ONLY else SyncMode.TWO_WAY
+                    // The camera's folder sends: the library files photos by date, the camera keeps its
+                    // names, and clearing the phone to make room leaves the library alone.
+                    val camera = it.startsWith(Environment.DIRECTORY_DCIM)
+                    mode = if (camera) SyncMode.SEND_ONLY else SyncMode.TWO_WAY
+                    keepDeleted = camera
                 },
                 label = { Text(it) },
             )
@@ -491,8 +505,9 @@ private fun AddImages(images: ImagesState, viewModel: MainViewModel) {
         }
     }
     Text(describe(mode), style = MaterialTheme.typography.bodySmall)
+    if (mode == SyncMode.SEND_ONLY) KeepDeleted(keepDeleted) { keepDeleted = it }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = { viewModel.addImages(name, folder, mode) }, enabled = !images.saving && name.isNotBlank() && folder.isNotBlank()) { Text("Add") }
+        Button(onClick = { viewModel.addImages(name, folder, mode, keepDeleted) },enabled = !images.saving && name.isNotBlank() && folder.isNotBlank()) { Text("Add") }
         TextButton(onClick = viewModel::closeAddImages) { Text("Cancel") }
         if (images.saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
     }

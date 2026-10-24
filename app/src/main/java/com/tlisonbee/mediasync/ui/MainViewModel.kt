@@ -306,9 +306,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Syncs images/[name]/ with [folder], given relative to the phone's storage ("DCIM",
      * "Pictures/Screenshots"). A camera's folder is best [SyncMode.SEND_ONLY]: the library files
-     * photos by date, and the phone's names stay as they are.
+     * photos by date, and the phone's names stay as they are. With [keepDeleted], what's deleted
+     * here stays in the library.
      */
-    fun addImages(name: String, folder: String, mode: SyncMode) {
+    fun addImages(name: String, folder: String, mode: SyncMode, keepDeleted: Boolean) {
         val config = app.settings.config ?: return
         val token = app.settings.token ?: return
         val subfolder = name.trim().trim('/')
@@ -332,7 +333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 dir.mkdirs()
-                val updated = config.copy(folders = config.folders + FolderConfig(prefix, dir.path, mode))
+                val updated = config.copy(folders = config.folders + FolderConfig(prefix, dir.path, mode, keepDeleted = keepDeleted && mode == SyncMode.SEND_ONLY))
                 ApiClient(config.serverUrl, token).putSubscription(updated.subscription())
                 app.settings.updateConfig(updated)
                 images.value = ImagesState()
@@ -360,6 +361,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 images.value = images.value.copy(saving = false, error = e.message ?: e.javaClass.simpleName)
             }
+        }
+    }
+
+    /** Whether what's deleted in the (send-only) folder for [prefix] stays in the library; only this phone needs to know. */
+    fun setKeepDeleted(prefix: String, keep: Boolean) {
+        val config = app.settings.config ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            app.settings.updateConfig(config.copy(folders = config.folders.map { if (it.prefix == prefix) it.copy(keepDeleted = keep) else it }))
         }
     }
 

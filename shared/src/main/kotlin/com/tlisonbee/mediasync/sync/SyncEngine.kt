@@ -354,6 +354,11 @@ class SyncEngine(
                 index.replace(moved.path, carried)
                 moveBackIfMusic(folder, carried, report)
             }
+            // Kept in the library when deleted here: a file that's gone is only forgotten.
+            if (folder.keepsDeleted) {
+                gone.forEach { index.delete(it.path) }
+                continue
+            }
             gone.filter { it.assetId == null || it.ignored != null }.forEach { index.delete(it.path) }
             val deletions = gone.filter { it.assetId != null && it.ignored == null }
             if (!allowDeletes && tooMany(deletions.size, known.size)) {

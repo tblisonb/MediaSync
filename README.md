@@ -173,7 +173,10 @@ On the phone, add folders under **Pictures**: each pairs a folder of the library
 folder on the phone, one way or both. For example `images/photos/` with `DCIM`, sent to the library
 only, so the camera's photos are backed up and filed by date without the phone's names changing or
 the whole library landing on the phone; and `images/screenshots/` with `Pictures/Screenshots`, both
-ways. Turn on **Videos** (`Movies/MediaSync`, only the videos you pick) or **Games**
+ways. A send-only folder can **keep in the library** what's deleted on the phone, so clearing the
+camera's folder to make room doesn't delete the photos from the library (on a PC:
+`add-folder … --mode send-only --keep-deleted`); the camera's folder does this unless you untick
+it. Turn on **Videos** (`Movies/MediaSync`, only the videos you pick) or **Games**
 (`ROMs/MediaSync`, only the games and platforms you pick) the same way. Other folders on the phone
 are left alone.
 
@@ -246,8 +249,8 @@ date.
 
 Servers before 0.5.0 kept photos in `photos/`. The server moves them when it's updated:
 `photos/{year}/` and `photos/Undated/` to `images/photos/`, and every other folder in `photos/`
-(ones kept by hand) to `images/other/`, along with any photos that came from those folders. The
-devices' folders are renamed with them, so a PC's `photos/` folder becomes `images/photos/` and its
+(ones kept by hand) to `images/other/`. (Server 0.5.0 also sent photos filed by date to the folder
+they were first imported from; 0.5.1 puts them back in `images/photos/`.) The devices' folders are renamed with them, so a PC's `photos/` folder becomes `images/photos/` and its
 files stay where they are. Update the server first, then each device: until a device is updated,
 it leaves the moved files alone, and the server refuses its photo changes.
 

@@ -63,8 +63,8 @@ class PhotosTest {
 
     @Test
     fun oldPhotosMoveToImages() = withServer {
-        // As server 0.4 left them: photos filed by date, a folder kept by hand, and a photo from
-        // that folder filed by date anyway. (This server keeps photos/ paths as given.)
+        // As server 0.4 left them: photos filed by date (one first imported from a folder kept by
+        // hand), and that folder. (This server keeps photos/ paths as given.)
         val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures"), SubscriptionRule("music/", "/home/test/Music")) }
         val phone = pair("Phone").apply { subscribe(SubscriptionRule("photos/2019/", "/sdcard/Pictures", filter = listOf("not path:photos/2019/secret*", "kind:image"))) }
         suspend fun add(path: String, source: String, bytes: ByteArray, kind: AssetKind = AssetKind.IMAGE): AssetDto {
@@ -83,7 +83,7 @@ class PhotosTest {
         repo.moveToImages()
         assertEquals(head + 1, repo.head(), "one revision")
         assertEquals("images/photos/2019/2019-07-14 IMG_1", repo.headVersion(dated.assetId)!!.path)
-        assertEquals("images/other/Mom's Stuff/Cards/card", repo.headVersion(card.assetId)!!.path, "back in the folder it came from")
+        assertEquals("images/photos/Undated/card", repo.headVersion(card.assetId)!!.path, "filed by date, as the devices have it")
         assertEquals("images/other/Mom's Stuff/letter", repo.headVersion(letter.assetId)!!.path)
         assertEquals("images/photos/2018/gone", repo.headVersion(gone.assetId)!!.path.also { assertTrue(repo.headVersion(gone.assetId)!!.deleted) })
 
@@ -100,6 +100,37 @@ class PhotosTest {
         repo.moveToImages()
         assertEquals(head + 1, repo.head())
         assertEquals("images/photos/2024/2024-07-14 PXL_20240714_153012345", pc.addPhoto("PXL_20240714_153012345.jpg", jpeg(seed = 14)).path)
+    }
+
+    @Test
+    fun photosServer050SentToTheirImportFolderGoBack() = withServer {
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("photos/", "/home/test/Pictures")) }
+        suspend fun add(path: String, bytes: ByteArray, kind: AssetKind = AssetKind.IMAGE): AssetDto {
+            val file = TestDevice.file(RepoPaths.name(path), bytes)
+            pc.upload(file)
+            return pc.push(PushChange(path = path, kind = kind, mediaHash = file.mediaHash)).results.single().asset
+        }
+        val card = add("photos/Undated/card", jpeg(seed = 21))
+        val letter = add("photos/Mom's Stuff/letter", "dear".toByteArray(), AssetKind.OTHER)
+        val edited = add("photos/2019/2019 beach", jpeg(seed = 22))
+        repo.moveToImages()
+        // As 0.5.0 left them: the card and the beach in the folders they were imported from.
+        val move = repo.head()
+        for ((asset, path) in listOf(card to "images/other/Mom's Stuff/card", edited to "images/other/Trips/beach")) {
+            repo.db.exec("UPDATE asset_version SET path = ? WHERE asset_id = ? AND rev = ?", path, asset.assetId, move)
+            repo.db.exec("UPDATE asset_head SET path = ?, path_key = ? WHERE asset_id = ?", path, path.lowercase(), asset.assetId)
+        }
+        // Moved by hand since: that stays.
+        repo.write { RevisionScope(repo, pc.id).apply { write(repo.headVersion(edited.assetId)!!.copy(path = "images/other/Trips/sea"), place = false) }.finish() }
+        val head = repo.head()
+
+        repo.putImportsBack()
+        assertEquals(head + 1, repo.head(), "one revision")
+        assertEquals("images/photos/Undated/card", repo.headVersion(card.assetId)!!.path)
+        assertEquals("images/other/Mom's Stuff/letter", repo.headVersion(letter.assetId)!!.path, "a folder kept by hand stays")
+        assertEquals("images/other/Trips/sea", repo.headVersion(edited.assetId)!!.path)
+        repo.putImportsBack()
+        assertEquals(head + 1, repo.head(), "once only")
     }
 
     private suspend fun ServerFixture.loggedIn(): HttpClient = browser().also {

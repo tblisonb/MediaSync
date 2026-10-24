@@ -124,4 +124,33 @@ class PhotoSyncTest {
         engine.sync()
         assertEquals(listOf("Camera/beach.jpg"), files(dcim))
     }
+
+    @Test
+    fun aFolderCanKeepInTheLibraryWhatsDeletedHere() = TestWorld().use { world ->
+        val phone = world.client("Phone")
+        val dcim = Files.createDirectories(phone.music.resolveSibling("DCIM"))
+        val shots = Files.createDirectories(phone.music.resolveSibling("Screenshots"))
+        val config = phone.config.copy(
+            folders = phone.config.folders + FolderConfig(RepoPaths.PHOTOS, dcim.toString(), SyncMode.SEND_ONLY, keepDeleted = true) +
+                FolderConfig("images/screenshots/", shots.toString(), SyncMode.SEND_ONLY),
+        )
+        phone.api.putSubscription(config.subscription())
+        val engine = SyncEngine(config, phone.api, phone.index, phone.dirs.pictures, log = {}, clock = { System.currentTimeMillis() + 60_000 })
+        Files.write(dcim.resolve("PXL_20240714_153012345.jpg"), jpeg(1))
+        Files.write(shots.resolve("Screenshot_20240714-153012.png"), jpeg(2))
+        assertEquals(2, engine.sync().pushed)
+
+        // Deleted to make room: the camera's photo stays in the library, the screenshot doesn't.
+        Files.delete(dcim.resolve("PXL_20240714_153012345.jpg"))
+        Files.delete(shots.resolve("Screenshot_20240714-153012.png"))
+        assertEquals(1, engine.sync().pushed)
+        assertEquals(1, world.repo.liveUnder("images/photos").size)
+        assertEquals(0, world.repo.liveUnder("images/screenshots").size)
+        assertTrue(engine.check().isEmpty, "nothing waits")
+
+        // Put back, it's the same photo again, not a second one.
+        Files.write(dcim.resolve("PXL_20240714_153012345.jpg"), jpeg(1))
+        engine.sync()
+        assertEquals(1, world.repo.liveUnder("images/photos").size)
+    }
 }
