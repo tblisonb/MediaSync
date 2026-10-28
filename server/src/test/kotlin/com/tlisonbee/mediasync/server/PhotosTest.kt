@@ -154,7 +154,7 @@ class PhotosTest {
         assertTrue("View and date these photos" in web.get("/browse?path=images/photos/Undated").bodyAsText())
         val page = web.get("/images?path=images/photos/Undated").bodyAsText()
         assertTrue("scan_017" in page && "scan_018" in page && "No date" in page, page)
-        assertTrue("/images/view?id=${first.assetId}" in page, "each photo opens in the viewer")
+        assertTrue("/view?id=${first.assetId}" in page, "each photo opens in the viewer")
 
         val thumb = web.get("/web/thumbs/${first.renditions.single().blob}")
         assertEquals(HttpStatusCode.OK, thumb.status)
@@ -199,19 +199,20 @@ class PhotosTest {
         val top = web.get("/images").bodyAsText()
         assertTrue("/images?path=images%2Fphotos" in top && "/images?path=images%2Fscreenshots" in top, top)
         val gallery = web.get("/images?path=images/screenshots").bodyAsText()
-        assertTrue("/images/view?id=${screenshot.assetId}" in gallery && "Date the ticked" !in gallery)
+        assertTrue("/view?id=${screenshot.assetId}" in gallery && "Date the ticked" !in gallery)
         assertEquals("/images?path=images%2Fphotos", web.get("/photos?path=images%2Fphotos").headers[HttpHeaders.Location], "old links still work")
 
         // The viewer: the full image, and steps through its folder.
         val (a, b) = listOf(first, second).sortedBy { repo.headVersion(it.assetId)!!.path }
-        val viewer = web.get("/images/view?id=${a.assetId}").bodyAsText()
+        val viewer = web.get("/view?id=${a.assetId}").bodyAsText()
         assertTrue("src=\"/web/blobs/${a.renditions.single().blob}\"" in viewer, viewer)
         assertTrue("1 of 2" in viewer && "rel=\"next\"" in viewer && "rel=\"prev\"" !in viewer)
-        assertTrue("/images/view?id=${b.assetId}" in viewer)
+        assertTrue("/view?id=${b.assetId}" in viewer)
         val full = web.get("/web/blobs/${a.renditions.single().blob}")
         assertEquals(HttpStatusCode.OK, full.status)
         assertTrue(full.bodyAsBytes().contentEquals(png(seed = 1)), "the original, not a thumbnail")
-        assertEquals(HttpStatusCode.NotFound, web.get("/images/view?id=nothing").status)
+        assertEquals(HttpStatusCode.NotFound, web.get("/view?id=nothing").status)
+        assertEquals("/view?id=${a.assetId}", web.get("/images/view?id=${a.assetId}").headers[HttpHeaders.Location], "the viewer's old address")
     }
 
     @Test

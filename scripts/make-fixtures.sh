@@ -3,7 +3,9 @@
 #
 # Regenerates the small audio files the tag round-trip tests run on (in shared/src/test/resources,
 # also used by the Android instrumented test). Each is 2 s of tones, tagged the way rippers tag
-# things, including the junk (comments, encoder fields) that the tag policy strips.
+# things, including the junk (comments, encoder fields) that the tag policy strips. Also a 2 s video
+# for the server's video stills, in server/src/test/resources (the round-trip tests take every file
+# in fixtures/ for audio).
 #
 # Needs: ffmpeg (sudo apt install ffmpeg).
 set -euo pipefail
@@ -45,5 +47,9 @@ printf 'TAG%-30s%-30s%-30s%-4s%-28s\0\x03\x11' "Fixture Tone" "Fixture Artist" "
     >> "$out/tone-id3v1.mp3"
 # Windows Media Audio, which the server can convert to MP3.
 ff -i "$work/tone.wav" "${with_cover[@]}" -c:a wmav2 -b:a 128k "${tags[@]}" "$out/tone.wma"
+# A video as disc rips come: H.264 with Dolby Digital sound in an MKV, for the web UI's stills and
+# its warning that browsers may not play it. A keyframe every half second, for stills from across it.
+ff -f lavfi -i "testsrc2=s=160x90:r=10:d=2" -i "$work/tone.wav" -c:v libx264 -pix_fmt yuv420p -g 5 -c:a ac3 -b:a 64k \
+    "$out/../../../../../server/src/test/resources/clip.mkv"
 
 ls -l "$out"

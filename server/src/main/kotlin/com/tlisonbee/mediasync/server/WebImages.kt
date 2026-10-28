@@ -22,6 +22,7 @@ import kotlinx.html.div
 import kotlinx.html.form
 import kotlinx.html.h1
 import kotlinx.html.hiddenInput
+import kotlinx.html.id
 import kotlinx.html.img
 import kotlinx.html.input
 import kotlinx.html.label
@@ -42,22 +43,59 @@ private const val PAGE_SIZE = 120
 /** What browsers show in an img: anything else (HEIC, raw) gets its thumbnail and a download. */
 private val SHOWN = setOf("image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml")
 
-/** One file in the grid: its version, and the blob its thumbnail is made from. */
-private class Tile(val version: Version, val blob: String?)
+/** The galleries, a folder at a time: images/ (photos by year, with dating) and videos/. */
+internal enum class Gallery(val root: String, val href: String) {
+    IMAGES(RepoPaths.IMAGES, "/images"),
+    VIDEOS(RepoPaths.VIDEOS, "/videos"),
+    ;
 
-/** A folder below the one shown: how many images, videos and other files it holds, and its newest image's blob. */
-private class SubFolder(val path: String, val images: Int, val videos: Int, val others: Int, val cover: String?)
+    fun url(folder: String) = "$href?path=${enc(folder)}"
 
-/** A file in the viewer, with its neighbours in its folder and where it stands among them. */
-private class Viewed(val version: Version, val blob: BlobRow?, val format: String?, val previous: Version?, val next: Version?, val index: Int, val count: Int)
+    /** Where a crumb of the path goes: this gallery's page for a folder in it, the Library above it. */
+    fun crumb(folder: String) = if ("$folder/".startsWith(root)) url(folder) else "/browse?path=" + enc(folder)
 
-private fun Repository.blobOf(v: Version): String? = v.renditions.firstOrNull()?.let { media(it)?.baseBlob }
+    companion object {
+        fun of(path: String): Gallery? = entries.firstOrNull { "$path/".startsWith(it.root) }
+    }
+}
 
-/** The thumbnail of an image blob, made and kept the first time; null if Java can't decode it (HEIC, raw). */
+/** One file in the grid: its version, the blob its thumbnail is made from, and a video's length. */
+private class Tile(val version: Version, val blob: String?, val durationMs: Long?)
+
+/**
+ * A folder below the one shown: how many images, videos and other files it holds, the file its tile
+ * shows, and [only], its one video when that's all it holds (a film), for the tile to open straight away.
+ */
+private class SubFolder(val path: String, val images: Int, val videos: Int, val others: Int, val cover: Tile?, val only: Tile?)
+
+/** A file in the viewer, with its neighbours in its folder, where it stands among them, and the page to go back [up] to. */
+private class Viewed(
+    val version: Version,
+    val blob: BlobRow?,
+    val format: String?,
+    val previous: Version?,
+    val next: Version?,
+    val index: Int,
+    val count: Int,
+    val up: String,
+    val probe: Probe? = null,
+)
+
+private fun Repository.tile(v: Version): Tile {
+    val media = v.renditions.firstOrNull()?.let { media(it) }
+    return Tile(v, media?.baseBlob, media?.durationMs)
+}
+
+/**
+ * The thumbnail of an image or video blob, made and kept the first time; null if Java can't decode
+ * the image (HEIC, raw) or ffmpeg the video.
+ */
 fun Repository.thumbnail(hash: String): Path? {
     val file = dir.thumb(hash)
     if (Files.exists(file)) return file
-    blob(hash)?.takeIf { it.mime.startsWith("image/") } ?: return null
+    val mime = blob(hash)?.mime ?: return null
+    if (mime.startsWith("video/")) return videoThumbnail(hash)
+    if (!mime.startsWith("image/")) return null
     val bytes = Images.preview(dir.blob(hash), THUMB_SIZE) ?: return null
     Files.createDirectories(file.parent)
     val tmp = Files.createTempFile(file.parent, ".thumb", ".tmp")
@@ -66,51 +104,74 @@ fun Repository.thumbnail(hash: String): Path? {
     return file
 }
 
-internal fun viewerUrl(assetId: String) = "/images/view?id=$assetId"
+internal fun viewerUrl(assetId: String) = "/view?id=$assetId"
 
 private fun inPhotos(folder: String) = "$folder/".startsWith(RepoPaths.PHOTOS)
 
 fun Route.imageRoutes(repo: Repository) {
-    get("/images") {
-        val folder = call.parameters["path"].orEmpty().trim('/').ifEmpty { RepoPaths.IMAGES.trimEnd('/') }
-        val page = call.parameters["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
-        val (files, folders) = io {
-            repo.db.read {
-                val (here, below) = repo.liveUnder(folder).partition { RepoPaths.parent(it.path) == folder }
-                // Years newest first and Undated last, as images/photos holds; other folders by name.
-                val folders = below.groupBy { it.path.removePrefix("$folder/").substringBefore('/') }.map { (name, inside) ->
-                    val cover = inside.filter { it.kind == AssetKind.IMAGE }.maxByOrNull { it.path }
-                    SubFolder(
-                        "$folder/$name", inside.count { it.kind == AssetKind.IMAGE }, inside.count { it.kind == AssetKind.VIDEO },
-                        inside.count { it.kind != AssetKind.IMAGE && it.kind != AssetKind.VIDEO }, cover?.let { repo.blobOf(it) },
+    for (gallery in Gallery.entries) {
+        get(gallery.href) {
+            val folder = call.parameters["path"].orEmpty().trim('/').ifEmpty { gallery.root.trimEnd('/') }
+            val page = call.parameters["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+            val (files, folders) = io {
+                repo.db.read {
+                    val (here, below) = repo.liveUnder(folder).partition { RepoPaths.parent(it.path) == folder }
+                    // Years newest first and Undated last, as images/photos holds; other folders by name.
+                    val folders = below.groupBy { it.path.removePrefix("$folder/").substringBefore('/') }.map { (name, inside) ->
+                        val images = inside.filter { it.kind == AssetKind.IMAGE }
+                        val videos = inside.filter { it.kind == AssetKind.VIDEO }
+                        val cover = images.maxByOrNull { it.path } ?: videos.minByOrNull { it.path }
+                        val only = videos.singleOrNull()
+                            ?.takeIf { gallery == Gallery.VIDEOS && images.isEmpty() && RepoPaths.parent(it.path) == "$folder/$name" }
+                        SubFolder(
+                            "$folder/$name", images.size, videos.size, inside.size - images.size - videos.size,
+                            cover?.let { repo.tile(it) }, only?.let { repo.tile(it) },
+                        )
+                    }.sortedWith(
+                        compareBy<SubFolder> { RepoPaths.name(it.path) == RepoPaths.UNDATED }
+                            .thenBy { RepoPaths.name(it.path).toIntOrNull()?.let { year -> -year } ?: Int.MAX_VALUE }
+                            .thenBy { RepoPaths.name(it.path).lowercase() },
                     )
-                }.sortedWith(
-                    compareBy<SubFolder> { RepoPaths.name(it.path) == RepoPaths.UNDATED }
-                        .thenBy { RepoPaths.name(it.path).toIntOrNull()?.let { year -> -year } ?: Int.MAX_VALUE }
-                        .thenBy { RepoPaths.name(it.path).lowercase() },
-                )
-                here.map { v -> Tile(v, repo.blobOf(v)) } to folders
+                    here.map { repo.tile(it) } to folders
+                }
             }
+            if (files.isEmpty() && folders.isEmpty()) notFound("nothing in $folder")
+            call.respondHtml { galleryPage(gallery, folder, files, folders, page, call.parameters["done"], call.parameters["error"]) }
         }
-        if (files.isEmpty() && folders.isEmpty()) notFound("nothing in $folder")
-        call.respondHtml { imagesPage(folder, files, folders, page, call.parameters["done"], call.parameters["error"]) }
     }
     // Where Photos was before it took in the rest of images/.
     get("/photos") {
         call.respondRedirect("/images" + (call.request.queryString().takeIf { it.isNotEmpty() }?.let { "?$it" } ?: ""))
     }
+    // Where the viewer was before it showed videos/ too.
     get("/images/view") {
+        call.respondRedirect("/view" + (call.request.queryString().takeIf { it.isNotEmpty() }?.let { "?$it" } ?: ""))
+    }
+    get("/view") {
         val id = call.parameters["id"] ?: badRequest("which file?")
         val viewed = io {
             repo.db.read {
                 val v = repo.headVersion(id)?.takeIf { !it.deleted } ?: notFound("no file $id")
-                val siblings = repo.liveIn(RepoPaths.parent(v.path))
+                val folder = RepoPaths.parent(v.path)
+                val gallery = Gallery.of(v.path)
+                val inFolder = repo.liveIn(folder)
+                // A video steps to the next video, past the subtitles and posters beside it.
+                val siblings = if (gallery == Gallery.VIDEOS) inFolder.filter { it.kind == AssetKind.VIDEO || it.assetId == id } else inFolder
                 val i = siblings.indexOfFirst { it.assetId == id }
                 val media = v.renditions.firstOrNull()?.let { repo.media(it) }
-                Viewed(v, media?.let { repo.blob(it.baseBlob) }, media?.format, siblings.getOrNull(i - 1), siblings.getOrNull(i + 1), i + 1, siblings.size)
+                // A film's tile opens it straight from the folder of films, so that's where it goes back to.
+                val film = gallery == Gallery.VIDEOS && siblings.size == 1 && inFolder.none { it.kind == AssetKind.IMAGE } &&
+                    "$folder/" != gallery.root
+                val up = when {
+                    gallery == null -> "/browse?path=" + enc(folder)
+                    film -> gallery.url(RepoPaths.parent(folder))
+                    else -> gallery.url(folder)
+                }
+                Viewed(v, media?.let { repo.blob(it.baseBlob) }, media?.format, siblings.getOrNull(i - 1), siblings.getOrNull(i + 1), i + 1, siblings.size, up)
             }
         }
-        call.respondHtml { viewerPage(viewed) }
+        val probe = viewed.blob?.takeIf { it.mime.startsWith("video/") }?.let { io { repo.probe(it.hash) } }
+        call.respondHtml { viewerPage(viewed, probe) }
     }
     post("/photos/date") {
         val form = call.receiveParameters()
@@ -134,8 +195,16 @@ fun Route.imageRoutes(repo: Repository) {
     }
 }
 
-private fun HTML.imagesPage(folder: String, files: List<Tile>, folders: List<SubFolder>, page: Int, done: String?, error: String?) = page(RepoPaths.name(folder)) {
-    h1 { breadcrumbs(folder) }
+private fun HTML.galleryPage(
+    gallery: Gallery,
+    folder: String,
+    files: List<Tile>,
+    folders: List<SubFolder>,
+    page: Int,
+    done: String?,
+    error: String?,
+) = page(RepoPaths.name(folder)) {
+    h1 { breadcrumbs(folder, gallery::crumb) }
     done?.let { p("notice") { +"$it." } }
     error?.let { p("notice error") { +it } }
     if (inPhotos(folder)) {
@@ -144,47 +213,65 @@ private fun HTML.imagesPage(folder: String, files: List<Tile>, folders: List<Sub
             +"and images/photos/Undated/ without one. A date can be a year, a month or a day: 2019, 2019-07 or 2019-07-14."
         }
     }
-    if (folders.isNotEmpty()) {
-        div("photo-grid") {
-            folders.forEach { f ->
-                val name = RepoPaths.name(f.path)
-                a(href = "/images?path=${enc(f.path)}", classes = "photo folder") {
-                    if (f.cover != null) img(alt = name, src = "/web/thumbs/${f.cover}") { attributes["loading"] = "lazy" } else span("no-thumb") { +name }
-                    span("name") { +name }
-                    span("date muted") {
-                        val noun = if (inPhotos(f.path)) "photo" else "image"
-                        +listOfNotNull(
-                            f.images.takeIf { it > 0 || f.videos + f.others == 0 }?.let { "%,d %s".format(it, if (it == 1) noun else noun + "s") },
-                            f.videos.takeIf { it > 0 }?.let { "%,d %s".format(it, if (it == 1) "video" else "videos") },
-                            f.others.takeIf { it > 0 }?.let { "%,d other %s".format(it, if (it == 1) "file" else "files") },
-                        ).joinToString(" · ")
-                    }
-                }
-            }
-        }
-    }
-    if (files.isNotEmpty()) {
-        val pages = (files.size + PAGE_SIZE - 1) / PAGE_SIZE
+    val grid = if (gallery == Gallery.VIDEOS) "photo-grid videos" else "photo-grid"
+    if (folders.isNotEmpty()) div(grid) { folders.forEach { folderTile(gallery, it) } }
+    // Videos' subtitles and posters go with them; the Library lists them.
+    val (shown, beside) = if (gallery == Gallery.VIDEOS) files.partition { it.version.kind == AssetKind.VIDEO } else files to emptyList()
+    if (shown.isNotEmpty()) {
+        val pages = (shown.size + PAGE_SIZE - 1) / PAGE_SIZE
         val current = page.coerceAtMost(pages)
-        val shown = files.drop((current - 1) * PAGE_SIZE).take(PAGE_SIZE)
-        if (inPhotos(folder)) datingGrid(folder, shown, current) else gallery(shown)
+        val onPage = shown.drop((current - 1) * PAGE_SIZE).take(PAGE_SIZE)
+        if (inPhotos(folder)) datingGrid(folder, onPage, current) else tiles(grid, onPage)
         if (pages > 1) {
             p("pages") {
                 (1..pages).forEach { n ->
-                    if (n == current) span("current") { +"$n" } else a(href = "/images?path=${enc(folder)}&page=$n") { +"$n" }
+                    if (n == current) span("current") { +"$n" } else a(href = gallery.url(folder) + "&page=$n") { +"$n" }
                     +" "
                 }
             }
         }
     }
+    if (beside.isNotEmpty()) {
+        p("muted small") {
+            +"Also here: ${plural(beside.size, "other file", "other files")}, in "
+            a(href = "/browse?path=" + enc(folder)) { +"the Library" }
+            +"."
+        }
+    }
+    script(src = "/static/previews.js") { }
 }
 
-private fun FlowContent.preview(tile: Tile) {
-    val v = tile.version
-    if (v.kind == AssetKind.IMAGE && tile.blob != null) {
-        img(alt = RepoPaths.name(v.path), src = "/web/thumbs/${tile.blob}") { attributes["loading"] = "lazy" }
-    } else {
-        span("no-thumb") { +(if (v.kind == AssetKind.VIDEO) "Video" else "No preview") }
+private fun FlowContent.folderTile(gallery: Gallery, f: SubFolder) {
+    val name = RepoPaths.name(f.path)
+    a(href = f.only?.let { viewerUrl(it.version.assetId) } ?: gallery.url(f.path), classes = "photo folder") {
+        f.cover?.let { preview(it, name) } ?: span("no-thumb") { +name }
+        span("name") { +name }
+        if (f.only == null) {
+            span("date muted") {
+                val noun = if (inPhotos(f.path)) "photo" else "image"
+                +listOfNotNull(
+                    f.images.takeIf { it > 0 || f.videos + f.others == 0 }?.let { plural(it, noun, noun + "s") },
+                    f.videos.takeIf { it > 0 }?.let { plural(it, "video", "videos") },
+                    f.others.takeIf { it > 0 }?.let { plural(it, "other file", "other files") },
+                ).joinToString(" · ")
+            }
+        }
+    }
+}
+
+/** A file's thumbnail; a video's moves through stills from across it while the pointer is on it (previews.js). */
+private fun FlowContent.preview(tile: Tile, alt: String = RepoPaths.name(tile.version.path)) {
+    when {
+        tile.blob == null -> span("no-thumb") { +"No preview" }
+        tile.version.kind == AssetKind.IMAGE -> img(alt = alt, src = "/web/thumbs/${tile.blob}") { attributes["loading"] = "lazy" }
+        tile.version.kind == AssetKind.VIDEO -> span("thumb") {
+            img(alt = alt, src = "/web/thumbs/${tile.blob}") {
+                attributes["loading"] = "lazy"
+                attributes["data-frames"] = "/web/frames/${tile.blob}"
+            }
+            span("length") { +(listOfNotNull("▶", tile.durationMs?.takeIf { it > 0 }?.let(::duration)).joinToString(" ")) }
+        }
+        else -> span("no-thumb") { +"No preview" }
     }
 }
 
@@ -227,27 +314,26 @@ private fun FlowContent.datingGrid(folder: String, shown: List<Tile>, current: I
     }
 }
 
-/** Anything else in images/: each opens in the viewer. */
-private fun FlowContent.gallery(shown: List<Tile>) {
-    div("photo-grid") {
+/** Anything else: each opens in the viewer. */
+private fun FlowContent.tiles(grid: String, shown: List<Tile>) {
+    div(grid) {
         shown.forEach { tile ->
-            val name = RepoPaths.name(tile.version.path)
             a(href = viewerUrl(tile.version.assetId), classes = "photo folder") {
                 preview(tile)
-                span("name") { +name }
+                span("name") { +RepoPaths.name(tile.version.path) }
             }
         }
     }
 }
 
-private fun HTML.viewerPage(viewed: Viewed) = page(RepoPaths.name(viewed.version.path)) {
+private fun HTML.viewerPage(viewed: Viewed, probe: Probe?) = page(RepoPaths.name(viewed.version.path)) {
     val v = viewed.version
     val name = RepoPaths.name(v.path)
     val folder = RepoPaths.parent(v.path)
     val blob = viewed.blob
     val file = name + (viewed.format?.let { ".$it" } ?: "")
     h1 {
-        breadcrumbs(folder)
+        Gallery.of(v.path)?.let { breadcrumbs(folder, it::crumb) } ?: breadcrumbs(folder)
         +" / $name"
     }
     div("viewer-bar") {
@@ -255,11 +341,23 @@ private fun HTML.viewerPage(viewed: Viewed) = page(RepoPaths.name(viewed.version
         span("muted num") { +"${viewed.index} of ${viewed.count}" }
         viewed.next?.let { a(href = viewerUrl(it.assetId)) { attributes["rel"] = "next"; +"Next →" } } ?: span("muted") { +"Next →" }
         span("spacer") { }
-        a(href = "/images?path=${enc(folder)}") { attributes["rel"] = "up"; +"Back to the folder" }
+        a(href = viewed.up) { attributes["rel"] = "up"; +"Back to the folder" }
         a(href = "/assets/${v.assetId}") { +"Details" }
         if (blob != null && (blob.mime.startsWith("image/") || blob.mime.startsWith("video/"))) {
             a(href = "/web/blobs/${blob.hash}") { attributes["download"] = file; +"Download" }
         }
+    }
+    val doubts = probe?.doubts().orEmpty()
+    if (doubts.isNotEmpty()) {
+        p("notice warn") {
+            id = "doubts"
+            +"This video may not play fully here: ${doubts.joinToString("; ")}. Download it to watch it in a player such as VLC."
+        }
+    }
+    p("notice error") {
+        id = "unplayable"
+        attributes["hidden"] = ""
+        +"This browser can't play this video. Download it to watch it in a player such as VLC."
     }
     div("viewer") {
         when {
@@ -272,6 +370,7 @@ private fun HTML.viewerPage(viewed: Viewed) = page(RepoPaths.name(viewed.version
                 attributes["src"] = "/web/blobs/${blob.hash}"
                 attributes["controls"] = ""
                 attributes["preload"] = "metadata"
+                if (probe != null) attributes["poster"] = "/web/thumbs/${blob.hash}"
             }
             blob.mime.startsWith("image/") -> div("unshown") {
                 img(alt = name, src = "/web/thumbs/${blob.hash}")
@@ -283,10 +382,17 @@ private fun HTML.viewerPage(viewed: Viewed) = page(RepoPaths.name(viewed.version
     p("muted small") {
         +listOfNotNull(
             v.tags[TagField.DATE]?.firstOrNull(),
+            probe?.seconds?.takeIf { it > 0 }?.let { duration((it * 1000).toLong()) },
+            probe?.width?.let { w -> probe.height?.let { h -> "$w×$h" } },
+            probe?.video?.let { Probe.codecName(it) },
+            probe?.audio?.distinct()?.joinToString(", ") { Probe.codecName(it) }?.ifEmpty { null },
             viewed.format?.uppercase(),
             blob?.let { bytes(it.size) },
         ).joinToString(" · ")
-        if (blob?.mime in SHOWN) +" · click the image to open it at full size; ← and → step through the folder"
+        when {
+            blob?.mime in SHOWN -> +" · click the image to open it at full size; ← and → step through the folder"
+            blob?.mime?.startsWith("video/") == true && viewed.count > 1 -> +" · ← and → step through the folder, unless the video has the focus"
+        }
     }
     script(src = "/static/viewer.js") { }
 }

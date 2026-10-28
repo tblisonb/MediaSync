@@ -17,6 +17,7 @@ import kotlinx.html.h2
 import kotlinx.html.img
 import kotlinx.html.li
 import kotlinx.html.p
+import kotlinx.html.script
 import kotlinx.html.section
 import kotlinx.html.span
 import kotlinx.html.ul
@@ -31,7 +32,7 @@ import java.time.format.DateTimeFormatter
 enum class Area(val label: String, val href: String) {
     MUSIC("Music", "/browse?path=music"),
     IMAGES("Images", "/images"),
-    VIDEOS("Videos", "/browse?path=videos"),
+    VIDEOS("Videos", "/videos"),
     GAMES("Games", "/games"),
     OTHER("Other", "/browse"),
     ;
@@ -63,14 +64,15 @@ class HomeAsset(
     val title: String?,
 )
 
-class Thumb(val blob: String, val href: String, val caption: String, val detail: String? = null)
+/** A thumbnail to click; a video's has its [length], and moves on hover. */
+class Thumb(val blob: String, val href: String, val caption: String, val detail: String? = null, val video: Boolean = false, val length: String? = null)
 
 class MusicCard(val tracks: Int, val albums: Int, val artists: Int, val hours: Long, val recent: List<Thumb>)
 
 /** All of images/: [photos] and [clips] are images/photos/'s, [otherFolders] the rest's file counts. */
 class ImagesCard(val images: Int, val photos: Int, val clips: Int, val years: IntRange?, val latest: List<Thumb>, val otherFolders: List<Pair<String, Int>>)
 
-class VideosCard(val videos: Int, val hours: Long, val recent: List<Pair<String, String>>)
+class VideosCard(val videos: Int, val hours: Long, val recent: List<Thumb>)
 
 class GamesCard(val games: Int, val files: Int, val platforms: List<Triple<String, String, Int>>, val unknown: Int)
 
@@ -216,8 +218,9 @@ private fun imagesCard(images: List<HomeAsset>): ImagesCard {
 
 private fun videosCard(files: List<HomeAsset>): VideosCard {
     val videos = files.filter { it.kind == AssetKind.VIDEO }
-    val recent = videos.sortedWith(compareByDescending<HomeAsset> { it.added }.thenBy { it.path }).take(4).map {
-        "/assets/${it.assetId}" to (it.title ?: RepoPaths.name(it.path).substringBeforeLast('.'))
+    val recent = videos.sortedWith(compareByDescending<HomeAsset> { it.added }.thenBy { it.path }).take(3).map {
+        val title = it.title ?: RepoPaths.name(it.path)
+        Thumb(it.blob.orEmpty(), viewerUrl(it.assetId), title, video = true, length = it.durationMs.takeIf { ms -> ms > 0 }?.let(::duration))
     }
     return VideosCard(videos.size, videos.sumOf { it.durationMs } / 3600_000, recent)
 }
@@ -288,7 +291,7 @@ private fun noun(path: String, kind: AssetKind) = when {
 
 private fun day(millis: Long): LocalDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()
 
-private fun plural(n: Number, one: String, many: String) = "%,d %s".format(n, if (n.toLong() == 1L) one else many)
+internal fun plural(n: Number, one: String, many: String) = "%,d %s".format(n, if (n.toLong() == 1L) one else many)
 
 private fun count(n: Int) = "%,d".format(n)
 
@@ -343,6 +346,7 @@ private fun HTML.homePage(home: Home) = page("Home") {
         }
         activity(home.activity)
     }
+    script(src = "/static/previews.js") { }
 }
 
 private fun FlowContent.areaCard(area: Area, size: Long, headline: String, content: FlowContent.() -> Unit) = section("area-card ${area.name.lowercase()}") {
@@ -354,15 +358,22 @@ private fun FlowContent.areaCard(area: Area, size: Long, headline: String, conte
     content()
 }
 
-private fun FlowContent.thumbs(thumbs: List<Thumb>) {
+private fun FlowContent.thumbs(thumbs: List<Thumb>, classes: String = "thumbs") {
     if (thumbs.isEmpty()) return
-    ul("thumbs") {
+    ul(classes) {
         thumbs.forEach { t ->
             li {
                 a(href = t.href) {
-                    attributes["title"] = listOfNotNull(t.caption, t.detail).joinToString(" · ")
-                    if (t.blob.isNotEmpty()) img(alt = t.caption, src = "/web/thumbs/${t.blob}") { attributes["loading"] = "lazy" }
-                    else span("no-thumb") { +t.caption.take(1) }
+                    attributes["title"] = listOfNotNull(t.caption, t.detail, t.length).joinToString(" · ")
+                    if (t.blob.isNotEmpty()) {
+                        img(alt = t.caption, src = "/web/thumbs/${t.blob}") {
+                            attributes["loading"] = "lazy"
+                            if (t.video) attributes["data-frames"] = "/web/frames/${t.blob}"
+                        }
+                        t.length?.let { span("length") { +it } }
+                    } else {
+                        span("no-thumb") { +t.caption.take(1) }
+                    }
                 }
             }
         }
@@ -402,7 +413,8 @@ private fun FlowContent.videosCard(v: VideosCard, size: Long) = areaCard(Area.VI
     if (v.videos == 0) return@areaCard p("empty") { +"No videos yet." }
     if (v.hours > 0) p("muted") { +plural(v.hours, "hour", "hours") }
     p("caption") { +"Recently added" }
-    ul("plain") { v.recent.forEach { (href, title) -> li { a(href = href) { +title } } } }
+    thumbs(v.recent, "thumbs wide")
+    ul("plain") { v.recent.forEach { t -> li { a(href = t.href) { +t.caption } } } }
 }
 
 private fun FlowContent.gamesCard(g: GamesCard, size: Long) = areaCard(Area.GAMES, size, plural(g.games, "game", "games")) {

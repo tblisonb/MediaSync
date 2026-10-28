@@ -239,13 +239,23 @@ fun Route.webRoutes(repo: Repository) {
             call.respond(LocalPathContent(repo.dir.blob(hash), ContentType.parse(blob.mime)))
         }
 
-        // A photo's thumbnail, made the first time it's shown.
+        // A photo's or video's thumbnail, made the first time it's shown.
         get("/web/thumbs/{hash}") {
             val hash = call.parameters["hash"]!!
             if (!BlobStore.isHash(hash)) return@get call.respond(HttpStatusCode.NotFound)
             val thumb = io { repo.thumbnail(hash) } ?: return@get call.respond(HttpStatusCode.NotFound)
             call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
             call.respond(LocalPathContent(thumb, ContentType.Image.JPEG))
+        }
+
+        // A video's stills from start to end, for previews.js to step through.
+        get("/web/frames/{hash}/{n}") {
+            val hash = call.parameters["hash"]!!
+            val n = call.parameters["n"]?.toIntOrNull()
+            if (!BlobStore.isHash(hash) || n == null) return@get call.respond(HttpStatusCode.NotFound)
+            val frame = io { repo.frame(hash, n) } ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+            call.respond(LocalPathContent(frame, ContentType.Image.JPEG))
         }
     }
 }
@@ -283,7 +293,7 @@ internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int
                 nav {
                     a(href = "/browse") { +"Library" }
                     a(href = "/images") { +"Images" }
-                    a(href = "/browse?path=videos") { +"Videos" }
+                    a(href = "/videos") { +"Videos" }
                     a(href = "/games") { +"Games" }
                     a(href = "/revisions") { +"History" }
                     a(href = "/resolve") { +"Resolve" }
@@ -323,7 +333,11 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
     } else if (folder.startsWith(RepoPaths.IMAGES) && listing.assets.isNotEmpty()) {
         p { a(href = "/images?path=" + enc(folder)) { +"View as a gallery" } }
     } else if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
-        p { a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" } }
+        p {
+            a(href = "/videos?path=" + enc(folder)) { +"Watch these videos" }
+            +" · "
+            a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" }
+        }
     } else if (listing.assets.any { it.kind == AssetKind.GAME }) {
         p { a(href = "/games/game?folder=" + enc(folder)) { +"This game's details" } }
     } else if (RepoPaths.GAMES.startsWith("$folder/") || folder.startsWith(RepoPaths.GAMES)) {
@@ -340,7 +354,7 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
         }
         listing.assets.forEach { v ->
             li {
-                val viewable = v.kind == AssetKind.IMAGE || (v.kind == AssetKind.VIDEO && v.path.startsWith(RepoPaths.IMAGES))
+                val viewable = v.kind == AssetKind.IMAGE || v.kind == AssetKind.VIDEO
                 a(href = if (viewable) viewerUrl(v.assetId) else "/assets/${v.assetId}") { +RepoPaths.name(v.path) }
                 span("muted") { +(" " + formats[v.assetId].orEmpty().joinToString(" · ")) }
             }
@@ -349,13 +363,14 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
     p { a(href = "/deleted") { +"Recently deleted" } }
 }
 
-internal fun FlowContent.breadcrumbs(folder: String) {
+/** [folder]'s path, each part linking to its Library listing, or where [href] says. */
+internal fun FlowContent.breadcrumbs(folder: String, href: (String) -> String = { "/browse?path=" + enc(it) }) {
     a(href = "/browse") { +"Library" }
     var path = ""
     folder.split('/').filter { it.isNotEmpty() }.forEach { part ->
         path = if (path.isEmpty()) part else "$path/$part"
         +" / "
-        a(href = "/browse?path=" + enc(path)) { +part }
+        a(href = href(path)) { +part }
     }
 }
 
@@ -368,7 +383,7 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
         if (head.deleted) p("notice") { +"This file is deleted. Restore an earlier version below to bring it back." }
         div("asset") {
             head.pictures.firstOrNull()?.let { img(src = "/web/blobs/${it.blob}", alt = "Cover", classes = "cover") }
-            if (head.kind == AssetKind.IMAGE && !head.deleted) {
+            if ((head.kind == AssetKind.IMAGE || head.kind == AssetKind.VIDEO) && !head.deleted) {
                 dto.renditions.firstOrNull()?.let { r ->
                     a(href = viewerUrl(head.assetId)) { img(src = "/web/thumbs/${r.blob}", alt = "View", classes = "cover") }
                 }
@@ -759,7 +774,8 @@ internal fun bytes(n: Long): String = when {
     else -> "$n B"
 }
 
-private fun duration(ms: Long) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
+internal fun duration(ms: Long) =
+    if (ms >= 3600_000) "%d:%02d:%02d".format(ms / 3600_000, ms / 60_000 % 60, ms / 1000 % 60) else "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
 
 internal fun enc(s: String): String = URLEncoder.encode(s, Charsets.UTF_8)
 

@@ -7,9 +7,7 @@ import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.TagPolicy
 import com.tlisonbee.mediasync.tags.AudioTags
 import java.nio.file.Files
-import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.TimeUnit
 
 /**
  * Tracks to MP3, with ffmpeg: WMA, AAC (.m4a), FLAC, Ogg and the rest. Each becomes an MP3 (LAME's
@@ -142,35 +140,5 @@ internal fun Repository.convertToMp3(deviceId: String, tracks: List<Version>, jo
         }
         scope.refreshAlbums()
         scope.finish()
-    }
-}
-
-internal object Ffmpeg {
-    val available: Boolean by lazy {
-        runCatching {
-            val process = ProcessBuilder("ffmpeg", "-version").redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
-            process.waitFor(30, TimeUnit.SECONDS) && process.exitValue() == 0
-        }.getOrDefault(false)
-    }
-
-    /**
-     * [input] as an MP3 in a temporary file under [work], with its tags and cover; null if ffmpeg
-     * can't (a DRM-protected WMA, say). A cover MP3 can't hold is left out rather than the track.
-     */
-    fun toMp3(input: Path, work: Path): Path? {
-        val out = Files.createTempFile(work, "convert-", ".mp3")
-        val withCover = listOf("-map", "0:v:0?", "-c:v", "copy", "-disposition:v", "attached_pic")
-        for (picture in listOf(withCover, emptyList())) {
-            val command = listOf("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input.toString(), "-map", "0:a:0") +
-                picture + listOf("-c:a", "libmp3lame", "-q:a", "0", "-map_metadata", "0", "-id3v2_version", "3", "-f", "mp3", out.toString())
-            val process = ProcessBuilder(command).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
-            if (!process.waitFor(5, TimeUnit.MINUTES)) {
-                process.destroyForcibly()
-                break
-            }
-            if (process.exitValue() == 0 && Files.size(out) > 0) return out
-        }
-        Files.deleteIfExists(out)
-        return null
     }
 }
