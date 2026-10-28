@@ -11,6 +11,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import kotlinx.html.ButtonType
+import kotlinx.html.FlowContent
 import kotlinx.html.FormMethod
 import kotlinx.html.HTML
 import kotlinx.html.InputType
@@ -38,6 +39,11 @@ private const val PAGE_SIZE = 120
 /** One photo in the grid: its version, and the blob its thumbnail is made from. */
 private class Photo(val version: Version, val blob: String?)
 
+/** A folder of photos below the one shown, with its newest photo's blob for a thumbnail. */
+private class PhotoFolder(val path: String, val photos: Int, val clips: Int, val cover: String?)
+
+private fun Repository.blobOf(v: Version): String? = v.renditions.firstOrNull()?.let { media(it)?.baseBlob }
+
 /** The thumbnail of an image blob, made and kept the first time; null if Java can't decode it (HEIC, raw). */
 fun Repository.thumbnail(hash: String): Path? {
     val file = dir.thumb(hash)
@@ -55,14 +61,20 @@ fun Route.photoRoutes(repo: Repository) {
     get("/photos") {
         val folder = call.parameters["path"].orEmpty().trim('/').ifEmpty { RepoPaths.PHOTOS.trimEnd('/') }
         val page = call.parameters["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
-        val photos = io {
+        val (photos, folders) = io {
             repo.db.read {
-                repo.liveIn(folder).filter { RepoPaths.isPhoto(it.kind, it.path) }.map { v ->
-                    Photo(v, v.renditions.firstOrNull()?.let { repo.media(it)?.baseBlob })
-                }
+                val (here, below) = repo.liveUnder(folder).filter { RepoPaths.isPhoto(it.kind, it.path) }
+                    .partition { RepoPaths.parent(it.path) == folder }
+                // images/photos holds only year folders: they're listed, newest first and Undated last.
+                val folders = below.groupBy { it.path.removePrefix("$folder/").substringBefore('/') }.map { (name, inside) ->
+                    val cover = inside.filter { it.kind == AssetKind.IMAGE }.maxByOrNull { it.path }
+                    PhotoFolder("$folder/$name", inside.count { it.kind == AssetKind.IMAGE }, inside.count { it.kind == AssetKind.VIDEO }, cover?.let { repo.blobOf(it) })
+                }.sortedWith(compareBy<PhotoFolder> { RepoPaths.name(it.path) == RepoPaths.UNDATED }.thenByDescending { RepoPaths.name(it.path) })
+                here.map { v -> Photo(v, repo.blobOf(v)) } to folders
             }
-        }.ifEmpty { notFound("no photos in $folder") }
-        call.respondHtml { photosPage(folder, photos, page, call.parameters["done"], call.parameters["error"]) }
+        }
+        if (photos.isEmpty() && folders.isEmpty()) notFound("no photos in $folder")
+        call.respondHtml { photosPage(folder, photos, folders, page, call.parameters["done"], call.parameters["error"]) }
     }
     post("/photos/date") {
         val form = call.receiveParameters()
@@ -86,10 +98,7 @@ fun Route.photoRoutes(repo: Repository) {
     }
 }
 
-private fun HTML.photosPage(folder: String, photos: List<Photo>, page: Int, done: String?, error: String?) = page(RepoPaths.name(folder)) {
-    val pages = (photos.size + PAGE_SIZE - 1) / PAGE_SIZE
-    val current = page.coerceAtMost(pages)
-    val shown = photos.drop((current - 1) * PAGE_SIZE).take(PAGE_SIZE)
+private fun HTML.photosPage(folder: String, photos: List<Photo>, folders: List<PhotoFolder>, page: Int, done: String?, error: String?) = page(RepoPaths.name(folder)) {
     h1 { breadcrumbs(folder) }
     done?.let { p("notice") { +"$it." } }
     error?.let { p("notice error") { +it } }
@@ -97,6 +106,30 @@ private fun HTML.photosPage(folder: String, photos: List<Photo>, page: Int, done
         +"Photos are filed as images/photos/{year}/{date} {name}, by the date the camera recorded or their name gives, "
         +"and images/photos/Undated/ without one. A date can be a year, a month or a day: 2019, 2019-07 or 2019-07-14."
     }
+    if (folders.isNotEmpty()) {
+        div("photo-grid") {
+            folders.forEach { f ->
+                val name = RepoPaths.name(f.path)
+                a(href = "/photos?path=${enc(f.path)}", classes = "photo folder") {
+                    if (f.cover != null) img(alt = name, src = "/web/thumbs/${f.cover}") { attributes["loading"] = "lazy" } else span("no-thumb") { +name }
+                    span("name") { +name }
+                    span("date muted") {
+                        +listOfNotNull(
+                            "%,d %s".format(f.photos, if (f.photos == 1) "photo" else "photos"),
+                            f.clips.takeIf { it > 0 }?.let { "%,d %s".format(it, if (it == 1) "clip" else "clips") },
+                        ).joinToString(" · ")
+                    }
+                }
+            }
+        }
+    }
+    if (photos.isNotEmpty()) photoGrid(folder, photos, page)
+}
+
+private fun FlowContent.photoGrid(folder: String, photos: List<Photo>, page: Int) {
+    val pages = (photos.size + PAGE_SIZE - 1) / PAGE_SIZE
+    val current = page.coerceAtMost(pages)
+    val shown = photos.drop((current - 1) * PAGE_SIZE).take(PAGE_SIZE)
     form(action = "/photos/date", method = FormMethod.post, classes = "card photos") {
         hiddenInput(name = "folder") { value = folder }
         hiddenInput(name = "page") { value = current.toString() }
