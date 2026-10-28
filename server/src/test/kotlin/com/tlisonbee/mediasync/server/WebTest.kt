@@ -1,5 +1,6 @@
 package com.tlisonbee.mediasync.server
 
+import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.DeviceKind
 import com.tlisonbee.mediasync.api.PictureRef
@@ -182,6 +183,44 @@ class WebTest {
 
         // The last one, one by one.
         assertTrue("Karma Police (Live)" in web.get("/resolve/${id(karma.assetId)}").bodyAsText())
+    }
+
+    @Test
+    fun plainFilesOfATrackCanBeLinked() = withServer {
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        suspend fun plain(file: LocalFile, path: String): AssetDto {
+            desktop.upload(file)
+            return desktop.push(PushChange(path = path, kind = AssetKind.OTHER, mediaHash = file.mediaHash)).results.single().asset
+        }
+        // A track, and an untagged WMA an older client sent as a plain file, at its path.
+        val airbag = desktop.add(TestDevice.fakeFile("airbag.mp3"), track("Airbag", 1))
+        val wma = plain(TestDevice.fakeFile("airbag.wma"), airbag.path)
+        // An empty plain file first, and the track moved aside by it.
+        val empty = plain(TestDevice.file("paranoid.mp3", ByteArray(0)), "music/Radiohead/OK Computer/02 Paranoid Android")
+        val paranoid = desktop.add(TestDevice.fakeFile("paranoid-good.mp3"), track("Paranoid Android", 2))
+        assertEquals("music/Radiohead/OK Computer/02 Paranoid Android (2)", paranoid.path)
+
+        val issues = repo.openIssues()
+        assertEquals(2, issues.size)
+        val web = loggedIn()
+        val page = web.get("/resolve").bodyAsText()
+        assertTrue("Same track in another format" in page)
+        assertFalse("One by one" in page)
+
+        web.submitForm("/resolve/batch", parameters {
+            append("batch", "formats")
+            append("id", issues.single { it.assetId == wma.assetId }.id.toString())
+        })
+        assertTrue(repo.headVersion(wma.assetId)!!.deleted)
+        assertEquals(airbag.renditions.map { it.mediaHash }, repo.headVersion(airbag.assetId)!!.renditions)
+
+        // One by one: the tagged track stays, without the empty file, at the path it was kept from.
+        web.submitForm("/resolve/${issues.single { it.assetId == paranoid.assetId }.id}", parameters { append("choice", "link:mp3") })
+        assertTrue(repo.headVersion(empty.assetId)!!.deleted)
+        val kept = repo.headVersion(paranoid.assetId)!!
+        assertEquals(paranoid.renditions.map { it.mediaHash }, kept.renditions)
+        assertEquals("music/Radiohead/OK Computer/02 Paranoid Android", kept.path)
+        assertTrue(repo.openIssues().isEmpty())
     }
 
     @Test

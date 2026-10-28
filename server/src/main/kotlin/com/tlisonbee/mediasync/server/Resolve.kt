@@ -93,12 +93,19 @@ private fun Repository.resolveIn(scope: RevisionScope, id: Long, request: Resolv
         }
         Choice.LINK -> {
             // The new file becomes a second rendition of the existing track, and its own asset goes.
-            val existing = headVersion(issue.candidates[0].assetId!!)?.takeIf { !it.deleted } ?: notFound("the existing track is gone")
-            val newAsset = headVersion(issue.candidates[1].assetId!!)?.takeIf { !it.deleted } ?: notFound("the new track is gone")
-            if (existing.kind != AssetKind.AUDIO || newAsset.kind != AssetKind.AUDIO) badRequest("only tracks can be linked")
+            val first = headVersion(issue.candidates[0].assetId!!)?.takeIf { !it.deleted } ?: notFound("the existing track is gone")
+            val second = headVersion(issue.candidates[1].assetId!!)?.takeIf { !it.deleted } ?: notFound("the new track is gone")
+            if (!isTrack(first) || !isTrack(second) || first.kind != AssetKind.AUDIO && second.kind != AssetKind.AUDIO) {
+                badRequest("only tracks can be linked")
+            }
+            // The track stays: the one already there, unless only the other is one MediaSync could
+            // read (the first a plain file an older client sent).
+            val (existing, newAsset) = if (first.kind == AssetKind.AUDIO) first to second else second to first
             val both = (existing.renditions + newAsset.renditions).distinct()
+            // An empty file is a broken copy: it never stays, unless nothing else would.
+            val sound = both.filter { (media(it)?.size ?: 0) > 0 }.ifEmpty { both }
             // Or only the files in one format, when there are any: the track keeps its tags either way.
-            val kept = request.keepFormat?.let { format -> both.filter { media(it)?.format == format }.ifEmpty { null } } ?: both
+            val kept = request.keepFormat?.let { format -> sound.filter { media(it)?.format == format }.ifEmpty { null } } ?: sound
             scope.write(newAsset.copy(deleted = true))
             scope.write(existing.copy(renditions = kept))
             // Anything else waiting on the asset that just went is settled with it.
