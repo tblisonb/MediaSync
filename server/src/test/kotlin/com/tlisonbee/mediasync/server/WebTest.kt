@@ -6,7 +6,9 @@ import com.tlisonbee.mediasync.api.DeviceKind
 import com.tlisonbee.mediasync.api.PictureRef
 import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.PushOutcome
+import com.tlisonbee.mediasync.library.SubscriptionRule
 import com.tlisonbee.mediasync.library.SyncMode
+import com.tlisonbee.mediasync.tags.TagField
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.forms.submitForm
@@ -263,6 +265,34 @@ class WebTest {
         val desktop = pair("Desktop").apply { subscribeMusic() }
         val asset = desktop.add(TestDevice.fakeFile("a.flac"), track("Airbag", 1))
         assertEquals(setOf("title", "artist"), asset.tags.keys)
+    }
+
+    @Test
+    fun homeSumsUpTheLibraryAndWhatNeedsALook() = withServer {
+        val web = loggedIn()
+        assertTrue("Everything's in order" in web.get("/").bodyAsText())
+
+        val pc = pair("PC").apply { subscribe(SubscriptionRule("music/", "/home/test/Music"), SubscriptionRule("images/photos/", "/home/test/Pictures")) }
+        val tracks = (1..2).map { n ->
+            val file = TestDevice.fakeFile("$n.mp3")
+            pc.upload(file)
+            pc.push(PushChange(path = "music/x/$n", kind = AssetKind.AUDIO, mediaHash = file.mediaHash, tags = track("Song $n", n))).results.single().asset
+        }
+        val scan = TestDevice.file("scan.png", PhotosTest.png(1))
+        pc.upload(scan)
+        pc.push(PushChange(path = "images/photos/import/scan", kind = AssetKind.IMAGE, mediaHash = scan.mediaHash, sourcePath = "/home/test/Pictures/scan.png"))
+        repo.editTags(repo.webDeviceId(), "Retitled a song", mapOf(tracks[0].assetId to mapOf(TagField.TITLE to listOf("Airbag"))))
+        pair("Laptop")
+        repo.db.exec("UPDATE device SET last_seen_at = ? WHERE name = 'Laptop'", System.currentTimeMillis() - 5 * 24 * 3600_000L)
+
+        val home = web.get("/").bodyAsText()
+        assertTrue("2 tracks" in home && "1 album" in home)
+        assertTrue("1 photo has no date" in home, "an undated photo asks for a date")
+        assertTrue("Laptop hasn't synced in 5 days" in home, "a quiet device that's behind is mentioned")
+        // The PC's three pushes are one line; the web UI's edit keeps its message.
+        assertTrue("PC added 2 tracks, 1 photo" in home)
+        assertTrue("Retitled a song" in home)
+        assertTrue("Photos" in home && "Library by area" in home)
     }
 }
 

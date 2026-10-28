@@ -11,6 +11,11 @@
     --old: #fdecea;
     --new: #e6f4ea;
     --radius: 12px;
+    --warn: #b26a00;
+    --music: #2a78d6;
+    --photos: #eb6834;
+    --videos: #1baf7a;
+    --games: #eda100;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -25,6 +30,11 @@
         --danger: #ffb4ab;
         --old: #3b1f1d;
         --new: #1b3324;
+        --warn: #f0b44c;
+        --music: #3987e5;
+        --photos: #d95926;
+        --videos: #199e70;
+        --games: #c98500;
     }
 }
 
@@ -126,10 +136,67 @@ form.inline { display: inline; margin-left: 8px; }
 
 .login { max-width: 360px; margin: 48px auto 0; }
 
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; }
-.tile .label { display: block; color: var(--muted); font-size: 0.85rem; }
-.tile .value { display: block; font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.small { font-size: 0.85rem; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+ul.plain { list-style: none; padding: 0; margin: 0; }
+
+/* Home: what needs a look, the library by area, devices and storage beside it, then activity. */
+.attention ul, .all-good { margin: 8px 0 20px; padding: 10px 14px; background: var(--surface); border-left: 4px solid var(--warn); border-radius: 4px; }
+.attention ul { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 24px; }
+.attention li::before { content: "⚠ "; color: var(--warn); }
+.all-good { border-left-color: var(--accent); color: var(--muted); }
+.all-good::before { content: "✓ "; color: var(--accent); }
+.home { display: grid; grid-template-columns: minmax(0, 1fr) 280px; grid-template-areas: "areas side" "activity side"; grid-template-rows: auto 1fr; gap: 20px 24px; }
+.areas { grid-area: areas; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+.side { grid-area: side; display: flex; flex-direction: column; gap: 16px; }
+.activity { grid-area: activity; }
+.area-card, .side-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; }
+.area-card { border-top: 4px solid var(--area); }
+.area-card.music { --area: var(--music); }
+.area-card.photos { --area: var(--photos); }
+.area-card.videos { --area: var(--videos); }
+.area-card.games { --area: var(--games); }
+.area-card p, .side-card p { margin: 4px 0; }
+.area-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.area-card h2, .side-card h2 { margin: 0; font-size: 1.05rem; }
+.area-card h2 a, .side-card h2 a, .activity h2 a { text-decoration: none; }
+.headline { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.area-card .headline { margin-top: 6px; }
+.caption { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 12px !important; }
+.thumbs { list-style: none; padding: 0; margin: 8px 0 4px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.thumbs a { display: block; }
+.thumbs img, .thumbs .no-thumb { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: var(--border); color: var(--muted); text-decoration: none; }
+.area-card ul.plain li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 0; }
+.platforms li { display: flex; justify-content: space-between; gap: 8px; }
+.devices { list-style: none; padding: 0; margin: 8px 0 0; }
+.devices li { padding: 10px 0; border-top: 1px solid var(--border); }
+.devices li:first-child { border-top: none; padding-top: 4px; }
+.device-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.device-head .name { font-weight: 500; overflow-wrap: anywhere; }
+.state { font-size: 0.85rem; white-space: nowrap; }
+.state.ok { color: var(--accent); }
+.state.behind { color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 0.78rem; color: var(--muted); }
+.side-card .headline { margin-top: 8px; }
+.storage-bar { margin: 8px 0 10px; height: 12px; border-radius: 6px; overflow: hidden; }
+.storage-bar svg { display: block; width: 100%; height: 12px; }
+.storage-bar rect { stroke: var(--surface); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.seg-music { fill: var(--music); background: var(--music); }
+.seg-photos { fill: var(--photos); background: var(--photos); }
+.seg-videos { fill: var(--videos); background: var(--videos); }
+.seg-games { fill: var(--games); background: var(--games); }
+.seg-other { fill: var(--muted); background: var(--muted); }
+.legend { list-style: none; padding: 0; margin: 0 0 8px; }
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; padding: 1px 0; }
+.legend li .num { margin-left: auto; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.activity h2 { margin-top: 4px; }
+.day { margin-bottom: 14px; }
+.day-name { margin: 0 0 4px; color: var(--muted); font-size: 0.85rem; font-weight: 500; }
+.day li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.day .when { white-space: nowrap; }
 
 .list { list-style: none; padding: 0; margin: 0; }
 .list li { padding: 8px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
@@ -197,6 +264,10 @@ code.code { font-size: 1.4rem; letter-spacing: 0.08em; }
 .photo:has(input:checked) img, .photo:has(input:checked) .no-thumb { border-color: var(--accent); }
 .photo .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pages .current { font-weight: 600; }
+
+@media (max-width: 760px) {
+    .home { grid-template-columns: minmax(0, 1fr); grid-template-areas: "areas" "side" "activity"; grid-template-rows: none; }
+}
 
 @media (max-width: 600px) {
     th, td { padding-right: 6px; }

@@ -103,14 +103,6 @@ fun Route.webRoutes(repo: Repository) {
     }
 
     authenticate("web") {
-        get("/") {
-            val stats = io { repo.stats() }
-            val devices = io { repo.devices() }
-            val issues = io { repo.openIssueCount() }
-            val recent = io { repo.revisions(null, 10).revisions }
-            call.respondHtml { statusPage(stats, devices, issues, recent) }
-        }
-
         get("/browse") {
             val folder = call.parameters["path"].orEmpty().trim('/')
             val listing = io { repo.browse(folder) }
@@ -220,6 +212,7 @@ fun Route.webRoutes(repo: Repository) {
         cleanupRoutes(repo)
         videoRoutes(repo)
         gameRoutes(repo)
+        homeRoutes(repo)
         photoRoutes(repo)
 
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
@@ -287,6 +280,8 @@ internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int
             if (loggedIn) {
                 nav {
                     a(href = "/browse") { +"Library" }
+                    a(href = "/photos") { +"Photos" }
+                    a(href = "/browse?path=videos") { +"Videos" }
                     a(href = "/games") { +"Games" }
                     a(href = "/revisions") { +"History" }
                     a(href = "/resolve") { +"Resolve" }
@@ -314,42 +309,6 @@ private fun HTML.loginPage(failed: Boolean) = page("Log in", loggedIn = false) {
         if (failed) p("error") { +"That password didn't match." }
         button(classes = "primary") { +"Log in" }
     }
-}
-
-private fun HTML.statusPage(stats: Stats, devices: List<Device>, issues: Long, recent: List<RevisionDto>) = page("Status") {
-    h1 { +"Status" }
-    div("tiles") {
-        tile("Revision", "r${stats.head}")
-        tile("Tracks", (stats.assets[AssetKind.AUDIO] ?: 0).toString())
-        tile("Other files", stats.assets.filterKeys { it != AssetKind.AUDIO }.values.sum().toString())
-        tile("Stored", "${bytes(stats.bytes)} in ${stats.blobs} blobs")
-    }
-    if (issues > 0) {
-        p("notice") { a(href = "/resolve") { +"$issues ${if (issues == 1L) "entry needs" else "entries need"} a decision" } }
-    }
-    h2 { +"Devices" }
-    val active = devices.filter { it.revokedAt == null && it.kind != com.tlisonbee.mediasync.api.DeviceKind.WEB }
-    if (active.isEmpty()) p("empty") { +"No devices yet. "; a(href = "/devices") { +"Pair one" } }
-    table {
-        tbody {
-            active.forEach { d ->
-                tr {
-                    td { +d.name }
-                    td("muted") { +d.kind.name.lowercase() }
-                    td { +(d.lastSeenAt?.let { "seen ${time(it)}" } ?: "never seen") }
-                    td { +(if (d.syncedRev >= stats.head) "up to date" else "at r${d.syncedRev}") }
-                }
-            }
-        }
-    }
-    h2 { +"Recent changes" }
-    revisionList(recent)
-    p { a(href = "/revisions") { +"All history" } }
-}
-
-private fun FlowContent.tile(label: String, value: String) = div("tile") {
-    span("label") { +label }
-    span("value") { +value }
 }
 
 private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<String, List<String>>, artists: List<String>) = page(folder.ifEmpty { "Library" }) {
