@@ -303,7 +303,10 @@ class RevisionScope(
                 val other = repo.liveAssetAt(v.path)
                 // Only when it lands there now: an asset already moved aside was reported then.
                 val moved = head?.path != free
-                if (raiseCollision && moved && other != null && !repo.hasOpenIssue(v.assetId, IssueKind.PATH_COLLISION)) {
+                // Pictures are named by their files, not their tags, so there's nothing to retag:
+                // two that share a name (026.jpg, 026.avi) just keep " (2)", as in a file manager.
+                val named = v.path.startsWith(RepoPaths.IMAGES)
+                if (raiseCollision && moved && !named && other != null && !repo.hasOpenIssue(v.assetId, IssueKind.PATH_COLLISION)) {
                     raise(
                         IssueKind.PATH_COLLISION, v.assetId,
                         candidates = listOf(

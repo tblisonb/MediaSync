@@ -150,6 +150,10 @@ th { color: var(--muted); font-weight: 500; white-space: nowrap; }
 
 .candidates tr.differs td { font-weight: 500; }
 .issue .actions { margin-top: 16px; }
+.batch td:first-child { width: 2rem; }
+.batch td:last-child { width: 4rem; white-space: nowrap; }
+.batch input[type=checkbox] { width: auto; margin: 2px 0 0; }
+.batch td div.muted { font-size: 0.85rem; }
 
 details { margin: 12px 0; }
 summary { cursor: pointer; color: var(--accent); }

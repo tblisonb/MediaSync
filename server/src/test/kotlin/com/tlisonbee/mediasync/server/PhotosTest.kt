@@ -59,6 +59,12 @@ class PhotosTest {
 
         // Pictures outside photos/ (album art) are left where they are.
         assertEquals("music/Radiohead/OK Computer/cover", pc.addPhotoAt("cover.jpg", jpeg(seed = 4, taken = "2019:07:14 12:30:05"), "music/Radiohead/OK Computer/cover").path)
+
+        // Two that share a name, as a photo and a clip from the same camera can: one gets " (2)",
+        // and with no tags to fix, nothing waits in the resolve queue.
+        assertEquals("images/photos/Undated/026", pc.addPhoto("026.png", png(seed = 2)).path)
+        assertEquals("images/photos/Undated/026 (2)", pc.addPhoto("026.avi", TestDevice.fakeFile("clip").bytes, AssetKind.VIDEO).path)
+        assertTrue(repo.openIssues().isEmpty())
     }
 
     @Test
