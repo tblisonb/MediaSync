@@ -27,10 +27,10 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** The library's top folders, as the home page sums them up. Images outside photos/ count with them. */
+/** The library's top folders, as the home page sums them up. */
 enum class Area(val label: String, val href: String) {
     MUSIC("Music", "/browse?path=music"),
-    PHOTOS("Photos", "/photos"),
+    IMAGES("Images", "/images"),
     VIDEOS("Videos", "/browse?path=videos"),
     GAMES("Games", "/games"),
     OTHER("Other", "/browse"),
@@ -39,7 +39,7 @@ enum class Area(val label: String, val href: String) {
     companion object {
         fun of(path: String) = when {
             path.startsWith(RepoPaths.MUSIC) -> MUSIC
-            path.startsWith(RepoPaths.IMAGES) -> PHOTOS
+            path.startsWith(RepoPaths.IMAGES) -> IMAGES
             path.startsWith(RepoPaths.VIDEOS) -> VIDEOS
             path.startsWith(RepoPaths.GAMES) -> GAMES
             else -> OTHER
@@ -67,7 +67,8 @@ class Thumb(val blob: String, val href: String, val caption: String, val detail:
 
 class MusicCard(val tracks: Int, val albums: Int, val artists: Int, val hours: Long, val recent: List<Thumb>)
 
-class PhotosCard(val photos: Int, val clips: Int, val years: IntRange?, val latest: List<Thumb>, val otherFolders: List<Pair<String, Int>>)
+/** All of images/: [photos] and [clips] are images/photos/'s, [otherFolders] the rest's file counts. */
+class ImagesCard(val images: Int, val photos: Int, val clips: Int, val years: IntRange?, val latest: List<Thumb>, val otherFolders: List<Pair<String, Int>>)
 
 class VideosCard(val videos: Int, val hours: Long, val recent: List<Pair<String, String>>)
 
@@ -87,7 +88,7 @@ class Home(
     val stored: Long,
     val free: Long?,
     val music: MusicCard,
-    val photos: PhotosCard,
+    val images: ImagesCard,
     val videos: VideosCard,
     val games: GamesCard,
     val devices: List<DeviceCard>,
@@ -136,7 +137,6 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
     val assets = liveSummary()
     val head = head()
     val byArea = assets.groupBy { Area.of(it.path) }
-    val photos = photosCard(byArea[Area.PHOTOS].orEmpty())
     val games = gamesCard()
     val devices = devices().filter { it.revokedAt == null && it.kind != DeviceKind.WEB }.map { d ->
         DeviceCard(d.name, d.kind, d.lastSeenAt, (head - d.syncedRev).coerceAtLeast(0), d.subscription.rules.map { areaName(it.prefix) }.distinct())
@@ -151,8 +151,8 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
             val text = d.lastSeenAt?.let { "${d.name} hasn't synced in ${(now - it) / DAY_MS} days" } ?: "${d.name} hasn't synced yet"
             add(Attention(text, "/devices"))
         }
-        val undated = byArea[Area.PHOTOS].orEmpty().count { it.path.startsWith(RepoPaths.PHOTOS + RepoPaths.UNDATED + "/") }
-        if (undated > 0) add(Attention(plural(undated, "photo has", "photos have") + " no date", "/photos?path=" + enc(RepoPaths.PHOTOS + RepoPaths.UNDATED)))
+        val undated = byArea[Area.IMAGES].orEmpty().count { it.path.startsWith(RepoPaths.PHOTOS + RepoPaths.UNDATED + "/") }
+        if (undated > 0) add(Attention(plural(undated, "photo has", "photos have") + " no date", "/images?path=" + enc(RepoPaths.PHOTOS + RepoPaths.UNDATED)))
         if (games.unknown > 0) add(Attention(plural(games.unknown, "game needs", "games need") + " a platform", "/games"))
         if (backupAt != null && now - backupAt > BACKUP_DAYS * DAY_MS) add(Attention("The last backup started ${(now - backupAt) / DAY_MS} days ago", null))
     }
@@ -163,7 +163,7 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
         stored = db.long("SELECT COALESCE(SUM(size), 0) FROM blob"),
         free = runCatching { Files.getFileStore(dir.root).usableSpace }.getOrNull(),
         music = musicCard(byArea[Area.MUSIC].orEmpty()),
-        photos = photos,
+        images = imagesCard(byArea[Area.IMAGES].orEmpty()),
         videos = videosCard(byArea[Area.VIDEOS].orEmpty()),
         games = games,
         devices = devices,
@@ -194,17 +194,18 @@ private fun musicCard(music: List<HomeAsset>): MusicCard {
     )
 }
 
-private fun photosCard(images: List<HomeAsset>): PhotosCard {
+private fun imagesCard(images: List<HomeAsset>): ImagesCard {
     val photos = images.filter { RepoPaths.isPhoto(it.kind, it.path) }
     // images/photos/{year}/…
     val years = photos.mapNotNull { it.path.removePrefix(RepoPaths.PHOTOS).substringBefore('/').toIntOrNull() }
     val latest = photos.filter { it.kind == AssetKind.IMAGE && it.blob != null && !it.path.startsWith(RepoPaths.PHOTOS + RepoPaths.UNDATED + "/") }
         .sortedByDescending { it.path }.take(6)
-        .map { Thumb(it.blob!!, "/assets/${it.assetId}", RepoPaths.name(it.path)) }
+        .map { Thumb(it.blob!!, viewerUrl(it.assetId), RepoPaths.name(it.path)) }
     val others = images.filter { !it.path.startsWith(RepoPaths.PHOTOS) }
         .groupingBy { it.path.removePrefix(RepoPaths.IMAGES).substringBefore('/') }.eachCount()
         .toList().sortedByDescending { it.second }
-    return PhotosCard(
+    return ImagesCard(
+        images = images.count { it.kind == AssetKind.IMAGE },
         photos = photos.count { it.kind == AssetKind.IMAGE },
         clips = photos.count { it.kind == AssetKind.VIDEO },
         years = if (years.isEmpty()) null else years.min()..years.max(),
@@ -332,7 +333,7 @@ private fun HTML.homePage(home: Home) = page("Home") {
     div("home") {
         div("areas") {
             musicCard(home.music, home.sizes.getValue(Area.MUSIC))
-            photosCard(home.photos, home.sizes.getValue(Area.PHOTOS))
+            imagesCard(home.images, home.sizes.getValue(Area.IMAGES))
             videosCard(home.videos, home.sizes.getValue(Area.VIDEOS))
             gamesCard(home.games, home.sizes.getValue(Area.GAMES))
         }
@@ -375,10 +376,11 @@ private fun FlowContent.musicCard(m: MusicCard, size: Long) = areaCard(Area.MUSI
     thumbs(m.recent)
 }
 
-private fun FlowContent.photosCard(ph: PhotosCard, size: Long) = areaCard(Area.PHOTOS, size, plural(ph.photos, "photo", "photos")) {
-    if (ph.photos + ph.clips == 0 && ph.otherFolders.isEmpty()) return@areaCard p("empty") { +"No photos yet." }
+private fun FlowContent.imagesCard(ph: ImagesCard, size: Long) = areaCard(Area.IMAGES, size, plural(ph.images, "image", "images")) {
+    if (ph.images + ph.clips == 0 && ph.otherFolders.isEmpty()) return@areaCard p("empty") { +"No images yet." }
     p("muted") {
         +listOfNotNull(
+            ph.photos.takeIf { it > 0 }?.let { plural(it, "photo", "photos") },
             ph.clips.takeIf { it > 0 }?.let { plural(it, "video clip", "video clips") },
             ph.years?.let { if (it.first == it.last) "${it.first}" else "${it.first}–${it.last}" },
         ).joinToString(" · ")
@@ -386,10 +388,10 @@ private fun FlowContent.photosCard(ph: PhotosCard, size: Long) = areaCard(Area.P
     thumbs(ph.latest)
     if (ph.otherFolders.isNotEmpty()) {
         p("muted small") {
-            +"Also in images/: "
+            +"Also: "
             ph.otherFolders.forEachIndexed { i, (folder, n) ->
                 if (i > 0) +" · "
-                a(href = "/browse?path=" + enc(RepoPaths.IMAGES + folder)) { +folder }
+                a(href = "/images?path=" + enc(RepoPaths.IMAGES + folder)) { +folder }
                 +" ${count(n)}"
             }
         }

@@ -292,7 +292,7 @@ private val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
             append(
                 "Content-Security-Policy",
                 // Scripts only from the server's own files (static/progress.js), never inline.
-                "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; " +
+                "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self'; " +
                     "frame-ancestors 'none'; base-uri 'none'",
             )
             append("X-Content-Type-Options", "nosniff")

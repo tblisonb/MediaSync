@@ -211,10 +211,14 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
 
 - **Home**: what needs a look (entries to resolve, a device that hasn't synced for days, undated
   photos, games without a platform, a backup that hasn't run), then the library by area (music,
-  photos, videos and games, with what was added lately), each device and how far behind it is,
+  images, videos and games, with what was added lately), each device and how far behind it is,
   where the space goes, and recent activity by day.
-- **Library**: browse the folders. Each album has a tag editor (**Edit this album's tags**). Each
-  video folder has **Edit these videos' details**, and each photo folder has **Date these photos**.
+- **Library**: browse the folders. Each album has a tag editor (**Edit this album's tags**), and each
+  video folder has **Edit these videos' details**.
+- **Images**: everything in images/ as thumbnails, folder by folder; photos come by year. Photo
+  folders have boxes to tick for dating them. Click an image (or a photo's ⤢) to open the viewer:
+  the picture as large as the window allows, ← and → for the folder's next and previous, a click
+  for full resolution, and phone clips play there too.
 - **Games**: the games by platform, each with its details, files and the devices that keep it.
 - **History**: every revision, with what it changed. You can revert a whole revision or restore
   a single field.
