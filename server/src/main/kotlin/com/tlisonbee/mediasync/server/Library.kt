@@ -1,20 +1,6 @@
 package com.tlisonbee.mediasync.server
 
-import com.tlisonbee.mediasync.api.AssetKind
-
 /** Read-only views of the repository for the web UI. */
-
-data class Stats(val assets: Map<AssetKind, Long>, val blobs: Long, val bytes: Long, val head: Long)
-
-fun Repository.stats(): Stats = db.read {
-    val assets = db.query(
-        """
-        SELECT v.kind, COUNT(*) FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
-        WHERE h.deleted = 0 GROUP BY v.kind
-        """.trimIndent(),
-    ) { rs -> AssetKind.entries.first { it.apiName == rs.getString(1) } to rs.getLong(2) }.toMap()
-    Stats(assets, db.long("SELECT COUNT(*) FROM blob"), db.long("SELECT COALESCE(SUM(size), 0) FROM blob"), head())
-}
 
 data class Listing(val folders: List<Pair<String, Int>>, val assets: List<Version>)
 

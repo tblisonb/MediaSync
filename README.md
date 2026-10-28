@@ -209,6 +209,10 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
 
 ### The web UI
 
+- **Home**: what needs a look (entries to resolve, a device that hasn't synced for days, undated
+  photos, games without a platform, a backup that hasn't run), then the library by area (music,
+  photos, videos and games, with what was added lately), each device and how far behind it is,
+  where the space goes, and recent activity by day.
 - **Library**: browse the folders. Each album has a tag editor (**Edit this album's tags**). Each
   video folder has **Edit these videos' details**, and each photo folder has **Date these photos**.
 - **Games**: the games by platform, each with its details, files and the devices that keep it.
