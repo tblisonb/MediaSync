@@ -118,8 +118,11 @@ private fun Repository.importNew(scope: RevisionScope, device: Device, change: P
     }
 
     // The repository already has this media: the file belongs to that asset. Tags written only a
-    // little differently (case, spacing) are the same tags: the device takes the library's.
-    liveWithMedia(media.mediaHash).firstOrNull()?.let { existing ->
+    // little differently (case, spacing) are the same tags: the device takes the library's. A
+    // picture or other file beside the tracks belongs to its folder, though: the same folder.jpg
+    // in two albums (or on two discs) is two files, which the album art tidy-up can then see.
+    val extra = change.kind != AssetKind.AUDIO && path.startsWith(RepoPaths.MUSIC)
+    liveWithMedia(media.mediaHash).firstOrNull { !extra || it.path.equals(path, ignoreCase = true) }?.let { existing ->
         if (looseTags(existing.tags) == looseTags(tags) && existing.pictures == pictures) return Applied(PushOutcome.ADOPTED, existing.assetId)
         val incoming = existing.copy(tags = tags, pictures = pictures)
         scope.raise(

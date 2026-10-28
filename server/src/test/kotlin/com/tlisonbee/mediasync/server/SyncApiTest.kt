@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.api.AssetHistory
+import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.ChangeType
 import com.tlisonbee.mediasync.api.Choice
 import com.tlisonbee.mediasync.api.DeviceKind
@@ -54,6 +55,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -238,6 +240,25 @@ class SyncApiTest {
         laptop.post("/resolve/${issue.id}", ResolveRequest(Choice.BOTH))
         val assets = laptop.pull().flatMap { it.assets }.filter { !it.deleted }
         assertEquals(setOf("Airbag", "Airbag!"), assets.map { it.tags.getValue("title").single() }.toSet())
+    }
+
+    @Test
+    fun theSameAlbumArtInTwoFoldersIsTwoFiles() = withServer {
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val laptop = pair("Laptop").apply { subscribeMusic() }
+        val art = TestDevice.fakeFile("folder.jpg")
+        desktop.upload(art)
+        val disc1 = desktop.push(PushChange(path = "music/A/Album/Disc 1/folder", kind = AssetKind.IMAGE, mediaHash = art.mediaHash)).results.single()
+
+        val disc2 = desktop.push(PushChange(path = "music/A/Album/Disc 2/folder", kind = AssetKind.IMAGE, mediaHash = art.mediaHash)).results.single()
+        assertEquals(PushOutcome.CREATED, disc2.outcome)
+        assertNotEquals(disc1.assetId, disc2.assetId)
+        assertEquals("music/A/Album/Disc 2/folder", disc2.asset.path)
+
+        // The same file in the same place, from another device, is the one the library has.
+        val same = laptop.push(PushChange(path = "music/A/Album/Disc 1/Folder", kind = AssetKind.IMAGE, mediaHash = art.mediaHash)).results.single()
+        assertEquals(PushOutcome.ADOPTED, same.outcome)
+        assertEquals(disc1.assetId, same.assetId)
     }
 
     @Test
