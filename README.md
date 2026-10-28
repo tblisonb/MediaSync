@@ -528,15 +528,17 @@ Every script explains itself with `--help` (or `-h`), as do `mediasync-server --
 The sync API is under `/api/v1` (types in `shared/.../api/Api.kt`).
 `server/src/test/.../TestDevice.kt` is a scripted client that shows how a device drives it.
 
-**Releases.** Each part is versioned and released on its own from master, as a tag and a GitHub
-release with its build attached: `app-v…` (the APK), `desktop-v…` (the self-contained tarball) and
-`server-v…` (the server tarball, which installs itself). To release a part:
+**Releases.** Each part is versioned and can be released on its own from master, as a tag and a
+GitHub release with its build attached: `app-v…` (the APK), `desktop-v…` (the self-contained
+tarball) and `server-v…` (the server tarball, which installs itself). To release a part:
 
 1. Bump its version in its `build.gradle.kts` (for the app, `versionCode` too).
 2. Push.
 3. Run `scripts/release.sh app` (or `desktop`, or `server`).
 
-The script runs that part's tests first, and refuses a version that's already tagged.
+To release all three together, as `v…` with every build attached (as 1.0.0 was), give them the same
+version and run `scripts/release.sh all`, optionally with a Markdown file to open the notes. Each part
+gets its own tag as well. The script runs the tests first, and refuses a version that's already tagged.
 
 The APK is a release build, signed with the release key from `~/.android/mediasync-release.jks`,
 whose password is in `~/.android/mediasync-release.properties`. `scripts/make-release-key.sh` made
