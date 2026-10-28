@@ -126,6 +126,7 @@ label.pick { margin: 0; }
 .empty { color: var(--muted); }
 .notice { background: var(--surface); border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 4px; }
 .notice.conversion p:first-child { margin-top: 0; }
+.notice.warn { border-left-color: var(--warn); }
 .progress progress { display: block; width: 100%; height: 14px; accent-color: var(--accent); }
 .progress .progress-text { margin: 6px 0 0; }
 .badge { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 0.75rem; font-weight: 500; }
@@ -165,7 +166,9 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .area-card .headline { margin-top: 6px; }
 .caption { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 12px !important; }
 .thumbs { list-style: none; padding: 0; margin: 8px 0 4px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-.thumbs a { display: block; }
+.thumbs a { display: block; position: relative; }
+.thumbs.wide { grid-template-columns: repeat(3, 1fr); }
+.thumbs.wide img, .thumbs.wide .no-thumb { aspect-ratio: 16 / 9; }
 .thumbs img, .thumbs .no-thumb { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: var(--border); color: var(--muted); text-decoration: none; }
 .area-card ul.plain li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 0; }
 .platforms li { display: flex; justify-content: space-between; gap: 8px; }
@@ -269,6 +272,13 @@ code.code { font-size: 1.4rem; letter-spacing: 0.08em; }
 .photo .open { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
     border-radius: 6px; background: rgb(0 0 0 / 0.55); color: #fff; text-decoration: none; font-size: 1rem; }
 .photo .open:hover { background: rgb(0 0 0 / 0.8); }
+/* Videos: wider tiles for wide pictures, with the length over the corner. */
+.photo-grid.videos { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.photo-grid.videos img, .photo-grid.videos .no-thumb { aspect-ratio: 16 / 9; }
+.photo .thumb { position: relative; display: block; }
+.photo .thumb img { display: block; }
+.photo .length, .thumbs .length { position: absolute; right: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; background: rgb(0 0 0 / 0.65);
+    color: #fff; font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 
 /* The image viewer: the picture as large as the window allows, with the folder's steps above it. */
 .viewer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0 0 12px; }

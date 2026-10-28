@@ -7,3 +7,16 @@ document.addEventListener("keydown", (event) => {
     const link = rel && document.querySelector(`a[rel="${rel}"]`);
     if (link) location.href = link.href;
 });
+
+// A video this browser can't play says so, rather than leaving a blank player, in place of the
+// server's guess at what might not play.
+const video = document.querySelector(".viewer video");
+const unplayable = document.getElementById("unplayable");
+if (video && unplayable) {
+    const failed = () => {
+        unplayable.hidden = false;
+        document.getElementById("doubts")?.remove();
+    };
+    video.addEventListener("error", failed);
+    if (video.error) failed();
+}

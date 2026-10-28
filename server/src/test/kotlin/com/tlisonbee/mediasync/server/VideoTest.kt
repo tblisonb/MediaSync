@@ -8,9 +8,14 @@ import io.ktor.client.call.body
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpStatusCode
+import java.nio.file.Files
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VideoTest {
@@ -149,6 +154,56 @@ class VideoTest {
         assertEquals(setOf(movie.assetId, sidecar), phone.pull().flatMap { it.assets }.map { it.assetId }.toSet())
         web.submitForm("/assets/$sidecar/delete", io.ktor.http.parameters { append("back", "/assets/${movie.assetId}") })
         assertTrue(repo.headVersion(sidecar)!!.deleted)
+    }
+
+    @Test
+    fun videosHaveAGalleryWithMovingStillsAndPlayInTheViewer() = withServer {
+        val pc = pc()
+        val fixture = javaClass.getResourceAsStream("/clip.mkv")!!.readBytes()
+        val file = TestDevice.file("Inception (2010).mkv", fixture)
+        pc.upload(file)
+        val movie = pc.push(
+            PushChange(path = "videos/movies/Inception (2010)/Inception (2010)", kind = AssetKind.VIDEO, mediaHash = file.mediaHash, sourcePath = "/home/test/Videos/Movies/Inception (2010).mkv"),
+        ).results.single().asset
+        pc.import("/home/test/Videos/Movies/Inception (2010).en.srt", AssetKind.OTHER)
+        val episode = pc.import("/home/test/Videos/TV Shows/Fringe/Fringe.S01E01.mp4")
+        val blob = movie.renditions.single().blob
+        val web = browser().also {
+            it.submitForm("/login", io.ktor.http.parameters { append("password", ADMIN_PASSWORD) })
+        }
+
+        // Videos opens on videos/, and a film's tile opens the film itself, moving on hover.
+        val top = web.get("/videos").bodyAsText()
+        assertTrue("/videos?path=videos%2Fmovies" in top && "/videos?path=videos%2Fshows" in top, top)
+        val movies = web.get("/videos?path=videos/movies").bodyAsText()
+        assertTrue("/view?id=${movie.assetId}" in movies, movies)
+        assertTrue("data-frames=\"/web/frames/$blob\"" in movies && "/static/previews.js" in movies)
+        val season = web.get("/videos?path=" + java.net.URLEncoder.encode("videos/shows/Fringe/Season 01", Charsets.UTF_8)).bodyAsText()
+        assertTrue("/view?id=${episode.assetId}" in season, season)
+        val library = web.get("/browse?path=" + java.net.URLEncoder.encode("videos/movies/Inception (2010)", Charsets.UTF_8)).bodyAsText()
+        assertTrue("Watch these videos" in library && "/view?id=${movie.assetId}" in library, library)
+
+        // The viewer plays it, steps past its subtitles, and goes back up to the films.
+        val viewer = web.get("/view?id=${movie.assetId}").bodyAsText()
+        assertTrue("<video" in viewer && "src=\"/web/blobs/$blob\"" in viewer && "1 of 1" in viewer, viewer)
+        assertTrue("href=\"/videos?path=videos%2Fmovies\" rel=\"up\"" in viewer, viewer)
+        assertEquals(HttpStatusCode.OK, web.get("/web/blobs/$blob").status)
+
+        if (!Ffmpeg.available) return@withServer
+        assertTrue("poster=\"/web/thumbs/$blob\"" in viewer)
+        assertTrue("its sound is Dolby Digital (AC-3)" in viewer && "160×90" in viewer && "H.264" in viewer, "why it may play silently, and what it is")
+        val thumb = web.get("/web/thumbs/$blob")
+        assertEquals(HttpStatusCode.OK, thumb.status)
+        assertEquals(160, ImageIO.read(thumb.bodyAsBytes().inputStream()).width)
+        val first = web.get("/web/frames/$blob/0").bodyAsBytes()
+        val last = web.get("/web/frames/$blob/${FRAMES - 1}").bodyAsBytes()
+        assertTrue(ImageIO.read(first.inputStream()) != null && ImageIO.read(last.inputStream()) != null)
+        assertFalse(first.contentEquals(last), "stills from across the video, not one")
+        assertTrue(Files.exists(repo.dir.frame(blob, 0)), "kept for next time")
+        assertEquals(HttpStatusCode.NotFound, web.get("/web/frames/$blob/$FRAMES").status)
+        // Not a real video: no stills, and no error either.
+        assertEquals(HttpStatusCode.NotFound, web.get("/web/thumbs/${episode.renditions.single().blob}").status)
+        assertEquals(HttpStatusCode.NotFound, web.get("/web/frames/${episode.renditions.single().blob}/0").status)
     }
 
     @Test

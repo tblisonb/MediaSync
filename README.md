@@ -219,6 +219,12 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
   folders have boxes to tick for dating them. Click an image (or a photo's ⤢) to open the viewer:
   the picture as large as the window allows, ← and → for the folder's next and previous, a click
   for full resolution, and phone clips play there too.
+- **Videos**: everything in videos/ as stills, folder by folder; a film's tile opens the film. Hold
+  the pointer over a video and its still steps through scenes from start to end, one a second.
+  Videos play in the viewer, ← and → for the next and previous episode. The viewer says when a
+  browser can't play the sound (Dolby Digital or DTS, as disc rips often have) or might not play
+  the picture (HEVC). The stills need `ffmpeg` on the server; they're made the first time they're
+  shown and kept.
 - **Games**: the games by platform, each with its details, files and the devices that keep it.
 - **History**: every revision, with what it changed. You can revert a whole revision or restore
   a single field.
