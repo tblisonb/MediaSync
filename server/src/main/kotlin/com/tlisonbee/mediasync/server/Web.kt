@@ -170,20 +170,23 @@ fun Route.webRoutes(repo: Repository) {
             val form = call.receiveParameters()
             val kind = BatchKind.entries.firstOrNull { it.name.lowercase() == form["batch"] } ?: badRequest("no such batch")
             val ids = form.getAll("id").orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+            val alternative = form["how"] == "alternative" && kind.alternative != null
             val rev = io {
                 val items = repo.batches(repo.openIssues()).firstOrNull { it.kind == kind }?.items.orEmpty().filter { it.issue.id in ids }
-                val message = "Resolved ${items.size} ${if (items.size == 1) "entry" else "entries"}: ${kind.title.lowercase()}"
-                repo.resolveAll(repo.webDeviceId(), message, items.associate { it.issue.id to it.request })
+                val how = (if (alternative) kind.alternative else kind.action)!!.lowercase()
+                val message = "Resolved ${items.size} ${if (items.size == 1) "entry" else "entries"}: ${kind.title.lowercase()} ($how)"
+                repo.resolveAll(repo.webDeviceId(), message, items.associate { it.issue.id to if (alternative) it.alternative else it.request })
             }
             call.respondRedirect(rev?.let { "/resolve?done=$it" } ?: "/resolve")
         }
         post("/resolve/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: badRequest("bad issue id")
             val form = call.receiveParameters()
-            val choice = Choice.entries.firstOrNull { it.name.lowercase() == form["choice"] } ?: badRequest("pick a choice")
+            val picked = form["choice"].orEmpty().split(':', limit = 2)
+            val choice = Choice.entries.firstOrNull { it.name.lowercase() == picked[0] } ?: badRequest("pick a choice")
             val fields = form.names().filter { it.startsWith("f.") }
                 .associate { it.removePrefix("f.") to (form[it]?.toIntOrNull() ?: 0) }.takeIf { it.isNotEmpty() }
-            io { repo.resolve(repo.webDeviceId(), id, ResolveRequest(choice, fields)) }
+            io { repo.resolve(repo.webDeviceId(), id, ResolveRequest(choice, fields, keepFormat = picked.getOrNull(1))) }
             call.respondRedirect("/resolve")
         }
 
@@ -589,7 +592,16 @@ private fun FlowContent.batchCard(batch: Batch) {
                     }
                 }
             }
-            div("actions") { button(classes = "primary") { +batch.kind.action } }
+            div("actions") {
+                button(classes = "primary") { +batch.kind.action }
+                batch.kind.alternative?.let { text ->
+                    button {
+                        name = "how"
+                        value = "alternative"
+                        +text
+                    }
+                }
+            }
         }
     }
 }
@@ -651,9 +663,9 @@ private fun FlowContent.issueCard(issue: IssueDto) {
             }
             div("actions") {
                 choices(issue).forEach { (choice, text) ->
-                    button(classes = if (choice == Choice.KEEP) "primary" else null) {
+                    button(classes = if (choice == "keep") "primary" else null) {
                         name = "choice"
-                        value = choice.name.lowercase()
+                        value = choice
                         +text
                     }
                 }
@@ -680,13 +692,18 @@ private fun issueHelp(kind: IssueKind) = when (kind) {
     IssueKind.MEDIA_CONFLICT -> "Two devices replaced the audio differently."
 }
 
-private fun choices(issue: IssueDto): List<Pair<Choice, String>> = when (issue.kind) {
-    IssueKind.FIELD_CONFLICT -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the other side", Choice.MERGE to "Merge as picked")
-    IssueKind.DUPLICATE -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the imported tags", Choice.MERGE to "Merge as picked", Choice.BOTH to "Keep both")
-    IssueKind.POSSIBLE_RENDITION -> listOf(Choice.KEEP to "Keep separate", Choice.LINK to "Link as renditions")
+/** Each button's choice, as the form sends it ("link:mp3" links keeping only the MP3), and its text. */
+private fun choices(issue: IssueDto): List<Pair<String, String>> = when (issue.kind) {
+    IssueKind.FIELD_CONFLICT -> listOf("keep" to "Keep current", "other" to "Use the other side", "merge" to "Merge as picked")
+    IssueKind.DUPLICATE -> listOf("keep" to "Keep current", "other" to "Use the imported tags", "merge" to "Merge as picked", "both" to "Keep both")
+    IssueKind.POSSIBLE_RENDITION -> listOf("keep" to "Keep separate", "link:mp3" to "Link, keeping only the MP3", "link" to "Link as renditions")
     IssueKind.PATH_COLLISION ->
-        if (issue.path.startsWith(RepoPaths.MUSIC)) listOf(Choice.KEEP to "OK", Choice.LINK to "Same track: link them") else listOf(Choice.KEEP to "OK")
-    IssueKind.MEDIA_CONFLICT -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the other side")
+        if (issue.path.startsWith(RepoPaths.MUSIC)) {
+            listOf("keep" to "OK", "link:mp3" to "Same track: keep only the MP3", "link" to "Same track: keep both")
+        } else {
+            listOf("keep" to "OK")
+        }
+    IssueKind.MEDIA_CONFLICT -> listOf("keep" to "Keep current", "other" to "Use the other side")
 }
 
 private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Long) = page("Devices") {

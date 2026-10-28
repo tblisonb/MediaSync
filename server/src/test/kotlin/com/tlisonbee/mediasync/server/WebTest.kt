@@ -114,9 +114,11 @@ class WebTest {
         val copy = desktop.add(TestDevice.fakeFile("airbag-copy.mp3"), track("Airbag", 1))
         val audio = repo.headVersion(airbag.assetId)!!.renditions
         repo.write { RevisionScope(repo, desktop.id).apply { write(repo.headVersion(copy.assetId)!!.copy(renditions = audio)) }.finish() }
-        // The same tracks in two formats.
-        val mp3s = listOf("Lucky" to 10, "Let Down" to 5).map { (title, n) -> desktop.add(TestDevice.fakeFile("$title.mp3"), track(title, n)) }
-        val m4as = listOf("Lucky" to 10, "Let Down" to 5).map { (title, n) -> desktop.add(TestDevice.fakeFile("$title.m4a"), track(title, n)) }
+        // The same tracks in two formats, the second one added moved aside: mostly the M4A, once the MP3.
+        suspend fun twice(title: String, n: Int, first: String, second: String) =
+            listOf(first, second).map { format -> desktop.add(TestDevice.fakeFile("$title.$format"), track(title, n)) }
+        val pairs = listOf(twice("Lucky", 10, "mp3", "m4a"), twice("Let Down", 5, "mp3", "m4a"), twice("No Surprises", 10, "m4a", "mp3"))
+        val both = twice("Climbing Up the Walls", 7, "mp3", "m4a")
         // Imports of the library's audio: the library's genre number and date with a time, a title
         // that's another matter, and tags that differ only in case and zeros.
         val exitFile = TestDevice.fakeFile("exit.mp3")
@@ -134,7 +136,7 @@ class WebTest {
         desktop.push(desktop.retag(exit.assetId, track("Exit Music", 4, disc = "1") + tags("genre" to "(17)", "date" to "1997-05-21T07:00:00Z")))
 
         val issues = repo.openIssues()
-        assertEquals(5, issues.size)
+        assertEquals(7, issues.size)
         val web = loggedIn()
         val page = web.get("/resolve").bodyAsText()
         for (title in listOf("Identical copies", "Same track in another format", "Imported tags that fix the library", "Other tag differences")) {
@@ -143,20 +145,28 @@ class WebTest {
         assertTrue("genre: (17) → Rock" in page)
         assertFalse("One by one" in page, "every entry is in a batch")
         fun id(assetId: String) = issues.single { it.assetId == assetId }.id
-        suspend fun settle(batch: String, vararg ids: Long) = web.submitForm("/resolve/batch", parameters {
+        suspend fun settle(batch: String, vararg ids: Long, how: String? = null) = web.submitForm("/resolve/batch", parameters {
             append("batch", batch)
             ids.forEach { append("id", it.toString()) }
+            how?.let { append("how", it) }
         })
 
         settle("copies", id(copy.assetId))
         assertTrue(repo.headVersion(copy.assetId)!!.deleted)
         assertEquals(audio, repo.headVersion(airbag.assetId)!!.renditions)
 
+        // Keeping only the MP3s: each pair becomes the first track, with the one MP3 file.
         val head = repo.head()
-        settle("formats", *m4as.map { id(it.assetId) }.toLongArray())
+        settle("formats", *pairs.map { id(it[1].assetId) }.toLongArray())
         assertEquals(head + 1, repo.head(), "one revision for the lot")
-        assertTrue(m4as.all { repo.headVersion(it.assetId)!!.deleted })
-        assertTrue(mp3s.all { repo.headVersion(it.assetId)!!.renditions.size == 2 })
+        for ((first, second) in pairs) {
+            assertTrue(repo.headVersion(second.assetId)!!.deleted)
+            val mp3 = (if (first.renditions.single().format == "mp3") first else second).renditions.single().mediaHash
+            assertEquals(listOf(mp3), repo.headVersion(first.assetId)!!.renditions)
+        }
+        // Or both files.
+        settle("formats", id(both[1].assetId), how = "alternative")
+        assertEquals(2, repo.headVersion(both[0].assetId)!!.renditions.size)
 
         settle("other_tags")
         assertEquals(listOf("Karma Police"), repo.headVersion(karma.assetId)!!.tags["title"])

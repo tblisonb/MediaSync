@@ -218,7 +218,7 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
   you to choose. Entries the server can judge come in groups, each settled with one button in
   one revision (untick any to decide yourself):
   - identical copies of a track: the copy is removed;
-  - the same track in another format: the two are linked;
+  - the same track in another format: only its MP3 is kept, or both files as one track;
   - imports whose tags differ only in case or spacing, or that would fix an ID3 genre number or a
     date with a time;
   - pictures that share a name.
@@ -469,7 +469,9 @@ sudo -u mediasync /opt/mediasync/bin/mediasync-server setup --repo /var/lib/medi
 ```
 
 `prune` drops the history older than that (keeping each file's latest version) and files deleted
-before then, so those can no longer be restored.
+before then, so those can no longer be restored. It's also what frees the disk: a file removed or
+replaced (a copy removed in Resolve, a track's original converted to MP3) stays in the repository
+while the history still has it.
 
 ## Troubleshooting
 
