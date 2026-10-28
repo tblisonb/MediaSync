@@ -25,7 +25,7 @@ enum class BatchKind(val title: String, val help: String, val action: String, va
     ),
     FORMATS(
         "Same track in another format",
-        "The track moved aside is the same one in another format, or the same file without tags. Each pair becomes one track " +
+        "Two files of one track: another format, a file without tags, or an empty copy. Each pair becomes one track " +
             "under the tags already there, with only its MP3 (the other file is removed from the library, and from the devices " +
             "that have it), or with both files.",
         "Keep only the MP3s",
@@ -81,20 +81,23 @@ private fun Repository.collision(issue: IssueDto): Pair<BatchKind, BatchItem>? {
     if (there.deleted || aside.deleted || Repository.pathKey(stem(aside.path)) != Repository.pathKey(there.path)) {
         return BatchKind.GONE to item(Choice.KEEP)
     }
-    if (there.kind != AssetKind.AUDIO || aside.kind != AssetKind.AUDIO) {
+    if (!isTrack(there) || !isTrack(aside) || there.kind != AssetKind.AUDIO && aside.kind != AssetKind.AUDIO) {
         val pictures = there.path.startsWith(RepoPaths.IMAGES) && aside.path.startsWith(RepoPaths.IMAGES)
         return if (pictures) BatchKind.NAMES to item(Choice.KEEP, "${formats(there)} and ${formats(aside)}") else null
     }
     if (there.renditions.any { it in aside.renditions }) return BatchKind.COPIES to item(Choice.LINK, formats(aside))
-    // The same track in another format: nothing the aside one says contradicts the one already there.
-    val sameTrack = there.tags[TagField.TITLE] != null &&
+    // The same track in another format: nothing the other one says contradicts the track (the one
+    // already there, unless only the one moved aside is tagged as a track).
+    val (track, other) = if (there.kind == AssetKind.AUDIO) there to aside else aside to there
+    val sameTrack = track.tags[TagField.TITLE] != null &&
         listOf(TagField.TITLE, TagField.ARTIST, TagField.ALBUM, TagField.TRACK_NUMBER).all { field ->
-            aside.tags[field] == null || loose(field, aside.tags[field]) == loose(field, there.tags[field])
+            other.tags[field] == null || loose(field, other.tags[field]) == loose(field, track.tags[field])
         }
     val formatSet = { v: Version -> v.renditions.mapNotNull { media(it)?.format }.toSet() }
-    if (sameTrack && formatSet(there).none { it in formatSet(aside) }) {
-        val untagged = if (aside.tags.isEmpty()) " (untagged)" else ""
-        val note = listOf("${formats(there)} + ${formats(aside)}$untagged")
+    val empty = other.renditions.all { (media(it)?.size ?: 0) == 0L }
+    if (sameTrack && (empty || formatSet(track).none { it in formatSet(other) })) {
+        val untagged = if (empty) " (empty)" else if (other.tags.isEmpty()) " (untagged)" else ""
+        val note = listOf("${formats(track)} + ${formats(other)}$untagged")
         return BatchKind.FORMATS to BatchItem(issue, ResolveRequest(Choice.LINK, keepFormat = "mp3"), note, ResolveRequest(Choice.LINK))
     }
     return null
@@ -156,6 +159,14 @@ private fun loose(field: String, values: List<String>?): List<String>? = values?
     val v = value.trim().replace(SPACES, " ").lowercase()
     if (field == TagField.TRACK_NUMBER || field == TagField.DISC_NUMBER) v.split('/').joinToString("/") { it.trimStart('0').ifEmpty { "0" } } else v
 }
+
+/**
+ * A track, or what may be one: a file in the music folder in an audio format that the client which
+ * sent it couldn't read, so it came in as a plain file.
+ */
+internal fun Repository.isTrack(v: Version) = v.kind == AssetKind.AUDIO ||
+    v.kind == AssetKind.OTHER && v.path.startsWith(RepoPaths.MUSIC) && v.renditions.isNotEmpty() &&
+    v.renditions.all { media(it)?.format.let { format -> format == "mp3" || format in CONVERTIBLE_FORMATS } }
 
 private fun stem(path: String) = COPY_SUFFIX.find(path)?.let { path.substring(0, it.range.first) } ?: path
 
