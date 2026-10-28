@@ -525,6 +525,7 @@ class SyncEngine(
             }
             val target = LocalFiles.localPath(folder, asset.path, row.extension)
             if (!samePath(folder, target, file)) {
+                makeRoom(folder, target)
                 LocalFiles.move(file, target)
                 touched.add(file)
                 touched.add(target)
@@ -549,6 +550,7 @@ class SyncEngine(
         // This device has none of the asset's renditions (or the media was replaced): download one.
         val rendition = pick(asset, folder, row) ?: return report.warn("${asset.path} has no renditions")
         val target = LocalFiles.localPath(folder, asset.path, rendition.format)
+        if (row == null || !samePath(folder, target, row.file)) makeRoom(folder, target)
         if (Files.exists(target) && (row == null || !samePath(folder, target, row.file))) {
             report.warn("$target already exists and isn't MediaSync's, so ${asset.path} wasn't downloaded")
             return
@@ -787,6 +789,25 @@ class SyncEngine(
     private fun pathKey(folder: FolderConfig, path: String) = if (ignoresCase(folder)) path.lowercase() else path
 
     private fun samePath(folder: FolderConfig, a: Path, b: Path) = pathKey(folder, a.toString()) == pathKey(folder, b.toString())
+
+    /**
+     * Clears [target] for a file the server puts there when what's in the way is a second copy this
+     * device keeps off the server (disc 2's folder.jpg, the same as disc 1's): the server never knew
+     * of it, and the file it copies stays. Anything else in the way is left for the caller to refuse.
+     */
+    private fun makeRoom(folder: FolderConfig, target: Path) {
+        if (!Files.exists(target)) return
+        val copy =index.inFolder(folder.prefix).firstOrNull { samePath(folder, it.file, target) } ?: return
+        if (copy.ignoredReason?.startsWith(Row.sameAs(copy.kind)) != true || copy.assetId == null) return
+        val original = index.byAsset(copy.assetId).any {
+            it.path != copy.path && it.ignored == null && !it.missing && it.media == copy.media && Files.exists(it.file)
+        }
+        if (!original || LocalFiles.stat(copy.file) != (copy.size to copy.mtime)) return
+        Files.delete(copy.file)
+        index.delete(copy.path)
+        touched.add(copy.file)
+        log("Deleted ${copy.path}, a copy of a file kept elsewhere, to make room for what the server puts there")
+    }
 
     private fun cover(asset: AssetDto): Picture? {
         val ref = LocalFiles.coverOf(asset) ?: return null

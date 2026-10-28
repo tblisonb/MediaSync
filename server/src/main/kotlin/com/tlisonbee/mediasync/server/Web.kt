@@ -427,7 +427,7 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
                 dto.renditions.forEach { r ->
                     tr {
                         td { +r.format }
-                        td { +bytes(r.size) }
+                        td("num") { +bytes(r.size) }
                         td { +(r.durationMs?.let(::duration) ?: "") }
                         td { code { +r.mediaHash.take(12) } }
                     }

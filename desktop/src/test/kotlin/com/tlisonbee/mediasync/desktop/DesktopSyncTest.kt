@@ -5,16 +5,23 @@ import com.tlisonbee.mediasync.api.ChangeType
 import com.tlisonbee.mediasync.api.PushChange
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.media.MediaHasher
+import com.tlisonbee.mediasync.server.ArtOptions
 import com.tlisonbee.mediasync.server.diff
 import com.tlisonbee.mediasync.server.openIssues
+import com.tlisonbee.mediasync.server.tidyAlbumArt
 import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.LocalFiles
+import com.tlisonbee.mediasync.sync.Row
 import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.SyncReport
 import com.tlisonbee.mediasync.sync.sha256Hex
 import com.tlisonbee.mediasync.tags.AudioTags
+import java.awt.Color
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -318,6 +325,49 @@ class DesktopSyncTest {
         assertTrue(row.ignoredReason!!.startsWith("same picture as"))
         // An index from an older client said "same audio" of every copy; it's shown for what it is.
         assertTrue(row.copy(ignored = "same audio as x.jpg").ignoredReason == "same picture as x.jpg")
+    }
+
+    @Test
+    fun aCopyLeftAloneMakesRoomForTheServersFile() = TestWorld().use { world ->
+        val desktop = world.importedDesktop()
+        val kidA = Fixtures.album("Radiohead", "Kid A", "Everything In Its Right Place").single()
+        Fixtures.track(desktop.file("rips/kid a/01.flac"), kidA, variant = 9)
+        desktop.sync()
+        val art = jpeg(1)
+        Files.write(desktop.file("Radiohead/Kid A/folder.jpg"), art)
+        val cover = jpeg(2)
+        Files.write(desktop.file("Radiohead/OK Computer/cover.jpg"), cover)
+        desktop.sync()
+
+        // A server before 0.6.3 took a picture the same as another album's for that one, so this
+        // client left it alone and the server never knew of it.
+        val copyPath = desktop.file("Radiohead/OK Computer/folder.jpg")
+        Files.write(copyPath, art)
+        desktop.engine.check()
+        val original = desktop.index.get(desktop.file("Radiohead/Kid A/folder.jpg"))!!
+        desktop.index.put(desktop.index.get(copyPath)!!.synced(original.base!!).copy(ignored = Row.sameAs(AssetKind.IMAGE) + original.path))
+
+        // The album art is tidied: OK Computer's cover is to be its folder.jpg, where the copy is.
+        world.repo.tidyAlbumArt(world.repo.webDeviceId(), ArtOptions(coverName = "folder"))
+        val report = desktop.sync()
+        assertTrue(report.warnings.isEmpty(), report.warnings.joinToString())
+        assertTrue(cover.contentEquals(Files.readAllBytes(copyPath)))
+        assertFalse(Files.exists(desktop.file("Radiohead/OK Computer/cover.jpg")))
+        assertTrue(art.contentEquals(Files.readAllBytes(desktop.file("Radiohead/Kid A/folder.jpg"))), "the file it copied stays")
+        assertTrue(desktop.index.get(copyPath)!!.ignored == null)
+        assertEquals("nothing to do (at r${world.repo.head()})", desktop.sync().summary())
+    }
+
+    private fun jpeg(seed: Int): ByteArray {
+        val image = BufferedImage(300, 300, BufferedImage.TYPE_INT_RGB)
+        image.createGraphics().apply {
+            color = Color(seed * 70 % 256, 90, 160)
+            fillRect(0, 0, 300, 300)
+            color = Color.WHITE
+            fillOval(seed * 40, 60, 120, 120)
+            dispose()
+        }
+        return ByteArrayOutputStream().also { ImageIO.write(image, "jpg", it) }.toByteArray()
     }
 
     @Test

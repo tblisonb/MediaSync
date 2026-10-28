@@ -343,7 +343,9 @@ service can only write to the folders it syncs and to its own state.
 - If more than 20 files (and over 10% of them) disappear at once, or the server asks a device
   to delete that many, the deletion waits until you run `mediasync-desktop sync --allow-deletes`.
 - A missing folder, such as an unmounted disk, is never treated as deleted files.
-- A second copy of a track that's already in the library is left alone and reported.
+- A second copy of a track that's already in the library is left alone and reported. A picture
+  or other file beside the tracks is its own file in each folder (disc 2's folder.jpg, the same as
+  disc 1's); a copy an older server left alone makes way when the server puts a file in its place.
 
 ## Updating
 

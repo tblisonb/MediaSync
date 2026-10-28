@@ -270,8 +270,8 @@ private fun HTML.gamesPage(games: List<Game>, idents: Map<String, String>, statu
             byPlatform.filterKeys { it != null }.toSortedMap(compareBy { it!!.name }).forEach { (platform, inPlatform) ->
                 tr {
                     td { a(href = "/games/platform?folder=" + enc("games/${RepoPaths.segment(platform!!.name)}")) { +platform.name } }
-                    td { +inPlatform.size.toString() }
-                    td { +bytes(inPlatform.sumOf { it.size }) }
+                    td("num") { +inPlatform.size.toString() }
+                    td("num") { +bytes(inPlatform.sumOf { it.size }) }
                 }
             }
         }
@@ -285,7 +285,7 @@ private fun HTML.gamesPage(games: List<Game>, idents: Map<String, String>, statu
                     tr {
                         td { a(href = "/games/game?folder=" + enc(g.folder)) { +g.label } }
                         td("muted") { +g.folder }
-                        td { +bytes(g.size) }
+                        td("num") { +bytes(g.size) }
                     }
                 }
             }
@@ -313,11 +313,11 @@ private fun HTML.platformPage(folder: String, games: List<Game>, idents: Map<Str
                             a(href = "/games/game?folder=" + enc(g.folder)) { +g.label }
                             if (g.files.none { idents[it.assetId] in How.MATCHED }) span("muted") { +" · not matched" }
                         }
-                        td { +g.main.tags[TagField.YEAR].orEmpty().joinToString() }
+                        td("num") { +g.main.tags[TagField.YEAR].orEmpty().joinToString() }
                         td { +g.main.tags[TagField.PUBLISHER].orEmpty().joinToString() }
                         td { +g.main.tags[TagField.GENRE].orEmpty().joinToString(", ") }
-                        td { +g.files.size.toString() }
-                        td { +bytes(g.size) }
+                        td("num") { +g.files.size.toString() }
+                        td("num") { +bytes(g.size) }
                     }
                 }
             }
@@ -388,7 +388,7 @@ private fun HTML.gamePage(
                     td { +f.tags[TagField.DISC_NUMBER].orEmpty().joinToString() }
                     td { +f.tags[TagField.SERIAL].orEmpty().joinToString() }
                     td { +(idents[f.assetId]?.let { HOW_LABELS[it] } ?: "not checked yet") }
-                    td { +bytes(game.sizes[f.assetId] ?: 0) }
+                    td("num") { +bytes(game.sizes[f.assetId] ?: 0) }
                 }
             }
         }

@@ -137,6 +137,7 @@ form.inline { display: inline; margin-left: 8px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; vertical-align: top; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+td.num { white-space: nowrap; overflow-wrap: normal; }
 
 .asset { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
 .asset .fields { flex: 1; min-width: 260px; }
