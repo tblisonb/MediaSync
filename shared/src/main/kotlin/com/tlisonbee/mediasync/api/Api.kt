@@ -350,12 +350,16 @@ enum class Choice {
     /** Duplicates: split into two assets. */
     @SerialName("both") BOTH,
 
-    /** Possible renditions: merge into one asset with both formats. */
+    /** Possible renditions, and tracks at one path: merge into one asset with both formats. */
     @SerialName("link") LINK,
 }
 
+/**
+ * [fields] picks a candidate for each field when merging. [keepFormat], when linking, keeps only
+ * the files in that format (such as "mp3"), if either has one; the others go.
+ */
 @Serializable
-data class ResolveRequest(val choice: Choice, val fields: Map<String, Int>? = null)
+data class ResolveRequest(val choice: Choice, val fields: Map<String, Int>? = null, val keepFormat: String? = null)
 
 @Serializable
 data class ResolveResponse(val rev: Long)

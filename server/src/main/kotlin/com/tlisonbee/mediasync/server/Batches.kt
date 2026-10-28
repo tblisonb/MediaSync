@@ -12,7 +12,7 @@ import com.tlisonbee.mediasync.tags.TagField
  * Ways to settle many resolve-queue entries at once, each with the choice it makes. Entries the
  * server can't judge on its own are left to be decided one by one.
  */
-enum class BatchKind(val title: String, val help: String, val action: String) {
+enum class BatchKind(val title: String, val help: String, val action: String, val alternative: String? = null) {
     GONE(
         "Nothing collides any more",
         "One of the two files has since been deleted or renamed, so there's nothing left to decide.",
@@ -26,8 +26,10 @@ enum class BatchKind(val title: String, val help: String, val action: String) {
     FORMATS(
         "Same track in another format",
         "The track moved aside is the same one in another format, or the same file without tags. Each pair becomes one track " +
-            "with both files, under the tags already there.",
-        "Link them",
+            "under the tags already there, with only its MP3 (the other file is removed from the library, and from the devices " +
+            "that have it), or with both files.",
+        "Keep only the MP3s",
+        "Keep both formats",
     ),
     NAMES(
         "Pictures that share a name",
@@ -54,8 +56,8 @@ enum class BatchKind(val title: String, val help: String, val action: String) {
     ),
 }
 
-/** One entry of a batch: the choice the batch makes for it, and what differs, briefly. */
-class BatchItem(val issue: IssueDto, val request: ResolveRequest, val notes: List<String>)
+/** One entry of a batch: the choice the batch makes for it (or its [BatchKind.alternative]), and what differs, briefly. */
+class BatchItem(val issue: IssueDto, val request: ResolveRequest, val notes: List<String>, val alternative: ResolveRequest = request)
 
 class Batch(val kind: BatchKind, val items: List<BatchItem>)
 
@@ -92,7 +94,8 @@ private fun Repository.collision(issue: IssueDto): Pair<BatchKind, BatchItem>? {
     val formatSet = { v: Version -> v.renditions.mapNotNull { media(it)?.format }.toSet() }
     if (sameTrack && formatSet(there).none { it in formatSet(aside) }) {
         val untagged = if (aside.tags.isEmpty()) " (untagged)" else ""
-        return BatchKind.FORMATS to item(Choice.LINK, "${formats(there)} + ${formats(aside)}$untagged")
+        val note = listOf("${formats(there)} + ${formats(aside)}$untagged")
+        return BatchKind.FORMATS to BatchItem(issue, ResolveRequest(Choice.LINK, keepFormat = "mp3"), note, ResolveRequest(Choice.LINK))
     }
     return null
 }

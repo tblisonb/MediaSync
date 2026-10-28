@@ -96,8 +96,11 @@ private fun Repository.resolveIn(scope: RevisionScope, id: Long, request: Resolv
             val existing = headVersion(issue.candidates[0].assetId!!)?.takeIf { !it.deleted } ?: notFound("the existing track is gone")
             val newAsset = headVersion(issue.candidates[1].assetId!!)?.takeIf { !it.deleted } ?: notFound("the new track is gone")
             if (existing.kind != AssetKind.AUDIO || newAsset.kind != AssetKind.AUDIO) badRequest("only tracks can be linked")
+            val both = (existing.renditions + newAsset.renditions).distinct()
+            // Or only the files in one format, when there are any: the track keeps its tags either way.
+            val kept = request.keepFormat?.let { format -> both.filter { media(it)?.format == format }.ifEmpty { null } } ?: both
             scope.write(newAsset.copy(deleted = true))
-            scope.write(existing.copy(renditions = (existing.renditions + newAsset.renditions).distinct()))
+            scope.write(existing.copy(renditions = kept))
             // Anything else waiting on the asset that just went is settled with it.
             db.exec("UPDATE issue SET resolved_rev = ? WHERE asset_id = ? AND resolved_rev IS NULL AND id != ?", scope.rev(), newAsset.assetId, id)
         }
