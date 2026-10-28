@@ -1,6 +1,7 @@
 package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.ApiJson
+import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.Choice
 import com.tlisonbee.mediasync.api.Fields
 import com.tlisonbee.mediasync.api.IssueDto
@@ -26,18 +27,48 @@ fun Repository.openIssueCount(): Long = db.read { db.long("SELECT COUNT(*) FROM 
  * current value, is a revision of its own, so it can be reverted like anything else.
  */
 fun Repository.resolve(deviceId: String, id: Long, request: ResolveRequest): ResolveResponse = write {
+    val scope = RevisionScope(this, deviceId, "Resolved #$id: ${describe(request.choice)}")
+    resolveIn(scope, id, request)
+    scope.refreshAlbums()
+    val rev = scope.rev()
+    scope.finish()
+    ResolveResponse(rev)
+}
+
+/**
+ * Settles many entries in one revision, so one revert undoes them all. An entry that can't be
+ * settled any more (settled meanwhile, or its files gone) is skipped and stays in the queue.
+ * Returns the revision, or null if nothing was settled.
+ */
+fun Repository.resolveAll(deviceId: String, message: String, requests: Map<Long, ResolveRequest>): Long? = write {
+    val scope = RevisionScope(this, deviceId, message)
+    var settled = 0
+    for ((id, request) in requests) {
+        // Each entry is checked before anything is written for it, so a skipped one leaves nothing half done.
+        try {
+            resolveIn(scope, id, request)
+            settled++
+        } catch (_: RequestException) {
+        }
+    }
+    if (settled == 0) return@write null
+    scope.refreshAlbums()
+    scope.rev().also { scope.finish() }
+}
+
+private fun Repository.resolveIn(scope: RevisionScope, id: Long, request: ResolveRequest) {
     val issue = db.one("SELECT * FROM issue WHERE id = ?", id) { it.toIssue() } ?: notFound("no issue $id")
     if (issue.resolvedRev != null) throw RequestException("issue $id was already resolved in r${issue.resolvedRev}", 409)
     val allowed = when (issue.kind) {
         IssueKind.FIELD_CONFLICT -> setOf(Choice.KEEP, Choice.OTHER, Choice.MERGE)
         IssueKind.DUPLICATE -> setOf(Choice.KEEP, Choice.OTHER, Choice.MERGE, Choice.BOTH)
         IssueKind.POSSIBLE_RENDITION -> setOf(Choice.KEEP, Choice.BOTH, Choice.LINK)
-        IssueKind.PATH_COLLISION -> setOf(Choice.KEEP)
+        // The track moved aside joins the one already there: one track with both files.
+        IssueKind.PATH_COLLISION -> setOf(Choice.KEEP, Choice.LINK)
         IssueKind.MEDIA_CONFLICT -> setOf(Choice.KEEP, Choice.OTHER)
     }
     if (request.choice !in allowed) badRequest("${request.choice.name.lowercase()} doesn't apply to a ${issue.kind.dbName}")
 
-    val scope = RevisionScope(this, deviceId, "Resolved #$id: ${describe(request.choice)}")
     val head = headVersion(issue.assetId) ?: notFound("no asset ${issue.assetId}")
     when (request.choice) {
         Choice.KEEP -> Unit
@@ -62,25 +93,29 @@ fun Repository.resolve(deviceId: String, id: Long, request: ResolveRequest): Res
         }
         Choice.LINK -> {
             // The new file becomes a second rendition of the existing track, and its own asset goes.
-            val existing = headVersion(issue.candidates[0].assetId!!) ?: notFound("the existing track is gone")
-            val newAsset = headVersion(issue.candidates[1].assetId!!) ?: notFound("the new track is gone")
+            val existing = headVersion(issue.candidates[0].assetId!!)?.takeIf { !it.deleted } ?: notFound("the existing track is gone")
+            val newAsset = headVersion(issue.candidates[1].assetId!!)?.takeIf { !it.deleted } ?: notFound("the new track is gone")
+            if (existing.kind != AssetKind.AUDIO || newAsset.kind != AssetKind.AUDIO) badRequest("only tracks can be linked")
             scope.write(newAsset.copy(deleted = true))
             scope.write(existing.copy(renditions = (existing.renditions + newAsset.renditions).distinct()))
             // Anything else waiting on the asset that just went is settled with it.
             db.exec("UPDATE issue SET resolved_rev = ? WHERE asset_id = ? AND resolved_rev IS NULL AND id != ?", scope.rev(), newAsset.assetId, id)
         }
     }
-    scope.refreshAlbums()
-    val rev = scope.rev()
-    db.exec("UPDATE issue SET resolved_rev = ? WHERE id = ?", rev, id)
-    scope.finish()
-    ResolveResponse(rev)
+    db.exec("UPDATE issue SET resolved_rev = ? WHERE id = ?", scope.rev(), id)
 }
 
-/** The disputed fields taken from the candidate [pick] names for each; absent there means removed. */
+/**
+ * The disputed fields taken from the candidate [pick] names for each; absent there means removed.
+ * Picking the one in use keeps the field as it is now, with any edits since the entry was raised.
+ */
 private fun chosen(issue: IssueDto, head: Version, pick: (String) -> Int): Map<String, List<String>> {
     val fields = issue.fields.ifEmpty { issue.candidates.flatMap { it.fields.keys }.distinct() + tagNames(head) }
-    return fields.associateWith { field -> issue.candidates[pick(field)].fields[field].orEmpty() }
+    val current = head.fields()
+    return fields.associateWith { field ->
+        val i = pick(field)
+        (if (i == issue.provisional) current[field] else issue.candidates[i].fields[field]).orEmpty()
+    }
 }
 
 private fun tagNames(head: Version) = head.tags.keys + Fields.PICTURES

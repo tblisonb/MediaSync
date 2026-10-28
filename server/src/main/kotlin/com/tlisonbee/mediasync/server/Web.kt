@@ -45,6 +45,7 @@ import kotlinx.html.a
 import kotlinx.html.body
 import kotlinx.html.button
 import kotlinx.html.code
+import kotlinx.html.details
 import kotlinx.html.div
 import kotlinx.html.form
 import kotlinx.html.h1
@@ -63,6 +64,7 @@ import kotlinx.html.nav
 import kotlinx.html.p
 import kotlinx.html.section
 import kotlinx.html.span
+import kotlinx.html.summary
 import kotlinx.html.table
 import kotlinx.html.tbody
 import kotlinx.html.td
@@ -155,7 +157,25 @@ fun Route.webRoutes(repo: Repository) {
 
         get("/resolve") {
             val issues = io { repo.openIssues() }
-            call.respondHtml { resolvePage(issues) }
+            val batches = io { repo.batches(issues) }
+            call.respondHtml { resolvePage(issues, batches, call.parameters["done"]?.toLongOrNull()) }
+        }
+        get("/resolve/{id}") {
+            val id = call.parameters["id"]?.toLongOrNull() ?: return@get call.respond(HttpStatusCode.NotFound)
+            val issue = io { repo.issue(id) }?.takeIf { it.resolvedRev == null } ?: return@get call.respondRedirect("/resolve")
+            call.respondHtml { resolvePage(listOf(issue), emptyList(), null) }
+        }
+        // Settles the ticked entries of one batch, each the way the batch does, in one revision.
+        post("/resolve/batch") {
+            val form = call.receiveParameters()
+            val kind = BatchKind.entries.firstOrNull { it.name.lowercase() == form["batch"] } ?: badRequest("no such batch")
+            val ids = form.getAll("id").orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+            val rev = io {
+                val items = repo.batches(repo.openIssues()).firstOrNull { it.kind == kind }?.items.orEmpty().filter { it.issue.id in ids }
+                val message = "Resolved ${items.size} ${if (items.size == 1) "entry" else "entries"}: ${kind.title.lowercase()}"
+                repo.resolveAll(repo.webDeviceId(), message, items.associate { it.issue.id to it.request })
+            }
+            call.respondRedirect(rev?.let { "/resolve?done=$it" } ?: "/resolve")
         }
         post("/resolve/{id}") {
             val id = call.parameters["id"]?.toLongOrNull() ?: badRequest("bad issue id")
@@ -521,71 +541,120 @@ private fun TABLE.diffRows(fields: List<FieldDiff>, changes: List<ChangeType>) =
     }
 }
 
-private fun HTML.resolvePage(issues: List<IssueDto>) = page("Resolve") {
+private fun HTML.resolvePage(issues: List<IssueDto>, batches: List<Batch>, done: Long?) = page("Resolve") {
     h1 { +"Resolve" }
+    if (done != null) {
+        p("notice") { +"Settled in "; a(href = "/revisions/$done") { +"r$done" }; +". History can revert it in one step." }
+    }
     if (issues.isEmpty()) p("empty") { +"Nothing waits for a decision." }
-    issues.forEach { issue ->
-        section("card issue") {
-            h2 {
-                +issueTitle(issue.kind)
-                +" · "
-                a(href = "/assets/${issue.assetId}") { +issue.path }
-            }
-            p("muted") { +"Raised in r${issue.rev} by ${issue.deviceName}. ${issueHelp(issue.kind)}" }
-            val fields = (issue.fields.ifEmpty { issue.candidates.flatMap { it.fields.keys }.distinct() })
-            form(action = "/resolve/${issue.id}", method = FormMethod.post) {
-                table("candidates") {
-                    thead {
-                        tr {
-                            th { }
-                            issue.candidates.forEachIndexed { i, c ->
-                                th { +c.label; if (i == issue.provisional) span("badge") { +"in use" } }
+    if (batches.isNotEmpty()) {
+        p("muted") {
+            +"Entries the server can judge are grouped, each group with one choice for all of them. A group is settled in one "
+            +"revision, which History can revert; untick any you'd rather decide yourself."
+        }
+        batches.forEach { batchCard(it) }
+    }
+    val batched = batches.flatMap { batch -> batch.items.map { it.issue.id } }.toSet()
+    val rest = issues.filter { it.id !in batched }
+    if (batches.isNotEmpty() && rest.isNotEmpty()) h2 { +"One by one" }
+    rest.forEach { issueCard(it) }
+}
+
+private fun FlowContent.batchCard(batch: Batch) {
+    val n = batch.items.size
+    section("card batch") {
+        h2 { +batch.kind.title; span("badge") { +n.toString() } }
+        p("muted") { +batch.kind.help }
+        form(action = "/resolve/batch", method = FormMethod.post) {
+            hiddenInput(name = "batch") { value = batch.kind.name.lowercase() }
+            details {
+                summary { +"Show ${if (n == 1) "it" else "all $n"}" }
+                table {
+                    tbody {
+                        batch.items.forEach { item ->
+                            tr {
+                                td {
+                                    input(type = InputType.checkBox, name = "id") {
+                                        value = item.issue.id.toString()
+                                        checked = true
+                                    }
+                                }
+                                td {
+                                    a(href = "/assets/${item.issue.assetId}") { +item.issue.path.removePrefix(RepoPaths.MUSIC) }
+                                    item.notes.forEach { div("muted") { +it } }
+                                }
+                                td { a(href = "/resolve/${item.issue.id}") { +"Decide" } }
                             }
                         }
                     }
-                    tbody {
-                        if (issue.kind != IssueKind.FIELD_CONFLICT) {
-                            tr {
-                                th { +"path" }
-                                issue.candidates.forEach { c -> td { +(c.path ?: "") } }
-                            }
+                }
+            }
+            div("actions") { button(classes = "primary") { +batch.kind.action } }
+        }
+    }
+}
+
+private fun FlowContent.issueCard(issue: IssueDto) {
+    section("card issue") {
+        h2 {
+            +issueTitle(issue.kind)
+            +" · "
+            a(href = "/assets/${issue.assetId}") { +issue.path }
+        }
+        p("muted") { +"Raised in r${issue.rev} by ${issue.deviceName}. ${issueHelp(issue.kind)}" }
+        val fields = (issue.fields.ifEmpty { issue.candidates.flatMap { it.fields.keys }.distinct() })
+        form(action = "/resolve/${issue.id}", method = FormMethod.post) {
+            table("candidates") {
+                thead {
+                    tr {
+                        th { }
+                        issue.candidates.forEachIndexed { i, c ->
+                            th { +c.label; if (i == issue.provisional) span("badge") { +"in use" } }
                         }
-                        if (issue.candidates.any { it.mediaHash != null }) {
-                            tr {
-                                th { +"media" }
-                                issue.candidates.forEach { c -> td { code { +(c.mediaHash?.take(12) ?: "") } } }
-                            }
+                    }
+                }
+                tbody {
+                    if (issue.kind != IssueKind.FIELD_CONFLICT) {
+                        tr {
+                            th { +"path" }
+                            issue.candidates.forEach { c -> td { +(c.path ?: "") } }
                         }
-                        orderedFields(fields).forEach { field ->
-                            val values = issue.candidates.map { it.fields[field] }
-                            tr(if (values.distinct().size > 1) "differs" else null) {
-                                th { +field }
-                                values.forEachIndexed { i, v ->
-                                    td {
-                                        if (issue.kind in MERGEABLE && values.distinct().size > 1) {
-                                            label("pick") {
-                                                input(type = InputType.radio, name = "f.$field") {
-                                                    value = i.toString()
-                                                    checked = i == issue.provisional
-                                                }
-                                                +show(field, v)
+                    }
+                    if (issue.candidates.any { it.mediaHash != null }) {
+                        tr {
+                            th { +"media" }
+                            issue.candidates.forEach { c -> td { code { +(c.mediaHash?.take(12) ?: "") } } }
+                        }
+                    }
+                    orderedFields(fields).forEach { field ->
+                        val values = issue.candidates.map { it.fields[field] }
+                        tr(if (values.distinct().size > 1) "differs" else null) {
+                            th { +field }
+                            values.forEachIndexed { i, v ->
+                                td {
+                                    if (issue.kind in MERGEABLE && values.distinct().size > 1) {
+                                        label("pick") {
+                                            input(type = InputType.radio, name = "f.$field") {
+                                                value = i.toString()
+                                                checked = i == issue.provisional
                                             }
-                                        } else {
                                             +show(field, v)
                                         }
+                                    } else {
+                                        +show(field, v)
                                     }
                                 }
                             }
                         }
                     }
                 }
-                div("actions") {
-                    choices(issue.kind).forEach { (choice, text) ->
-                        button(classes = if (choice == Choice.KEEP) "primary" else null) {
-                            name = "choice"
-                            value = choice.name.lowercase()
-                            +text
-                        }
+            }
+            div("actions") {
+                choices(issue).forEach { (choice, text) ->
+                    button(classes = if (choice == Choice.KEEP) "primary" else null) {
+                        name = "choice"
+                        value = choice.name.lowercase()
+                        +text
                     }
                 }
             }
@@ -611,11 +680,12 @@ private fun issueHelp(kind: IssueKind) = when (kind) {
     IssueKind.MEDIA_CONFLICT -> "Two devices replaced the audio differently."
 }
 
-private fun choices(kind: IssueKind): List<Pair<Choice, String>> = when (kind) {
+private fun choices(issue: IssueDto): List<Pair<Choice, String>> = when (issue.kind) {
     IssueKind.FIELD_CONFLICT -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the other side", Choice.MERGE to "Merge as picked")
     IssueKind.DUPLICATE -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the imported tags", Choice.MERGE to "Merge as picked", Choice.BOTH to "Keep both")
     IssueKind.POSSIBLE_RENDITION -> listOf(Choice.KEEP to "Keep separate", Choice.LINK to "Link as renditions")
-    IssueKind.PATH_COLLISION -> listOf(Choice.KEEP to "OK")
+    IssueKind.PATH_COLLISION ->
+        if (issue.path.startsWith(RepoPaths.MUSIC)) listOf(Choice.KEEP to "OK", Choice.LINK to "Same track: link them") else listOf(Choice.KEEP to "OK")
     IssueKind.MEDIA_CONFLICT -> listOf(Choice.KEEP to "Keep current", Choice.OTHER to "Use the other side")
 }
 

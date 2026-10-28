@@ -215,7 +215,16 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
 - **History**: every revision, with what it changed. You can revert a whole revision or restore
   a single field.
 - **Resolve**: conflicts, such as the same tag edited differently on two devices, wait here for
-  you to choose.
+  you to choose. Entries the server can judge come in groups, each settled with one button in
+  one revision (untick any to decide yourself):
+  - identical copies of a track: the copy is removed;
+  - the same track in another format: the two are linked;
+  - imports whose tags differ only in case or spacing, or that would fix an ID3 genre number or a
+    date with a time;
+  - pictures that share a name.
+
+  An import that differs only in case or spacing doesn't wait here at all: it's taken as the
+  track already in the library. Neither do two pictures that share a name.
 - **Cleanup**: helps with a messy library.
   - Finds artist and album names spelled several ways.
   - Moves stray cover scans to their album.

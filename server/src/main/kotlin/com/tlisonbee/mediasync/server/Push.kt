@@ -117,9 +117,10 @@ private fun Repository.importNew(scope: RevisionScope, device: Device, change: P
         if (date != null) tags = tags + (TagField.DATE to listOf(date))
     }
 
-    // The repository already has this media: the file belongs to that asset.
+    // The repository already has this media: the file belongs to that asset. Tags written only a
+    // little differently (case, spacing) are the same tags: the device takes the library's.
     liveWithMedia(media.mediaHash).firstOrNull()?.let { existing ->
-        if (existing.tags == tags && existing.pictures == pictures) return Applied(PushOutcome.ADOPTED, existing.assetId)
+        if (looseTags(existing.tags) == looseTags(tags) && existing.pictures == pictures) return Applied(PushOutcome.ADOPTED, existing.assetId)
         val incoming = existing.copy(tags = tags, pictures = pictures)
         scope.raise(
             IssueKind.DUPLICATE, existing.assetId,
