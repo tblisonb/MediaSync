@@ -178,6 +178,16 @@ class PhotosTest {
         // "All on this page" covers what's left in Undated.
         web.submitForm("/photos/date", form("page", "2010"))
         assertEquals("images/photos/2010/2010 scan_018", repo.headVersion(second.assetId)!!.path)
+
+        // Photos itself holds only year folders: it lists them, newest first. (The page's form
+        // carried both photos, so both are 2010's now.)
+        val third = pc.addPhoto("scan_019.png", png(seed = 3))
+        repo.editTags(repo.webDeviceId(), null, mapOf(third.assetId to mapOf(TagField.DATE to listOf("2008"))))
+        val top = web.get("/photos").bodyAsText()
+        assertTrue("/photos?path=images%2Fphotos%2F2010" in top && "/photos?path=images%2Fphotos%2F2008" in top, top)
+        assertTrue(top.indexOf("images%2Fphotos%2F2010") < top.indexOf("images%2Fphotos%2F2008"))
+        assertTrue("2 photos" in top && "1 photo<" in top)
+        assertEquals(HttpStatusCode.NotFound, web.get("/photos?path=images/elsewhere").status)
     }
 
     @Test
