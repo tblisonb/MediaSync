@@ -213,7 +213,7 @@ fun Route.webRoutes(repo: Repository) {
         videoRoutes(repo)
         gameRoutes(repo)
         homeRoutes(repo)
-        photoRoutes(repo)
+        imageRoutes(repo)
 
         get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
         post("/settings") {
@@ -228,11 +228,13 @@ fun Route.webRoutes(repo: Repository) {
             call.respondRedirect("/settings?saved")
         }
 
-        // Cover art and other images for the pages above.
+        // Cover art, images and videos for the pages above; never other types, which a browser
+        // could run as a page of this site.
         get("/web/blobs/{hash}") {
             val hash = call.parameters["hash"]!!
             if (!BlobStore.isHash(hash)) return@get call.respond(HttpStatusCode.NotFound)
-            val blob = io { repo.blob(hash) }?.takeIf { it.mime.startsWith("image/") } ?: return@get call.respond(HttpStatusCode.NotFound)
+            val blob = io { repo.blob(hash) }?.takeIf { it.mime.startsWith("image/") || it.mime.startsWith("video/") }
+                ?: return@get call.respond(HttpStatusCode.NotFound)
             call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
             call.respond(LocalPathContent(repo.dir.blob(hash), ContentType.parse(blob.mime)))
         }
@@ -280,7 +282,7 @@ internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int
             if (loggedIn) {
                 nav {
                     a(href = "/browse") { +"Library" }
-                    a(href = "/photos") { +"Photos" }
+                    a(href = "/images") { +"Images" }
                     a(href = "/browse?path=videos") { +"Videos" }
                     a(href = "/games") { +"Games" }
                     a(href = "/revisions") { +"History" }
@@ -317,7 +319,9 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
         p { a(href = "/album?path=" + enc(folder)) { +"Edit this album's tags" } }
     }
     if (listing.assets.any { RepoPaths.isPhoto(it.kind, it.path) }) {
-        p { a(href = "/photos?path=" + enc(folder)) { +"Date these photos" } }
+        p { a(href = "/images?path=" + enc(folder)) { +"View and date these photos" } }
+    } else if (folder.startsWith(RepoPaths.IMAGES) && listing.assets.isNotEmpty()) {
+        p { a(href = "/images?path=" + enc(folder)) { +"View as a gallery" } }
     } else if (listing.assets.any { it.kind == AssetKind.VIDEO }) {
         p { a(href = "/videos/edit?path=" + enc(folder)) { +"Edit these videos' details" } }
     } else if (listing.assets.any { it.kind == AssetKind.GAME }) {
@@ -336,7 +340,8 @@ private fun HTML.browsePage(folder: String, listing: Listing, formats: Map<Strin
         }
         listing.assets.forEach { v ->
             li {
-                a(href = "/assets/${v.assetId}") { +RepoPaths.name(v.path) }
+                val viewable = v.kind == AssetKind.IMAGE || (v.kind == AssetKind.VIDEO && v.path.startsWith(RepoPaths.IMAGES))
+                a(href = if (viewable) viewerUrl(v.assetId) else "/assets/${v.assetId}") { +RepoPaths.name(v.path) }
                 span("muted") { +(" " + formats[v.assetId].orEmpty().joinToString(" · ")) }
             }
         }
@@ -363,6 +368,11 @@ private fun HTML.assetPage(head: Version, dto: com.tlisonbee.mediasync.api.Asset
         if (head.deleted) p("notice") { +"This file is deleted. Restore an earlier version below to bring it back." }
         div("asset") {
             head.pictures.firstOrNull()?.let { img(src = "/web/blobs/${it.blob}", alt = "Cover", classes = "cover") }
+            if (head.kind == AssetKind.IMAGE && !head.deleted) {
+                dto.renditions.firstOrNull()?.let { r ->
+                    a(href = viewerUrl(head.assetId)) { img(src = "/web/thumbs/${r.blob}", alt = "View", classes = "cover") }
+                }
+            }
             table("fields") {
                 tbody {
                     head.category?.let { tr { th { +"category" }; td { +it } } }

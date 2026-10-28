@@ -12,6 +12,7 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.parameters
@@ -150,9 +151,10 @@ class PhotosTest {
         val second = pc.addPhoto("scan_018.png", png(seed = 2))
         val web = loggedIn()
 
-        assertTrue("Date these photos" in web.get("/browse?path=images/photos/Undated").bodyAsText())
-        val page = web.get("/photos?path=images/photos/Undated").bodyAsText()
+        assertTrue("View and date these photos" in web.get("/browse?path=images/photos/Undated").bodyAsText())
+        val page = web.get("/images?path=images/photos/Undated").bodyAsText()
         assertTrue("scan_017" in page && "scan_018" in page && "No date" in page, page)
+        assertTrue("/images/view?id=${first.assetId}" in page, "each photo opens in the viewer")
 
         val thumb = web.get("/web/thumbs/${first.renditions.single().blob}")
         assertEquals(HttpStatusCode.OK, thumb.status)
@@ -179,15 +181,37 @@ class PhotosTest {
         web.submitForm("/photos/date", form("page", "2010"))
         assertEquals("images/photos/2010/2010 scan_018", repo.headVersion(second.assetId)!!.path)
 
-        // Photos itself holds only year folders: it lists them, newest first. (The page's form
+        // images/photos holds only year folders: they're listed, newest first. (The page's form
         // carried both photos, so both are 2010's now.)
         val third = pc.addPhoto("scan_019.png", png(seed = 3))
         repo.editTags(repo.webDeviceId(), null, mapOf(third.assetId to mapOf(TagField.DATE to listOf("2008"))))
-        val top = web.get("/photos").bodyAsText()
-        assertTrue("/photos?path=images%2Fphotos%2F2010" in top && "/photos?path=images%2Fphotos%2F2008" in top, top)
-        assertTrue(top.indexOf("images%2Fphotos%2F2010") < top.indexOf("images%2Fphotos%2F2008"))
-        assertTrue("2 photos" in top && "1 photo<" in top)
-        assertEquals(HttpStatusCode.NotFound, web.get("/photos?path=images/elsewhere").status)
+        val years = web.get("/images?path=images/photos").bodyAsText()
+        assertTrue("/images?path=images%2Fphotos%2F2010" in years && "/images?path=images%2Fphotos%2F2008" in years, years)
+        assertTrue(years.indexOf("images%2Fphotos%2F2010") < years.indexOf("images%2Fphotos%2F2008"))
+        assertTrue("2 photos" in years && "1 photo<" in years)
+        assertEquals(HttpStatusCode.NotFound, web.get("/images?path=images/elsewhere").status)
+
+        // Images opens on images/, with folders besides photos/ as plain galleries.
+        val tablet = pair("Tablet").apply { subscribe(SubscriptionRule("images/screenshots/", "/home/test/Screenshots")) }
+        val shot = TestDevice.file("shot.png", png(seed = 4))
+        tablet.upload(shot)
+        val screenshot = tablet.push(PushChange(path = "images/screenshots/shot", kind = AssetKind.IMAGE, mediaHash = shot.mediaHash)).results.single().asset
+        val top = web.get("/images").bodyAsText()
+        assertTrue("/images?path=images%2Fphotos" in top && "/images?path=images%2Fscreenshots" in top, top)
+        val gallery = web.get("/images?path=images/screenshots").bodyAsText()
+        assertTrue("/images/view?id=${screenshot.assetId}" in gallery && "Date the ticked" !in gallery)
+        assertEquals("/images?path=images%2Fphotos", web.get("/photos?path=images%2Fphotos").headers[HttpHeaders.Location], "old links still work")
+
+        // The viewer: the full image, and steps through its folder.
+        val (a, b) = listOf(first, second).sortedBy { repo.headVersion(it.assetId)!!.path }
+        val viewer = web.get("/images/view?id=${a.assetId}").bodyAsText()
+        assertTrue("src=\"/web/blobs/${a.renditions.single().blob}\"" in viewer, viewer)
+        assertTrue("1 of 2" in viewer && "rel=\"next\"" in viewer && "rel=\"prev\"" !in viewer)
+        assertTrue("/images/view?id=${b.assetId}" in viewer)
+        val full = web.get("/web/blobs/${a.renditions.single().blob}")
+        assertEquals(HttpStatusCode.OK, full.status)
+        assertTrue(full.bodyAsBytes().contentEquals(png(seed = 1)), "the original, not a thumbnail")
+        assertEquals(HttpStatusCode.NotFound, web.get("/images/view?id=nothing").status)
     }
 
     @Test
