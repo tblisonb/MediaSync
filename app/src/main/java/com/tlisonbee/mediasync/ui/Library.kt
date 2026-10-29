@@ -97,6 +97,9 @@ class Library(context: Context, server: String, private val onLoginNeeded: (next
     private var wanted = "/"
 
     val view: WebView = WebView(context).apply {
+        // Laid out at its full size: with the wrap-content height a view gets by default, the
+        // page's 100vh is 0, and the viewer's video (at most 100vh tall) shrinks to nothing.
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         @Suppress("SetJavaScriptEnabled") // the web UI's own pages, behind its login
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
