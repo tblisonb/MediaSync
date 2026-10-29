@@ -181,6 +181,8 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .devices li:first-child { border-top: none; padding-top: 4px; }
 .device-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .device-head .name { font-weight: 500; overflow-wrap: anywhere; }
+.web-access { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 4px 0 12px; color: var(--muted); font-size: 0.9rem; }
+.web-access button.link { text-decoration: underline; }
 .state { font-size: 0.85rem; white-space: nowrap; }
 .state.ok { color: var(--accent); }
 .state.behind { color: var(--muted); }

@@ -344,7 +344,7 @@ private fun HTML.viewerPage(viewed: Viewed, probe: Probe?) = page(RepoPaths.name
         a(href = viewed.up) { attributes["rel"] = "up"; +"Back to the folder" }
         a(href = "/assets/${v.assetId}") { +"Details" }
         if (blob != null && (blob.mime.startsWith("image/") || blob.mime.startsWith("video/"))) {
-            a(href = "/web/blobs/${blob.hash}") { attributes["download"] = file; +"Download" }
+            a(href = "/web/blobs/${blob.hash}?download=${enc(file)}") { attributes["download"] = file; +"Download" }
         }
     }
     val doubts = probe?.doubts().orEmpty()

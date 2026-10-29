@@ -101,6 +101,14 @@ data class PairRequest(val code: String, val name: String, val kind: DeviceKind)
 @Serializable
 data class PairResponse(val deviceId: String, val token: String, val head: Long)
 
+/** The web password, to let this device (the Android app) into the web UI. */
+@Serializable
+data class WebAccessRequest(val password: String)
+
+/** A one-time login for the app's web view: POST it as `ticket` to /login/device within a minute. */
+@Serializable
+data class WebTicket(val ticket: String)
+
 @Serializable
 data class DeviceDto(
     val id: String,

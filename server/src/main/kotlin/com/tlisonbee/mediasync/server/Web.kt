@@ -18,6 +18,7 @@ import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.Subscription
 import com.tlisonbee.mediasync.library.TagPolicy
 import com.tlisonbee.mediasync.tags.TagField
+import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -96,6 +97,14 @@ fun Route.webRoutes(repo: Repository) {
                 call.respondHtml(HttpStatusCode.Unauthorized) { loginPage(failed = true) }
             }
         }
+    }
+    // The Android app's web view logs in with a ticket from POST /api/v1/web/ticket (WebAccess.kt).
+    post("/login/device") {
+        val form = call.receiveParameters()
+        val device = form["ticket"]?.let { io { repo.redeemWebTicket(it) } }
+            ?: return@post call.respondRedirect("/login")
+        call.sessions.set(WebSession(System.currentTimeMillis() + SESSION_LIFETIME.inWholeMilliseconds, device.id))
+        call.respondRedirect(localPath(form["next"]))
     }
     post("/logout") {
         call.sessions.clear<WebSession>()
@@ -185,17 +194,23 @@ fun Route.webRoutes(repo: Repository) {
         get("/devices") {
             val devices = io { repo.devices() }
             val head = io { repo.head() }
-            call.respondHtml { devicesPage(devices, pairing = null, head = head) }
+            val web = io { devices.filter(repo::webAllowed).map { it.id }.toSet() }
+            call.respondHtml { devicesPage(devices, pairing = null, head = head, web = web) }
         }
         post("/devices/pair") {
             val code = io { repo.newPairingCode() }
             val server = call.publicUrl()
             val devices = io { repo.devices() }
             val head = io { repo.head() }
-            call.respondHtml { devicesPage(devices, Pairing(server, code), head = head) }
+            val web = io { devices.filter(repo::webAllowed).map { it.id }.toSet() }
+            call.respondHtml { devicesPage(devices, Pairing(server, code), head = head, web = web) }
         }
         post("/devices/{id}/revoke") {
             io { repo.revoke(call.parameters["id"]!!) }
+            call.respondRedirect("/devices")
+        }
+        post("/devices/{id}/web-access/revoke") {
+            io { repo.disallowWeb(call.parameters["id"]!!) }
             call.respondRedirect("/devices")
         }
         post("/devices/{id}/subscription") {
@@ -236,6 +251,14 @@ fun Route.webRoutes(repo: Repository) {
             val blob = io { repo.blob(hash) }?.takeIf { it.mime.startsWith("image/") || it.mime.startsWith("video/") }
                 ?: return@get call.respond(HttpStatusCode.NotFound)
             call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+            // ?download=name saves it under that name, also where the download attribute isn't
+            // followed (the Android app's web view hands downloads to the system).
+            call.parameters["download"]?.takeIf { it.isNotBlank() }?.let { name ->
+                call.response.header(
+                    HttpHeaders.ContentDisposition,
+                    ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, name).toString(),
+                )
+            }
             call.respond(LocalPathContent(repo.dir.blob(hash), ContentType.parse(blob.mime)))
         }
 
@@ -690,7 +713,8 @@ private fun choices(issue: IssueDto): List<Pair<String, String>> = when (issue.k
     IssueKind.MEDIA_CONFLICT -> listOf("keep" to "Keep current", "other" to "Use the other side")
 }
 
-private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Long) = page("Devices") {
+/** [web]: the devices allowed into the web UI, from the Android app. */
+private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Long, web: Set<String>) = page("Devices") {
     h1 { +"Devices" }
     if (pairing != null) {
         section("card pairing") {
@@ -716,6 +740,12 @@ private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Lon
                 +"Paired ${time(d.createdAt)} · "
                 +(d.lastSeenAt?.let { "last seen ${time(it)}" } ?: "never seen")
                 +(" · " + if (d.syncedRev >= head) "up to date" else "at r${d.syncedRev} of r$head")
+            }
+            if (d.id in web) {
+                form(action = "/devices/${d.id}/web-access/revoke", method = FormMethod.post, classes = "web-access") {
+                    span { +"Can open this web UI in the app, without the password." }
+                    button(classes = "link") { +"Revoke web access" }
+                }
             }
             if (d.revokedAt == null) {
                 form(action = "/devices/${d.id}/subscription", method = FormMethod.post) {

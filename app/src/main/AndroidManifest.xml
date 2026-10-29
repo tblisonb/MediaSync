@@ -23,10 +23,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MediaSync">
 
+        <!-- Compose follows rotation without the activity restarting, so the Library tab's web view
+             (and a video playing full screen) carries on when the phone turns. -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

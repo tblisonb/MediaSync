@@ -114,6 +114,7 @@ private fun ResultSet.toDevice() = Device(
     createdAt = getLong("created_at"),
     lastSeenAt = longOrNull("last_seen_at"),
     revokedAt = longOrNull("revoked_at"),
+    webGrant = getString("web_grant"),
 )
 
 /**
