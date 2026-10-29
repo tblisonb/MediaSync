@@ -377,6 +377,14 @@ service can only write to the folders it syncs and to its own state.
 
 Update the server first, then the clients: a client may need something only a newer server has.
 
+**Which versions work together.** The server, the desktop client and the Android app are released
+separately. A server only ever adds to what it offers, so a newer server works with every earlier
+app and desktop client. Each app knows the oldest server it works with. Its release notes open with
+"Needs server X or later", and from app 1.2.0 and desktop 1.1.0 on, a sync with an older server
+stops with "This app needs server X or later; the server is Y. Update the server first." (In the
+desktop client's log, and on the phone's Sync tab.) `mediasync-desktop version` shows both
+versions, and the web UI's **Devices** page shows the version each device last synced with.
+
 - **From releases:** download the newer tarball and run its `install.sh` again, the same way you
   installed it. Your repository, settings and pairing are kept. On the phone, install the newer
   APK over the old one.

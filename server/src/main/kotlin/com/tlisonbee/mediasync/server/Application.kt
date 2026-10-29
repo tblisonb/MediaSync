@@ -92,7 +92,7 @@ val PAIR_RATE_LIMIT = RateLimitName("pair")
 /** From the jar's manifest; null when not run from the built jar (in tests). */
 val VERSION: String? = Repository::class.java.`package`?.implementationVersion
 
-fun Application.mediaSyncModule(repo: Repository) {
+fun Application.mediaSyncModule(repo: Repository, version: String? = VERSION) {
     install(ContentNegotiation) { json(ApiJson) }
     install(CallLogging)
     install(StatusPages) {
@@ -125,7 +125,10 @@ fun Application.mediaSyncModule(repo: Repository) {
     }
     install(Authentication) {
         bearer("api") {
-            authenticate { credential -> io { repo.authenticate(credential.token) }?.let(::DevicePrincipal) }
+            authenticate { credential ->
+                val agent = request.headers[HttpHeaders.UserAgent]
+                io { repo.authenticate(credential.token, agent) }?.let(::DevicePrincipal)
+            }
         }
         session<WebSession>("web") {
             validate { session ->
@@ -145,7 +148,7 @@ fun Application.mediaSyncModule(repo: Repository) {
                 call.respond(
                     buildJsonObject {
                         put("ok", true)
-                        VERSION?.let { put("version", it) }
+                        version?.let { put("version", it) }
                     },
                 )
             }

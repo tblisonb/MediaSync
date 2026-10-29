@@ -61,17 +61,30 @@ fun Repository.insertDevice(id: String, kind: DeviceKind, name: String, tokenHas
 
 private val lastSeen = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-/** The device a bearer token belongs to, unless it was revoked. */
-fun Repository.authenticate(token: String): Device? {
+/** "MediaSync-android/1.2.0" → "1.2.0": the version an app names in its User-Agent (ClientInfo). */
+private val CLIENT_AGENT = Regex("""^MediaSync-[a-z]+/([0-9A-Za-z.+-]{1,32})$""")
+
+/**
+ * The device a bearer token belongs to, unless it was revoked. [userAgent] records the app
+ * version it's running, for the Devices page.
+ */
+fun Repository.authenticate(token: String, userAgent: String? = null): Device? {
     val device = db.read { db.one("SELECT * FROM device WHERE token_hash = ? AND revoked_at IS NULL", sha256Hex(token)) { it.toDevice() } }
         ?: return null
-    // Note activity at most once a minute, so downloads don't each cost a write.
+    val version = userAgent?.let { CLIENT_AGENT.matchEntire(it)?.groupValues?.get(1) }
+    // Note activity at most once a minute, so downloads don't each cost a write; a new app version at once.
     val now = clock()
-    if (now - (lastSeen[device.id] ?: 0) > 60_000) {
+    val newVersion = version != null && version != device.clientVersion
+    if (newVersion || now - (lastSeen[device.id] ?: 0) > 60_000) {
         lastSeen[device.id] = now
-        db.tx { db.exec("UPDATE device SET last_seen_at = ? WHERE id = ?", now, device.id) }
+        db.tx {
+            db.exec(
+                "UPDATE device SET last_seen_at = ?, client_version = COALESCE(?, client_version) WHERE id = ?",
+                now, version, device.id,
+            )
+        }
     }
-    return device
+    return if (newVersion) device.copy(clientVersion = version) else device
 }
 
 fun Repository.device(id: String): Device? = db.read { db.one("SELECT * FROM device WHERE id = ?", id) { it.toDevice() } }
@@ -115,6 +128,7 @@ private fun ResultSet.toDevice() = Device(
     lastSeenAt = longOrNull("last_seen_at"),
     revokedAt = longOrNull("revoked_at"),
     webGrant = getString("web_grant"),
+    clientVersion = getString("client_version"),
 )
 
 /**

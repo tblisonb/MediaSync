@@ -16,6 +16,11 @@
 # that's already tagged. The release notes list the commits that touched the part (or :shared)
 # since its last release.
 #
+# Compatibility: each app's MIN_SERVER (MediaSyncApp.kt, desktop Main.kt) is the oldest server it
+# works with; a sync with an older one stops and says so. Its release notes open with "Needs server
+# X or later", and an app isn't released before a server that new is. A server only adds to the API,
+# so its notes say it works with every earlier app.
+#
 # Needs: gh, logged in. For the app, the release key in ~/.android (see make-release-key.sh).
 set -euo pipefail
 # -h or --help prints the comment at the top of this file.
@@ -28,6 +33,29 @@ version_of() {
     case $1 in
         app) sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts ;;
         desktop | server) sed -n 's/^version = "\(.*\)"$/\1/p' "$1/build.gradle.kts" ;;
+    esac
+}
+
+# The oldest server an app works with: the MIN_SERVER it checks at every sync.
+min_server_of() {
+    case $1 in
+        app) sed -n 's/^ *const val MIN_SERVER = "\(.*\)"$/\1/p' app/src/main/java/com/tlisonbee/mediasync/MediaSyncApp.kt ;;
+        desktop) sed -n 's/^const val MIN_SERVER = "\(.*\)"$/\1/p' desktop/src/main/kotlin/com/tlisonbee/mediasync/desktop/Main.kt ;;
+    esac
+}
+
+# Whether version $1 is at least $2.
+at_least() { [[ $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1) == "$2" ]]; }
+
+# What a part works with, for the top of its release notes.
+compatibility() {
+    case $1 in
+        app | desktop) echo "**Needs server $(min_server_of "$1") or later.** Update the server first." ;;
+        server)
+            echo "**Works with every earlier Android app and desktop client**: a server only adds to the API." \
+                "The current Android app ($(version_of app)) needs server $(min_server_of app) or later," \
+                "the desktop client ($(version_of desktop)) $(min_server_of desktop) or later."
+            ;;
     esac
 }
 
@@ -89,8 +117,16 @@ if [[ $part != all ]]; then
     [[ -n $version ]] || { echo "no version in $part/build.gradle.kts" >&2; exit 1; }
     tag="$part-v$version"
     untagged "$tag" "$part"
+    if [[ $part != server ]]; then
+        # An app can't need a server nobody can install yet.
+        min=$(min_server_of "$part")
+        [[ -n $min ]] || { echo "no MIN_SERVER for $part" >&2; exit 1; }
+        newest=$(git tag -l 'server-v*' | sed 's/^server-v//' | sort -V | tail -1)
+        [[ -n $newest ]] && at_least "$newest" "$min" ||
+            { echo "$part $version needs server $min, which isn't released (newest: ${newest:-none}): release the server first." >&2; exit 1; }
+    fi
     asset=$(build "$part" "$version")
-    notes=$(changes "$part")
+    notes="$(compatibility "$part")"$'\n\n'"$(changes "$part")"
     git tag -a "$tag" -m "MediaSync $part $version"
     git push -q origin "$tag"
     gh release create "$tag" "$asset" --verify-tag --title "MediaSync $part $version" --notes "$notes"
@@ -104,6 +140,9 @@ for p in app desktop server; do
     [[ $(version_of "$p") == "$version" ]] || { echo "$p is at $(version_of "$p"), not $version: give all three the same version." >&2; exit 1; }
     untagged "$p-v$version" "$p"
 done
+for p in app desktop; do
+    at_least "$version" "$(min_server_of "$p")" || { echo "$p needs server $(min_server_of "$p"), newer than $version." >&2; exit 1; }
+done
 untagged "v$version" server
 
 assets=()
@@ -113,7 +152,7 @@ notes=${intro:+$(cat "$intro")$'\n\n'}
 for p in server desktop app; do
     title=$p
     [[ $p == app ]] && title="Android app"
-    notes+="## ${title^}"$'\n\n'"$(changes "$p")"$'\n\n'
+    notes+="## ${title^}"$'\n\n'"$(compatibility "$p")"$'\n\n'"$(changes "$p")"$'\n\n'
 done
 
 for p in app desktop server; do git tag -a "$p-v$version" -m "MediaSync $p $version"; done

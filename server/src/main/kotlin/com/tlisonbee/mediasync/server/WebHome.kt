@@ -82,7 +82,7 @@ class VideosCard(val videos: Int, val hours: Long, val recent: List<Thumb>)
 
 class GamesCard(val games: Int, val files: Int, val platforms: List<Triple<String, String, Int>>, val unknown: Int)
 
-class DeviceCard(val name: String, val kind: DeviceKind, val lastSeenAt: Long?, val behind: Long, val areas: List<String>)
+class DeviceCard(val name: String, val kind: DeviceKind, val lastSeenAt: Long?, val behind: Long, val areas: List<String>, val version: String? = null)
 
 /** Something to look at, and where to do it. */
 class Attention(val text: String, val href: String?)
@@ -149,7 +149,7 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
     val byArea = assets.groupBy { Area.of(it.path) }
     val games = gamesCard()
     val devices = devices().filter { it.revokedAt == null && it.kind != DeviceKind.WEB }.map { d ->
-        DeviceCard(d.name, d.kind, d.lastSeenAt, (head - d.syncedRev).coerceAtLeast(0), d.subscription.rules.map { areaName(it.prefix) }.distinct())
+        DeviceCard(d.name, d.kind, d.lastSeenAt, (head - d.syncedRev).coerceAtLeast(0), d.subscription.rules.map { areaName(it.prefix) }.distinct(), d.clientVersion)
     }
     val snapshot = dir.snapshots.resolve("repo.db")
     val backupAt = if (Files.exists(snapshot)) Files.getLastModifiedTime(snapshot).toMillis() else null
@@ -449,7 +449,8 @@ private fun FlowContent.devices(home: Home) = section("side-card") {
                     else span("state behind") { +"${plural(d.behind, "revision", "revisions")} behind" }
                 }
                 p("muted small") {
-                    +(d.lastSeenAt?.let { "${d.kind.name.lowercase()} · seen ${ago(it)}" } ?: "${d.kind.name.lowercase()} · never seen")
+                    val kind = d.kind.name.lowercase() + d.version?.let { " $it" }.orEmpty()
+                    +(d.lastSeenAt?.let { "$kind · seen ${ago(it)}" } ?: "$kind · never seen")
                 }
                 if (d.areas.isNotEmpty()) div("chips") { d.areas.forEach { span("chip") { +it } } }
             }
