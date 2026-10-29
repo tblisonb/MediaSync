@@ -1,0 +1,5 @@
+<resources>
+    <!-- Dark when the system is: the window before Compose draws, and the Library tab's web view,
+         whose pages follow the theme's light or dark (prefers-color-scheme). -->
+    <style name="Theme.MediaSync" parent="android:Theme.Material.NoActionBar" />
+</resources>

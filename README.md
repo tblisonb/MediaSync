@@ -156,6 +156,14 @@ The first PC you set up fills the library, so set up the PC with your music on i
 5. The app previews what the first sync does to the phone's `Music` folder. It starts when you tap
    **Start syncing**.
 
+Once it syncs, the app has two tabs: **Sync**, and **Library**, which is the web UI inside the app.
+The first time you open Library it asks for the web UI's password, once, to let this phone in.
+After that it opens without the password, until you revoke the phone's web access on the
+**Devices** page (or revoke the phone) or change the password. Other paired devices stay
+sync-only. In the Library tab, Back steps through pages, tapping **Library** again reloads the
+page, downloads go to the phone's Downloads folder, and links to other sites open in the browser.
+Library needs server 1.3.0 or later.
+
 ### 5. Pictures, videos and games (optional)
 
 Music is synced from the start. Pictures, videos and games are separate folders you add on each device:
@@ -252,7 +260,9 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
     and place, and devices swap their copies for the MP3s at their next sync. Needs `ffmpeg` on
     the server.
   - Each cleanup is one revision, so it can be reverted.
-- **Devices**: pair and revoke devices, and see which folders each one syncs.
+- **Devices**: pair and revoke devices, and see which folders each one syncs. A phone that opens
+  the web UI in the app says so, with **Revoke web access** to log it out and make it ask for the
+  password again; it keeps syncing.
 - **Settings**: the tag policy.
 
 ### Music

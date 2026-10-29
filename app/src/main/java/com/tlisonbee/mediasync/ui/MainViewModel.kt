@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.ui
 import android.app.Application
 import android.os.Build
 import android.os.Environment
+import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tlisonbee.mediasync.api.DeviceKind
@@ -36,12 +37,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URI
+import java.net.URLEncoder
 
 enum class Screen { PERMISSION, PAIR, PREVIEW, STATUS }
 
@@ -96,6 +99,20 @@ data class ImagesState(
     val error: String? = null,
 )
 
+/**
+ * The Library tab: the web UI, logged in with this phone's pairing. The phone is let in once with
+ * the web password; after that each login is a one-time ticket the server swaps for its token.
+ */
+data class LibraryState(
+    val needsPassword: Boolean = false,
+    val busy: Boolean = false,
+    val error: String? = null,
+    /** A login for the web view to make, once: POST [WebLogin.body] to [WebLogin.url]. */
+    val login: WebLogin? = null,
+)
+
+class WebLogin(val url: String, val body: ByteArray)
+
 data class UiState(
     val screen: Screen,
     val config: ClientConfig?,
@@ -139,6 +156,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val requested = MutableStateFlow<SyncActivity?>(null)
     private val applying = MutableStateFlow<Map<String, String>>(emptyMap())
     private val images = MutableStateFlow(ImagesState())
+    private val _library = MutableStateFlow(LibraryState())
+    val library: StateFlow<LibraryState> = _library.asStateFlow()
 
     private data class Extra(val pairing: PairState, val preview: PreviewState, val files: Int, val review: ReviewState, val videos: VideosState)
 
@@ -518,7 +537,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SyncScheduler.syncNow(app, allowDeletes)
     }
 
+    /** Logs the Library tab's web view in, then shows [next]; or asks for the password first. */
+    fun openLibrary(next: String = "/") {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        if (_library.value.busy) return
+        _library.value = _library.value.copy(busy = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            _library.value = try {
+                val ticket = ApiClient(config.serverUrl, token).webTicket()
+                if (ticket == null) LibraryState(needsPassword = true) else LibraryState(login = webLogin(config.serverUrl, ticket, next))
+            } catch (e: Exception) {
+                LibraryState(error = "Couldn't reach the server: ${e.message ?: e}")
+            }
+        }
+    }
+
+    /** Lets this phone into the web UI with its password, then logs the web view in. */
+    fun allowLibrary(password: String) {
+        val config = app.settings.config ?: return
+        val token = app.settings.token ?: return
+        _library.value = LibraryState(needsPassword = true, busy = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            _library.value = try {
+                val api = ApiClient(config.serverUrl, token)
+                when {
+                    !api.allowWeb(password) -> LibraryState(needsPassword = true, error = "That isn't the web UI's password.")
+                    else -> api.webTicket()?.let { LibraryState(login = webLogin(config.serverUrl, it, "/")) }
+                        ?: LibraryState(needsPassword = true, error = "The server didn't let this phone in. Try again.")
+                }
+            } catch (e: Exception) {
+                LibraryState(needsPassword = true, error = "Couldn't reach the server: ${e.message ?: e}")
+            }
+        }
+    }
+
+    /** The web view has the login; it isn't made twice. */
+    fun loginSent() {
+        _library.value = _library.value.copy(login = null)
+    }
+
+    private fun webLogin(server: String, ticket: String, next: String) = WebLogin(
+        server.trimEnd('/') + "/login/device",
+        "ticket=${URLEncoder.encode(ticket, Charsets.UTF_8)}&next=${URLEncoder.encode(next, Charsets.UTF_8)}".toByteArray(),
+    )
+
     fun unpair() {
+        // The web view's login belongs to this pairing.
+        CookieManager.getInstance().removeAllCookies(null)
+        _library.value = LibraryState()
         SyncScheduler.cancelAll(app)
         app.settings.unpair()
         viewModelScope.launch(Dispatchers.IO) { app.index.clear() }

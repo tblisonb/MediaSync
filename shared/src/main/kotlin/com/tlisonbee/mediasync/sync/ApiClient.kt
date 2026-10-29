@@ -24,6 +24,8 @@ import com.tlisonbee.mediasync.api.RevisionDiff
 import com.tlisonbee.mediasync.api.RevisionsResponse
 import com.tlisonbee.mediasync.api.UploadRequest
 import com.tlisonbee.mediasync.api.UploadResponse
+import com.tlisonbee.mediasync.api.WebAccessRequest
+import com.tlisonbee.mediasync.api.WebTicket
 import com.tlisonbee.mediasync.library.Subscription
 import com.tlisonbee.mediasync.library.TagPolicy
 import kotlinx.serialization.KSerializer
@@ -234,6 +236,30 @@ class ApiClient(serverUrl: String, private val token: String?) {
                         .getOrNull()?.let { onHead(it.head) }
                 }
             }
+        }
+    }
+
+    // ---- The web UI in the app ----
+
+    /** Lets this device into the web UI; false when [password] isn't the web password. */
+    fun allowWeb(password: String): Boolean {
+        val request = request("/web/access").post(json(WebAccessRequest.serializer(), WebAccessRequest(password))).build()
+        return http.newCall(request).execute().use {
+            if (it.code == 403) return false
+            check(it, request, it.body.string())
+            true
+        }
+    }
+
+    /** A one-time web login, or null when this device isn't allowed into the web UI (or no longer is). */
+    fun webTicket(): String? {
+        val request = request("/web/ticket").post(ByteArray(0).toRequestBody(null)).build()
+        return http.newCall(request).execute().use {
+            val text = it.body.string()
+            if (it.code == 403) return null
+            if (it.code == 404) throw ApiException("The server is too old to open the web UI here; update it to 1.3.0 or later.", 404)
+            check(it, request, text)
+            ApiJson.decodeFromString(WebTicket.serializer(), text).ticket
         }
     }
 

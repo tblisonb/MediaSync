@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,6 +33,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -50,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +64,7 @@ import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.tlisonbee.mediasync.R
 import com.tlisonbee.mediasync.api.FolderPickItem
 import com.tlisonbee.mediasync.api.PickItem
 import com.tlisonbee.mediasync.library.SyncMode
@@ -70,25 +78,67 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
+enum class Tab { SYNC, LIBRARY }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaSyncRoot(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsState()
-    Scaffold(topBar = { TopAppBar(title = { Text("MediaSync") }) }) { padding ->
-        Column(
-            Modifier.padding(padding).padding(horizontal = 16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            when (state.screen) {
-                Screen.STATUS if state.videos.open -> VideosScreen(state, viewModel)
-                Screen.STATUS if state.games.open -> GamesScreen(state, viewModel)
-                Screen.PERMISSION -> PermissionScreen()
-                Screen.PAIR -> PairScreen(state, viewModel)
-                Screen.PREVIEW -> PreviewScreen(state, viewModel)
-                Screen.STATUS -> StatusScreen(state, viewModel)
+    val libraryState by viewModel.library.collectAsState()
+    var tab by rememberSaveable { mutableStateOf(Tab.SYNC) }
+    val context = LocalContext.current
+    val server = state.config?.serverUrl
+    // Once paired, the web UI is a tab of its own. Its web view outlives the tab, so pages keep their place.
+    val library = remember(server) { server?.let { Library(context, it) { next -> viewModel.openLibrary(next) } } }
+    val tabs = state.screen == Screen.STATUS && library != null
+    val onLibrary = tabs && tab == Tab.LIBRARY
+
+    // Back steps through the web pages, then returns to the Sync tab.
+    BackHandler(enabled = onLibrary) { if (library?.back() != true) tab = Tab.SYNC }
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            // The web UI has a header of its own.
+            topBar = { if (!onLibrary) TopAppBar(title = { Text("MediaSync") }) },
+            bottomBar = {
+                if (tabs) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = tab == Tab.SYNC,
+                            onClick = { tab = Tab.SYNC },
+                            icon = { Icon(painterResource(R.drawable.ic_tab_sync), contentDescription = null) },
+                            label = { Text("Sync") },
+                        )
+                        NavigationBarItem(
+                            selected = onLibrary,
+                            // Tapped again, it reloads the page.
+                            onClick = { if (onLibrary) library?.reload() else tab = Tab.LIBRARY },
+                            icon = { Icon(painterResource(R.drawable.ic_tab_library), contentDescription = null) },
+                            label = { Text("Library") },
+                        )
+                    }
+                }
+            },
+        ) { padding ->
+            if (onLibrary) {
+                LibraryTab(library!!, libraryState, viewModel, Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize())
+            } else {
+                Column(
+                    Modifier.padding(padding).padding(horizontal = 16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    when (state.screen) {
+                        Screen.STATUS if state.videos.open -> VideosScreen(state, viewModel)
+                        Screen.STATUS if state.games.open -> GamesScreen(state, viewModel)
+                        Screen.PERMISSION -> PermissionScreen()
+                        Screen.PAIR -> PairScreen(state, viewModel)
+                        Screen.PREVIEW -> PreviewScreen(state, viewModel)
+                        Screen.STATUS -> StatusScreen(state, viewModel, openLibrary = { tab = Tab.LIBRARY })
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
             }
-            Spacer(Modifier.height(24.dp))
         }
+        if (onLibrary) library?.fullScreen?.let { FullScreen(it) }
     }
 }
 
@@ -186,8 +236,7 @@ private fun PreviewScreen(state: UiState, viewModel: MainViewModel) {
 }
 
 @Composable
-private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
-    val context = LocalContext.current
+private fun StatusScreen(state: UiState, viewModel: MainViewModel, openLibrary: () -> Unit) {
     val config = state.config ?: return
     val folder = config.folders.first()
     var confirmUnpair by remember { mutableStateOf(false) }
@@ -222,10 +271,10 @@ private fun StatusScreen(state: UiState, viewModel: MainViewModel) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         // With review on, syncing everything at once would skip the asking.
         if (!state.review.enabled) Button(onClick = { viewModel.syncNow() }, enabled = !state.busy) { Text("Sync now") }
-        OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, config.serverUrl.toUri())) }) { Text("Open web UI") }
+        OutlinedButton(onClick = openLibrary) { Text("Open the library") }
     }
     Text(
-        "The resolve queue, history and undo are in the web UI for now.",
+        "The resolve queue, history, undo and tag editing are in the Library tab.",
         style = MaterialTheme.typography.bodySmall,
     )
     ImagesCard(state, viewModel)

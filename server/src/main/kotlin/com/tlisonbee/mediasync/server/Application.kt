@@ -16,6 +16,8 @@ import com.tlisonbee.mediasync.api.ResolveRequest
 import com.tlisonbee.mediasync.api.RevertRequest
 import com.tlisonbee.mediasync.api.UploadRequest
 import com.tlisonbee.mediasync.api.UploadResponse
+import com.tlisonbee.mediasync.api.WebAccessRequest
+import com.tlisonbee.mediasync.api.WebTicket
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.Subscription
 import io.ktor.http.ContentType
@@ -74,9 +76,12 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
-/** Signed (not encrypted) browser session; it holds nothing secret, only an expiry. */
+/**
+ * Signed (not encrypted) browser session; it holds nothing secret, only an expiry, and for the
+ * Android app's web view, the device it belongs to, so revoking that device's access ends it.
+ */
 @Serializable
-data class WebSession(val expiresAt: Long)
+data class WebSession(val expiresAt: Long, val device: String? = null)
 
 class DevicePrincipal(val device: Device)
 
@@ -123,7 +128,12 @@ fun Application.mediaSyncModule(repo: Repository) {
             authenticate { credential -> io { repo.authenticate(credential.token) }?.let(::DevicePrincipal) }
         }
         session<WebSession>("web") {
-            validate { session -> session.takeIf { it.expiresAt > System.currentTimeMillis() } }
+            validate { session ->
+                session.takeIf {
+                    it.expiresAt > System.currentTimeMillis() &&
+                        (it.device == null || io { repo.device(it.device)?.let(repo::webAllowed) } == true)
+                }
+            }
             challenge { call.respondRedirect("/login") }
         }
     }
@@ -152,6 +162,23 @@ fun Application.mediaSyncModule(repo: Repository) {
 }
 
 private fun Route.apiRoutes(repo: Repository) {
+    // The web UI in the Android app (WebAccess.kt). A wrong password is 403, not 401, which would
+    // tell the app its token was rejected.
+    rateLimit(LOGIN_RATE_LIMIT) {
+        post("/web/access") {
+            val request = call.receive<WebAccessRequest>()
+            if (io { repo.allowWeb(call.device(), request.password) }) {
+                call.respond(HttpStatusCode.NoContent)
+            } else {
+                call.respondText("That isn't the web UI's password.", status = HttpStatusCode.Forbidden)
+            }
+        }
+    }
+    post("/web/ticket") {
+        val ticket = io { repo.newWebTicket(call.device()) }
+            ?: return@post call.respondText("This device isn't allowed into the web UI.", status = HttpStatusCode.Forbidden)
+        call.respond(WebTicket(ticket))
+    }
     get("/changes") {
         val since = call.parameters["since"]?.toLongOrNull() ?: badRequest("since is required")
         val limit = call.parameters["limit"]?.toIntOrNull() ?: 500

@@ -89,6 +89,8 @@ data class Device(
     val createdAt: Long,
     val lastSeenAt: Long?,
     val revokedAt: Long?,
+    /** Set when the app was allowed into the web UI (WebAccess.kt). */
+    val webGrant: String? = null,
 )
 
 data class MediaRow(val mediaHash: String, val baseBlob: String, val format: String, val size: Long, val durationMs: Long?)
