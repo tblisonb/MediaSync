@@ -24,7 +24,7 @@ import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 
 /** A real server on loopback plus any number of desktop clients, each with its own folders. */
-class TestWorld : AutoCloseable {
+class TestWorld(serverVersion: String? = null) : AutoCloseable {
     val root: Path = Files.createTempDirectory("mediasync-desktop-test")
     private val repoDir = RepoDir(root.resolve("server"))
     val repo: Repository
@@ -34,7 +34,7 @@ class TestWorld : AutoCloseable {
     init {
         Setup.create(repoDir, "correct horse battery")
         repo = Repository(repoDir)
-        server = embeddedServer(Netty, host = "127.0.0.1", port = 0) { mediaSyncModule(repo) }.start(wait = false)
+        server = embeddedServer(Netty, host = "127.0.0.1", port = 0) { mediaSyncModule(repo, serverVersion) }.start(wait = false)
         url = "http://127.0.0.1:" + runBlocking { server.engine.resolvedConnectors().first().port }
     }
 

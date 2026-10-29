@@ -138,10 +138,15 @@ class Db(path: Path) : AutoCloseable {
         }
         // 6 moves photos/ to images/, 7 corrects that move: revisions, not schema changes, made at startup (Images.kt).
         // So later columns are added when missing instead of by version, which would skip those moves.
-        if (query("PRAGMA table_info(device)") { it.getString("name") }.none { it == "web_grant" }) {
+        val deviceColumns = query("PRAGMA table_info(device)") { it.getString("name") }
+        if ("web_grant" !in deviceColumns) {
             // A phone allowed into the web UI: a fingerprint of the password it was allowed with,
             // so changing the password ends every phone's access.
             exec("ALTER TABLE device ADD COLUMN web_grant TEXT")
+        }
+        if ("client_version" !in deviceColumns) {
+            // The app version a device last synced with, from its User-Agent ("MediaSync-android/1.2.0").
+            exec("ALTER TABLE device ADD COLUMN client_version TEXT")
         }
     }
 }

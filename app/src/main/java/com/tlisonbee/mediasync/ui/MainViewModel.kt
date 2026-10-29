@@ -17,6 +17,7 @@ import com.tlisonbee.mediasync.data.LastSync
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.library.SyncMode
 import com.tlisonbee.mediasync.sync.ApiClient
+import com.tlisonbee.mediasync.sync.ApiException
 import com.tlisonbee.mediasync.sync.ClientConfig
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.Preview
@@ -545,8 +546,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _library.value = _library.value.copy(busy = true, error = null)
         viewModelScope.launch(Dispatchers.IO) {
             _library.value = try {
-                val ticket = ApiClient(config.serverUrl, token).webTicket()
+                val api = ApiClient(config.serverUrl, token)
+                api.requireCompatibleServer()
+                val ticket = api.webTicket()
                 if (ticket == null) LibraryState(needsPassword = true) else LibraryState(login = webLogin(config.serverUrl, ticket, next))
+            } catch (e: ApiException) {
+                LibraryState(error = e.message ?: e.toString())
             } catch (e: Exception) {
                 LibraryState(error = "Couldn't reach the server: ${e.message ?: e}")
             }

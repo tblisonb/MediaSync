@@ -31,6 +31,8 @@ import com.tlisonbee.mediasync.library.TagPolicy
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -57,12 +59,35 @@ class ApiException(message: String, val status: Int) : IOException(message)
 class ApiClient(serverUrl: String, private val token: String?) {
     private val base = serverUrl.trimEnd('/') + "/api/v1"
     private val http = OkHttpClient.Builder()
+        // Names the app and its version, which the server shows on its Devices page.
+        .addInterceptor { chain ->
+            val agent = ClientInfo.userAgent
+            chain.proceed(if (agent == null) chain.request() else chain.request().newBuilder().header("User-Agent", agent).build())
+        }
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES) // a large push is merged in one transaction
         .writeTimeout(10, TimeUnit.MINUTES)
         .build()
 
     fun health(): JsonObject = get("/health", JsonObject.serializer())
+
+    /** The server's version, or null when it doesn't say (a development build). */
+    fun serverVersion(): String? = (health()["version"] as? JsonPrimitive)?.contentOrNull
+
+    /**
+     * Throws when the server is older than [ClientInfo.minServer], with a message that says which
+     * to update. A server that passes isn't asked again for a while.
+     */
+    fun requireCompatibleServer() {
+        val min = ClientInfo.minServer ?: return
+        val now = System.currentTimeMillis()
+        if (now - (compatible[base] ?: 0) < RECHECK_MS) return
+        val version = serverVersion()
+        if (version != null && compareVersions(version, min) < 0) {
+            throw ApiException("${ClientInfo.name} needs server $min or later; the server is $version. Update the server first.", 0)
+        }
+        compatible[base] = now
+    }
 
     fun pair(request: PairRequest): PairResponse = post("/pair", request, PairRequest.serializer(), PairResponse.serializer())
 
@@ -257,7 +282,7 @@ class ApiClient(serverUrl: String, private val token: String?) {
         return http.newCall(request).execute().use {
             val text = it.body.string()
             if (it.code == 403) return null
-            if (it.code == 404) throw ApiException("The server is too old to open the web UI here; update it to 1.3.0 or later.", 404)
+            if (it.code == 404) throw ApiException("The Library tab needs server 1.3.0 or later. Update the server first.", 404)
             check(it, request, text)
             ApiJson.decodeFromString(WebTicket.serializer(), text).ticket
         }
@@ -296,6 +321,9 @@ class ApiClient(serverUrl: String, private val token: String?) {
     }
 
     private companion object {
+        /** When each server last passed [requireCompatibleServer]. */
+        val compatible = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        const val RECHECK_MS = 10 * 60_000L
         val JSON = "application/json".toMediaType()
         val OCTET_STREAM = "application/octet-stream".toMediaType()
     }

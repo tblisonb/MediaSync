@@ -8,6 +8,8 @@ import com.tlisonbee.mediasync.library.SyncMode
 import com.tlisonbee.mediasync.sync.ApiClient
 import com.tlisonbee.mediasync.sync.ApiException
 import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.ClientInfo
+import com.tlisonbee.mediasync.sync.compareVersions
 import com.tlisonbee.mediasync.sync.FolderConfig
 import com.tlisonbee.mediasync.sync.Preview
 import com.tlisonbee.mediasync.sync.ReviewSettings
@@ -21,7 +23,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
-import kotlinx.serialization.json.JsonPrimitive
 
 private const val USAGE = """Usage: mediasync-desktop <command>
 
@@ -51,8 +52,18 @@ private const val USAGE = """Usage: mediasync-desktop <command>
 /** From the jar's manifest; null when not run from a built jar. */
 private val VERSION: String? = object {}.javaClass.`package`?.implementationVersion
 
+/**
+ * The oldest server this client works with. Raise it whenever the client starts relying on
+ * something newer. A sync with an older server stops and says so, and scripts/release.sh puts it
+ * in the release notes.
+ */
+const val MIN_SERVER = "1.0.0"
+
 fun main(args: Array<String>) {
     val dirs = Dirs.xdg()
+    ClientInfo.kind = "desktop"
+    ClientInfo.version = VERSION
+    ClientInfo.minServer = MIN_SERVER
     try {
         when (args.firstOrNull()) {
             "setup" -> setup(dirs)
@@ -276,12 +287,18 @@ private fun systemctl(vararg args: String): Int = runCatching {
 }.getOrDefault(-1)
 
 private fun version(dirs: Dirs) {
-    println("mediasync-desktop ${VERSION ?: "(a development build)"}")
+    println("mediasync-desktop ${VERSION ?: "(a development build)"}, needs server $MIN_SERVER or later")
     val config = ConfigStore(dirs).load()?.first ?: return
-    val server = runCatching { (ApiClient(config.serverUrl, null).health()["version"] as? JsonPrimitive)?.content }
+    val server = runCatching { ApiClient(config.serverUrl, null).serverVersion() }
     println(
         "Server at ${config.serverUrl}: " + server.fold(
-            { it ?: "0.4.3 or older (it doesn't say)" },
+            { v ->
+                when {
+                    v == null -> "0.4.3 or older (it doesn't say)"
+                    compareVersions(v, MIN_SERVER) < 0 -> "$v, too old for this client: update the server"
+                    else -> v
+                }
+            },
             { "not reachable (${it.message ?: it.javaClass.simpleName})" },
         ),
     )

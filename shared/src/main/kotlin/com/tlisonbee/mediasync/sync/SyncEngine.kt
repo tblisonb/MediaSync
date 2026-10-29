@@ -290,6 +290,8 @@ class SyncEngine(
     }
 
     private fun refreshSettings() {
+        // Before anything else: a server older than this app needs stops here, with a message saying so.
+        api.requireCompatibleServer()
         policy = api.policy()
         cleanup = api.cleanup()
     }

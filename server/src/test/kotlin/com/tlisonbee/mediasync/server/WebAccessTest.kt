@@ -5,8 +5,10 @@ import com.tlisonbee.mediasync.api.WebAccessRequest
 import com.tlisonbee.mediasync.api.WebTicket
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -50,6 +52,23 @@ class WebAccessTest {
 
         // Other devices are still sync-only.
         assertEquals(HttpStatusCode.Forbidden, pair("Laptop").ticket().status)
+    }
+
+    @Test
+    fun devicesShowTheAppVersionTheySyncWith() = withServer {
+        val phone = pair("Phone", DeviceKind.ANDROID)
+        assertEquals(HttpStatusCode.OK, phone.http.get("/api/v1/changes?since=0") {
+            bearerAuth(phone.token)
+            header(HttpHeaders.UserAgent, "MediaSync-android/1.2.0")
+        }.status)
+        assertEquals("1.2.0", repo.device(phone.id)?.clientVersion)
+        // Something else's User-Agent leaves the version alone.
+        phone.http.get("/api/v1/changes?since=0") { bearerAuth(phone.token); header(HttpHeaders.UserAgent, "curl/8.0") }
+        assertEquals("1.2.0", repo.device(phone.id)?.clientVersion)
+
+        val admin = browser().also { it.submitForm("/login", parameters { append("password", ADMIN_PASSWORD) }) }
+        assertTrue(" · android 1.2.0" in admin.get("/devices").bodyAsText())
+        assertTrue("android 1.2.0 · seen" in admin.get("/").bodyAsText())
     }
 
     @Test

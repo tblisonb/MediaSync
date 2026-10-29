@@ -733,7 +733,7 @@ private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Lon
         section("card device") {
             h2 {
                 +d.name
-                span("muted") { +" · ${d.kind.name.lowercase()}" }
+                span("muted") { +" · ${d.kind.name.lowercase()}${d.clientVersion?.let { " $it" }.orEmpty()}" }
                 if (d.revokedAt != null) span("badge") { +"revoked" }
             }
             p("muted") {
