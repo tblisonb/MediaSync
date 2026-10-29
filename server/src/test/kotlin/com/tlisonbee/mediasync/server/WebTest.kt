@@ -293,6 +293,11 @@ class WebTest {
         assertTrue("PC added 2 tracks, 1 photo" in home)
         assertTrue("Retitled a song" in home)
         assertTrue("Photos" in home && "Library by area" in home)
+        // Free space is its own line in the legend, and the box swaps in a bar of the whole disk.
+        assertTrue("id=\"show-free\"" in home && "Show free space" in home)
+        assertTrue("<span>Free</span>" in home && "<span>Used by other files</span>" in home)
+        assertTrue("class=\"disk\"" in home && "class=\"seg-free\"" in home)
+        assertTrue(" free" !in home.substringAfter("stored, with old versions").substringBefore("</p>"))
     }
 }
 

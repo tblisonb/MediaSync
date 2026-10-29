@@ -16,6 +16,8 @@
     --images: #eb6834;
     --videos: #1baf7a;
     --games: #eda100;
+    --rest: #a3abaa;
+    --free: #d3d9d7;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,6 +37,8 @@
         --images: #d95926;
         --videos: #199e70;
         --games: #c98500;
+        --rest: #6c7573;
+        --free: #3f4846;
     }
 }
 
@@ -191,8 +195,21 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .seg-videos { fill: var(--videos); background: var(--videos); }
 .seg-games { fill: var(--games); background: var(--games); }
 .seg-other { fill: var(--muted); background: var(--muted); }
+.seg-rest { fill: var(--rest); background: var(--rest); }
+.seg-free { fill: var(--free); background: var(--free); }
+/* "Show free space" swaps the library bar for the whole disk. */
+.show-free { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 0.8rem; cursor: pointer; }
+.show-free input { margin: 0; accent-color: var(--accent); }
+.storage .storage-bar .disk, .storage .disk-only { display: none; }
+.storage:has(#show-free:checked) .storage-bar .library { display: none; }
+.storage:has(#show-free:checked) .storage-bar .disk { display: block; }
+.storage:has(#show-free:checked) .disk-only { display: inline; }
+.of-disk { font-size: 0.9rem; font-weight: 400; white-space: nowrap; }
+.storage:not(:has(#show-free:checked)) .legend .seg-rest { background: none; box-shadow: inset 0 0 0 2px var(--rest); }
+.storage:not(:has(#show-free:checked)) .legend .seg-free { background: none; box-shadow: inset 0 0 0 2px var(--free); }
 .legend { list-style: none; padding: 0; margin: 0 0 8px; }
 .legend li { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; padding: 1px 0; }
+.legend li.beside { margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--border); }
 .legend li .num { margin-left: auto; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .activity h2 { margin-top: 4px; }

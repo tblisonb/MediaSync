@@ -212,7 +212,9 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open
 - **Home**: what needs a look (entries to resolve, a device that hasn't synced for days, undated
   photos, games without a platform, a backup that hasn't run), then the library by area (music,
   images, videos and games, with what was added lately), each device and how far behind it is,
-  where the space goes, and recent activity by day.
+  where the space goes, and recent activity by day. **Show free space** on the Storage card turns
+  its bar into the whole disk: the library, other files on the disk, and what's free (the browser
+  remembers the box).
 - **Library**: browse the folders. Each album has a tag editor (**Edit this album's tags**), and each
   video folder has **Edit these videos' details**.
 - **Images**: everything in images/ as thumbnails, folder by folder; photos come by year. Photo
