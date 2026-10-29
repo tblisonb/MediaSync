@@ -8,13 +8,19 @@ import com.tlisonbee.mediasync.library.RepoPaths
 import io.ktor.server.html.respondHtml
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import kotlinx.html.DIV
 import kotlinx.html.FlowContent
 import kotlinx.html.HTML
+import kotlinx.html.InputType
+import kotlinx.html.UL
 import kotlinx.html.a
 import kotlinx.html.div
 import kotlinx.html.h1
 import kotlinx.html.h2
+import kotlinx.html.id
 import kotlinx.html.img
+import kotlinx.html.input
+import kotlinx.html.label
 import kotlinx.html.li
 import kotlinx.html.p
 import kotlinx.html.script
@@ -88,6 +94,8 @@ class Home(
     val head: Long,
     val sizes: Map<Area, Long>,
     val stored: Long,
+    /** The disk the repository is on: its size and what's free, when the system says. */
+    val disk: Long?,
     val free: Long?,
     val music: MusicCard,
     val images: ImagesCard,
@@ -159,11 +167,13 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
         if (backupAt != null && now - backupAt > BACKUP_DAYS * DAY_MS) add(Attention("The last backup started ${(now - backupAt) / DAY_MS} days ago", null))
     }
 
+    val store = runCatching { Files.getFileStore(dir.root) }.getOrNull()
     return Home(
         head = head,
         sizes = Area.entries.associateWith { area -> byArea[area].orEmpty().sumOf { it.size } },
         stored = db.long("SELECT COALESCE(SUM(size), 0) FROM blob"),
-        free = runCatching { Files.getFileStore(dir.root).usableSpace }.getOrNull(),
+        disk = store?.let { runCatching { it.totalSpace }.getOrNull() },
+        free = store?.let { runCatching { it.usableSpace }.getOrNull() },
         music = musicCard(byArea[Area.MUSIC].orEmpty()),
         images = imagesCard(byArea[Area.IMAGES].orEmpty()),
         videos = videosCard(byArea[Area.VIDEOS].orEmpty()),
@@ -347,6 +357,7 @@ private fun HTML.homePage(home: Home) = page("Home") {
         activity(home.activity)
     }
     script(src = "/static/previews.js") { }
+    script(src = "/static/storage.js") { }
 }
 
 private fun FlowContent.areaCard(area: Area, size: Long, headline: String, content: FlowContent.() -> Unit) = section("area-card ${area.name.lowercase()}") {
@@ -446,38 +457,66 @@ private fun FlowContent.devices(home: Home) = section("side-card") {
     }
 }
 
-/** The live library split by area: an SVG, since the CSP allows no inline styles to size a bar. */
-private fun FlowContent.storage(home: Home) = section("side-card") {
-    h2 { +"Storage" }
-    val parts = Area.entries.map { it to home.sizes.getValue(it) }.filter { it.second > 0 }
-    val total = parts.sumOf { it.second }
-    if (total == 0L) return@section p("empty") { +"Nothing stored yet." }
-    p("headline") { +bytes(total) }
-    div("storage-bar") {
-        var x = 0.0
-        val rects = parts.joinToString("") { (area, size) ->
-            val w = size * 1000.0 / total
-            val rect = """<rect class="seg-${area.name.lowercase()}" x="%.2f" y="0" width="%.2f" height="12"><title>%s: %s</title></rect>"""
-                .format(x, w, area.label, bytes(size))
-            x += w
-            rect
+/** One stretch of the storage bar, and its line in the legend. */
+private class Segment(val css: String, val label: String, val size: Long)
+
+/**
+ * The live library split by area: an SVG, since the CSP allows no inline styles to size a bar. With
+ * "Show free space" ticked, a second bar is the whole disk instead, the library beside everything else
+ * on it (old versions, other files) and what's free. CSS picks the bar; storage.js remembers the box.
+ */
+private fun FlowContent.storage(home: Home) = section("side-card storage") {
+    val library = Area.entries.map { Segment("seg-${it.name.lowercase()}", it.label, home.sizes.getValue(it)) }.filter { it.size > 0 }
+    val total = library.sumOf { it.size }
+    val free = home.free
+    val disk = home.disk?.takeIf { free != null && it >= free }
+    val rest = if (disk != null && free != null) listOf(
+        // Old versions, the system's files, space kept for root: whatever isn't the library or free.
+        Segment("seg-rest", "Used by other files", (disk - free - total).coerceAtLeast(0)),
+        Segment("seg-free", "Free", free),
+    ) else emptyList()
+    div("area-head") {
+        h2 { +"Storage" }
+        if (total > 0 && rest.isNotEmpty()) label("show-free") {
+            input(InputType.checkBox) { id = "show-free" }
+            +"Show free space"
         }
-        unsafe { +"""<svg viewBox="0 0 1000 12" preserveAspectRatio="none" role="img" aria-label="Library by area">$rects</svg>""" }
+    }
+    if (total == 0L) return@section p("empty") { +"Nothing stored yet." }
+    p("headline") {
+        +bytes(total)
+        if (disk != null) span("muted disk-only of-disk") { +" of ${bytes(disk)}" }
+    }
+    div("storage-bar") {
+        bar("library", "Library by area", library)
+        if (rest.isNotEmpty()) bar("disk", "The disk: the library, other files, and free space", library + rest)
     }
     ul("legend") {
-        parts.forEach { (area, size) ->
-            li {
-                span("swatch seg-${area.name.lowercase()}") { }
-                span { +area.label }
-                span("muted num") { +bytes(size) }
-            }
-        }
+        library.forEach { legendRow(it) }
+        // Not part of the library, so set apart; their swatches are hollow while the bar leaves them out.
+        rest.forEachIndexed { i, s -> legendRow(s, if (i == 0) "beside" else null) }
     }
-    p("muted small") {
-        +"${bytes(home.stored)} stored, with old versions"
-        home.free?.let { +" · ${bytes(it)} free" }
-    }
+    p("muted small") { +"${bytes(home.stored)} stored, with old versions" }
     p("muted small") { +(home.backupAt?.let { "Last backup started ${ago(it)}" } ?: "No backups yet") }
+}
+
+private fun DIV.bar(css: String, label: String, segments: List<Segment>) {
+    val total = segments.sumOf { it.size }.toDouble()
+    var x = 0.0
+    val rects = segments.filter { it.size > 0 }.joinToString("") { s ->
+        val w = s.size * 1000.0 / total
+        val rect = """<rect class="${s.css}" x="%.2f" y="0" width="%.2f" height="12"><title>%s: %s</title></rect>"""
+            .format(x, w, s.label, bytes(s.size))
+        x += w
+        rect
+    }
+    unsafe { +"""<svg class="$css" viewBox="0 0 1000 12" preserveAspectRatio="none" role="img" aria-label="$label">$rects</svg>""" }
+}
+
+private fun UL.legendRow(s: Segment, css: String? = null) = li(css) {
+    span("swatch ${s.css}") { }
+    span { +s.label }
+    span("muted num") { +bytes(s.size) }
 }
 
 private fun FlowContent.activity(activity: List<Activity>) = section("activity") {
