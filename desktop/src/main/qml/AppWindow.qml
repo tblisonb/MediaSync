@@ -22,8 +22,8 @@ Kirigami.ApplicationWindow {
     property bool library: firstShow !== "status"
 
     title: "MediaSync"
-    width: Kirigami.Units.gridUnit * 52
-    height: Kirigami.Units.gridUnit * 42
+    width: Kirigami.Units.gridUnit * 66
+    height: Kirigami.Units.gridUnit * 40
     minimumWidth: Kirigami.Units.gridUnit * 22
     minimumHeight: Kirigami.Units.gridUnit * 20
     visible: true

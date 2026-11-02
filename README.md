@@ -361,7 +361,7 @@ The desktop client's window has two tabs, like the Android app:
 - **Status**: this PC's folders, what the client is doing (with progress), what waits for approval
   and the buttons to decide (**Accept**, **Undo here**, **Revert on the server**, **Accept all**),
   **Check now** (or **Sync now** without asking), the last sync, and the **Ask before syncing**
-  settings.
+  settings. In a wide window, what waits for approval gets a column of its own beside the rest.
 - **Library**: the web UI. The first time, it asks for the web UI's password to let this PC in;
   after that it logs in by itself, until you revoke the PC's web access on the Devices page or change
   the password. Downloads go to `~/Downloads`, links to other sites open in the browser, and videos
