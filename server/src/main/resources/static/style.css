@@ -57,9 +57,9 @@ header {
     align-items: center;
     justify-content: space-between;
     gap: 8px 16px;
-    max-width: 960px;
+    max-width: var(--page);
     margin: 0 auto;
-    padding: 16px;
+    padding: 16px var(--gutter);
 }
 
 header nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
@@ -69,7 +69,8 @@ header form { margin: 0; }
 
 .brand { font-size: 1.4rem; font-weight: 600; color: var(--text); text-decoration: none; }
 
-main { max-width: 960px; margin: 0 auto; padding: 0 16px 48px; }
+/* As wide as the screen, up to --page; what's read line by line keeps a readable width (below). */
+main { max-width: var(--page); margin: 0 auto; padding: 0 var(--gutter) 48px; }
 
 h1 { font-size: 1.5rem; font-weight: 600; overflow-wrap: anywhere; }
 h2 { font-size: 1.15rem; font-weight: 600; margin-top: 28px; }
@@ -317,4 +318,34 @@ code.code { font-size: 1.4rem; letter-spacing: 0.08em; }
 @media (max-width: 600px) {
     th, td { padding-right: 6px; }
     .cover { width: 120px; height: 120px; }
+}
+
+/* ---- Desktop screens: use the width. Phones keep the layout above. ---- */
+:root { --page: 1760px; --gutter: clamp(16px, 2.5vw, 40px); --readable: 960px; }
+
+/* Text, forms and cards read best at a measured width, even on a wide screen. */
+main > p, main > details, main > .notice, main > .attention ~ p { max-width: 100ch; }
+main > .card, main > form.card, main > section.card, main > form:not(.card) > .card { max-width: var(--readable); }
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
+.device-grid > .card { margin: 8px 0; }
+.list.revisions { max-width: 1200px; }
+
+@media (min-width: 1200px) {
+    /* A long list flows into columns, read down then across; a short one (an album's files) stays one. */
+    .list:not(.revisions):has(> li:nth-child(13)) { columns: 3 320px; column-gap: 40px; }
+    .list:not(.revisions):has(> li:nth-child(13)) > li { break-inside: avoid; }
+    .home { grid-template-columns: minmax(0, 1fr) 340px; gap: 24px 32px; }
+    /* Four areas: two by two, or all four in a row where they fit. */
+    .areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .photo-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+    .photo-grid.videos { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+}
+/* A table is as wide as what's in it, and at least a readable width (all of it on a phone). */
+main table { width: auto; min-width: min(100%, var(--readable)); }
+/* A card holding a grid of photos or a table is as wide as the page; the tags beside a cover stay readable. */
+main > .card:has(.photo-grid, table), main > form.card:has(.photo-grid, table) { max-width: none; }
+.asset { max-width: var(--readable); }
+.card table { width: 100%; min-width: 0; }
+@media (min-width: 1600px) {
+    .areas { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
