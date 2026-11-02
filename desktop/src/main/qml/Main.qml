@@ -5,7 +5,7 @@
 import QtQuick
 
 QtObject {
-    property Component window: Component { AppWindow {} }
+    property Component appWindow: Component { AppWindow {} }
 
     Component.onCompleted: {
         Qt.application.name = "MediaSync"
@@ -14,7 +14,7 @@ QtObject {
         Qt.application.domain = "mediasync.tlisonbee.com"
         const args = Qt.application.arguments
         const at = args.indexOf("--")
-        window.createObject(null, {
+        appWindow.createObject(null, {
             addressFile: at >= 0 ? args[at + 1] || "" : "",
             firstShow: at >= 0 ? args[at + 2] || "status" : "status",
         })

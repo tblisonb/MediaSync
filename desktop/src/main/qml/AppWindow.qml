@@ -75,41 +75,47 @@ Kirigami.ApplicationWindow {
     }
 
     /** Finds the service: its address is in [addressFile], and changes when it restarts. */
+    // The callbacks below run later, from api.js, where names don't resolve to this window's
+    // properties: each function keeps the window in `self` for them.
     function connect() {
+        const self = window
         Api.readFile(addressFile, text => {
-            base = text + "api/"
-            refresh()
+            self.base = text + "api/"
+            self.refresh()
         }, () => {
-            base = ""
-            problem = "The MediaSync service isn't running. Start it with: systemctl --user start mediasync-desktop"
+            self.base = ""
+            self.problem = "The MediaSync service isn't running. Start it with: systemctl --user start mediasync-desktop"
         })
     }
 
     function refresh() {
+        const self = window
         if (!base) return connect()
         Api.call("GET", base + "status", undefined, value => {
-            problem = ""
-            status = value
-            if (seenRaise >= 0 && value.raise !== seenRaise) {
-                if (value.show === "status") library = false; else showLibrary(value.show)
-                window.raise()
-                window.requestActivate()
+            self.problem = ""
+            self.status = value
+            if (self.seenRaise >= 0 && value.raise !== self.seenRaise) {
+                if (value.show === "status") self.library = false; else self.showLibrary(value.show)
+                self.show()
+                self.raise()
+                self.requestActivate()
             }
-            seenRaise = value.raise
+            self.seenRaise = value.raise
         }, (message, gone) => {
-            problem = message
-            if (gone) base = ""
+            self.problem = message
+            if (gone) self.base = ""
         })
     }
 
     /** POSTs [body] to the API's [path]; says what came back if it wasn't done. */
     function call(path, body) {
+        const self = window
         if (!base) return
         Api.call("POST", base + path, body || {}, reply => {
-            if (reply.ok === false && reply.message) showPassiveNotification(reply.message, "long")
-            else if (path === "settings" && reply.message) showPassiveNotification(reply.message)
-            refresh()
-        }, message => showPassiveNotification(message, "long"))
+            if (reply.ok === false && reply.message) self.showPassiveNotification(reply.message, "long")
+            else if (path === "settings" && reply.message) self.showPassiveNotification(reply.message)
+            self.refresh()
+        }, message => self.showPassiveNotification(message, "long"))
     }
 
     Timer {

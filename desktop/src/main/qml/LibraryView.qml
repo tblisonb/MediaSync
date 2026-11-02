@@ -44,24 +44,28 @@ Item {
         else login(path)
     }
 
+    // The callbacks below run later, from api.js, where names don't resolve to this item's
+    // properties: each function keeps the item in `self` for them.
     function login(next) {
+        const self = library
+        const view = web
         lastPage = next
         phase = "loading"
         Api.call("POST", base + "library", {}, reply => {
-            server = reply.server.replace(/\/+$/, "")
+            self.server = reply.server.replace(/\/+$/, "")
             if (reply.ticket) {
-                phase = "ready"
+                self.phase = "ready"
                 // The form's page is the server's own, so the login and its cookie are same-site.
-                web.loadHtml(loginForm(reply.ticket, next), server + "/login/device")
+                view.loadHtml(self.loginForm(reply.ticket, next), self.server + "/login/device")
             } else if (reply.needsPassword) {
-                phase = "password"
+                self.phase = "password"
             } else {
-                message = reply.error || "The server didn't give this PC a login."
-                phase = "error"
+                self.message = reply.error || "The server didn't give this PC a login."
+                self.phase = "error"
             }
         }, text => {
-            message = text
-            phase = "error"
+            self.message = text
+            self.phase = "error"
         })
     }
 
@@ -76,19 +80,21 @@ Item {
 
     function allow() {
         if (!password.text || allowing) return
+        const self = library
+        const field = password
         allowing = true
         message = ""
         Api.call("POST", base + "allow", { password: password.text }, reply => {
-            allowing = false
+            self.allowing = false
             if (reply.ok) {
-                password.text = ""
-                login(lastPage)
+                field.text = ""
+                self.login(self.lastPage)
             } else {
-                message = reply.message
+                self.message = reply.message
             }
         }, text => {
-            allowing = false
-            message = text
+            self.allowing = false
+            self.message = text
         })
     }
 

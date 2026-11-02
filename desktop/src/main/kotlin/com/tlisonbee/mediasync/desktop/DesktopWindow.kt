@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.desktop
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 /** What [DesktopWindow.launch] did. */
 enum class WindowLaunch { STARTED, RUNNING, UNAVAILABLE }
@@ -55,6 +56,37 @@ object DesktopWindow {
         if (!viaSystemd) {
             ProcessBuilder(command).apply { environment()["QML_XHR_ALLOW_FILE_READ"] = "1" }.inheritIO().start()
         }
+        // Started by a background service, the window has no activation token, so Plasma opens it
+        // behind the window in front; once it's there, KWin brings it forward.
+        Thread({
+            val until = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < until && !activate()) Thread.sleep(300)
+        }, "window-activate").apply { isDaemon = true }.start()
         return WindowLaunch.STARTED
     }
+
+    /** The window's Wayland app id (Main.qml sets the domain it's made from). */
+    private const val APP_ID = "com.tlisonbee.mediasync.qml"
+
+    /**
+     * Brings the open window to the front through KWin's window search (Plasma); false if there's
+     * no such window, or no KWin. Only a window with this app's id, not a browser tab named MediaSync.
+     */
+    fun activate(): Boolean {
+        val matches = gdbus("/WindowsRunner", "org.kde.krunner1.Match", "MediaSync") ?: return false
+        for (id in Regex("'(0_\\{[0-9a-fA-F-]+\\})'").findAll(matches).map { it.groupValues[1] }) {
+            val info = gdbus("/KWin", "org.kde.KWin.getWindowInfo", id.removePrefix("0_")) ?: continue
+            if ("'resourceClass': <'$APP_ID'>" !in info) continue
+            return gdbus("/WindowsRunner", "org.kde.krunner1.Run", id, "") != null
+        }
+        return false
+    }
+
+    /** Calls KWin over the session bus with gdbus; its output, or null if that failed. */
+    private fun gdbus(path: String, method: String, vararg args: String): String? = runCatching {
+        val process = ProcessBuilder(listOf("gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", path, "--method", method) + args)
+            .redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        if (!process.waitFor(5, TimeUnit.SECONDS) || process.exitValue() != 0) null else output
+    }.getOrNull()
 }

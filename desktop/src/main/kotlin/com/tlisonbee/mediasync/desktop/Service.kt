@@ -212,6 +212,7 @@ class Service(
         WindowLaunch.RUNNING -> {
             this.show = show
             raise++
+            DesktopWindow.activate()
             "The MediaSync window is already open; it comes to the front."
         }
         WindowLaunch.UNAVAILABLE -> {
