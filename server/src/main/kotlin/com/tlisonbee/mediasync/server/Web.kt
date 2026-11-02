@@ -729,37 +729,40 @@ private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Lon
     } else {
         form(action = "/devices/pair", method = FormMethod.post) { button(classes = "primary") { +"Pair a device" } }
     }
-    devices.filter { it.kind != com.tlisonbee.mediasync.api.DeviceKind.WEB }.forEach { d ->
-        section("card device") {
-            h2 {
-                +d.name
-                span("muted") { +" · ${d.kind.name.lowercase()}${d.clientVersion?.let { " $it" }.orEmpty()}" }
-                if (d.revokedAt != null) span("badge") { +"revoked" }
-            }
-            p("muted") {
-                +"Paired ${time(d.createdAt)} · "
-                +(d.lastSeenAt?.let { "last seen ${time(it)}" } ?: "never seen")
-                +(" · " + if (d.syncedRev >= head) "up to date" else "at r${d.syncedRev} of r$head")
-            }
-            if (d.id in web) {
-                form(action = "/devices/${d.id}/web-access/revoke", method = FormMethod.post, classes = "web-access") {
-                    span { +"Can open this web UI in the app, without the password." }
-                    button(classes = "link") { +"Revoke web access" }
+    // Side by side on a wide screen.
+    div("device-grid") {
+        devices.filter { it.kind != com.tlisonbee.mediasync.api.DeviceKind.WEB }.forEach { d ->
+            section("card device") {
+                h2 {
+                    +d.name
+                    span("muted") { +" · ${d.kind.name.lowercase()}${d.clientVersion?.let { " $it" }.orEmpty()}" }
+                    if (d.revokedAt != null) span("badge") { +"revoked" }
                 }
-            }
-            if (d.revokedAt == null) {
-                form(action = "/devices/${d.id}/subscription", method = FormMethod.post) {
-                    label {
-                        +"Subscription"
-                        textArea(rows = "12", classes = "mono") {
-                            name = "subscription"
-                            +prettyJson.encodeToString(Subscription.serializer(), d.subscription)
-                        }
+                p("muted") {
+                    +"Paired ${time(d.createdAt)} · "
+                    +(d.lastSeenAt?.let { "last seen ${time(it)}" } ?: "never seen")
+                    +(" · " + if (d.syncedRev >= head) "up to date" else "at r${d.syncedRev} of r$head")
+                }
+                if (d.id in web) {
+                    form(action = "/devices/${d.id}/web-access/revoke", method = FormMethod.post, classes = "web-access") {
+                        span { +"Can open this web UI in the app, without the password." }
+                        button(classes = "link") { +"Revoke web access" }
                     }
-                    div("actions") { button { +"Save subscription" } }
                 }
-                form(action = "/devices/${d.id}/revoke", method = FormMethod.post, classes = "delete") {
-                    button(classes = "danger") { +"Revoke" }
+                if (d.revokedAt == null) {
+                    form(action = "/devices/${d.id}/subscription", method = FormMethod.post) {
+                        label {
+                            +"Subscription"
+                            textArea(rows = "12", classes = "mono") {
+                                name = "subscription"
+                                +prettyJson.encodeToString(Subscription.serializer(), d.subscription)
+                            }
+                        }
+                        div("actions") { button { +"Save subscription" } }
+                    }
+                    form(action = "/devices/${d.id}/revoke", method = FormMethod.post, classes = "delete") {
+                        button(classes = "danger") { +"Revoke" }
+                    }
                 }
             }
         }
