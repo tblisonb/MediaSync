@@ -15,7 +15,9 @@
 #   ./gradlew :desktop:installDist && desktop/build/install/mediasync-desktop/install.sh
 #                                                           (scripts/update.sh desktop does both)
 #
-# Afterwards, mediasync-desktop --help lists its commands.
+# Afterwards, mediasync-desktop --help lists its commands. MediaSync in the app menu (or the tray
+# icon) opens its window, which needs Qt 6's qml tool and a few QML modules from the distribution:
+#   sudo apt install qml-qt6 qml6-module-qtwebengine qml6-module-org-kde-kirigamiaddons-formcard
 set -euo pipefail
 # -h or --help prints the comment at the top of this file.
 for arg in "$@"; do
@@ -44,7 +46,8 @@ fi
 mkdir -p "$HOME/.local/bin" "$STATE_DIR" "$CACHE_DIR"
 ln -sfn "$DEST/bin/mediasync-desktop" "$HOME/.local/bin/mediasync-desktop"
 
-# Icon and launcher entry (also used by Plasma to group the notifications)
+# Icon and launcher entry (also used by Plasma to group the notifications). The window's Wayland app
+# id is com.tlisonbee.mediasync.qml (see share/qml/Main.qml); StartupWMClass ties it to this entry.
 install -Dm644 "$DEST/share/mediasync.svg" "$DATA/icons/hicolor/scalable/apps/mediasync.svg"
 install -d "$DATA/applications"
 cat > "$DATA/applications/mediasync.desktop" <<DESKTOP
@@ -52,11 +55,12 @@ cat > "$DATA/applications/mediasync.desktop" <<DESKTOP
 Type=Application
 Name=MediaSync
 GenericName=Media library sync
-Comment=Open your MediaSync library in the browser
-Exec=$DEST/bin/mediasync-desktop open
+Comment=Sync status and your MediaSync library
+Exec=$DEST/bin/mediasync-desktop window
 Icon=mediasync
 Terminal=false
 Categories=AudioVideo;Utility;
+StartupWMClass=com.tlisonbee.mediasync.qml
 DESKTOP
 
 # Service: runs with the Plasma session. `mediasync-desktop setup` adds a drop-in that makes the
@@ -106,6 +110,10 @@ elif [[ -t 0 ]]; then
     fi
 else
     echo "Installed. Next: $CLI setup, then systemctl --user enable --now mediasync-desktop"
+fi
+if ! command -v qml6 >/dev/null && [[ ! -x /usr/lib/qt6/bin/qml && ! -x /usr/lib64/qt6/bin/qml && ! -x /usr/lib/x86_64-linux-gnu/qt6/bin/qml ]]; then
+    echo "Note: the MediaSync window needs Qt 6's qml tool; until then the browser opens instead."
+    echo "      sudo apt install qml-qt6 qml6-module-qtwebengine qml6-module-org-kde-kirigamiaddons-formcard"
 fi
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;

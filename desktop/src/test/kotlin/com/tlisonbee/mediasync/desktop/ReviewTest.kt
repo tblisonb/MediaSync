@@ -1,5 +1,6 @@
 package com.tlisonbee.mediasync.desktop
 
+import com.tlisonbee.mediasync.server.Setup
 import com.tlisonbee.mediasync.server.rename
 import com.tlisonbee.mediasync.server.revision
 import com.tlisonbee.mediasync.sync.Review
@@ -182,6 +183,68 @@ class ReviewTest {
         assertTrue(laptop.engine.check().isEmpty)
     }
 
+    @Test
+    fun theWindowFollowsTheServiceAndDecides() = TestWorld().use { world ->
+        val (desktop, laptop) = world.twoPcs()
+        val launches = CopyOnWriteArrayList<String>()
+        val service = Service(laptop.dirs, laptop.config, laptop.token, makeTray = { NoTray }, makeNotifier = { RecordingNotifier() }, launchWindow = { _, show ->
+            launches += show
+            if (launches.size == 1) WindowLaunch.STARTED else WindowLaunch.RUNNING
+        })
+        val thread = Thread { service.run() }.apply { isDaemon = true; start() }
+        try {
+            val url = waitFor("the page") { runCatching { Files.readString(laptop.dirs.reviewUrl).trim() }.getOrNull() } + "api/"
+            val http = HttpClient.newHttpClient()
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            fun status() = json.decodeFromString(WindowStatus.serializer(), http.send(HttpRequest.newBuilder(URI(url + "status")).build(), HttpResponse.BodyHandlers.ofString()).body())
+            fun post(path: String, body: String = "{}") = http.send(
+                HttpRequest.newBuilder(URI(url + path)).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString(),
+            ).body()
+            waitFor("the first check") { service.lastCheck() }
+
+            val idle = status()
+            assertTrue(idle.review.empty)
+            assertEquals(listOf("music/"), idle.folders.map { it.prefix })
+            assertEquals(laptop.files().size, idle.folders.single().files)
+            assertTrue(idle.settings.ask)
+            assertTrue(idle.lastCheck != null)
+
+            // A change from the server, found by the window's Check now and accepted from it.
+            Fixtures.retag(desktop.file("Radiohead/OK Computer/01 Airbag.flac"), mapOf(FieldKey.TITLE to "Airbag (Live)"))
+            val rev = desktop.sync().rev!!
+            assertTrue("\"ok\":true" in post("check"))
+            val waiting = waitFor("the change") { status().takeIf { !it.review.empty && it.busy == null } }
+            val group = waiting.review.groups.single()
+            assertEquals(rev, group.rev)
+            assertTrue(group.items.single().detail.startsWith("title: Airbag → Airbag (Live)"), group.items.single().detail)
+            assertTrue("changed since" in post("act", """{"group":"${group.key}","version":"0000","action":"accept"}"""))
+            post("act", """{"group":"${group.key}","version":"${group.version}","action":"accept"}""")
+            waitFor("the accepted change") { Files.exists(laptop.file("Radiohead/OK Computer/01 Airbag (Live).flac")).takeIf { it } }
+            assertTrue(waitFor("an empty list") { status().takeIf { it.review.empty && it.busy == null } }.lastOutcome != null)
+
+            post("settings", """{"minutes":360}""")
+            assertEquals(360, status().settings.minutes)
+
+            // The Library tab: the web password once, then a one-time login.
+            Setup.changePassword(world.repo.dir, "the web ui password")
+            assertEquals(LibraryLogin(world.url, needsPassword = true), json.decodeFromString(LibraryLogin.serializer(), post("library")))
+            assertTrue("isn't the web UI's password" in post("allow", """{"password":"wrong"}"""))
+            assertTrue("\"ok\":true" in post("allow", """{"password":"the web ui password"}"""))
+            assertTrue(json.decodeFromString(LibraryLogin.serializer(), post("library")).ticket != null)
+
+            // Asking for the open window again brings it forward, on what was asked for.
+            assertEquals("Opening the MediaSync window.", Service.request(laptop.dirs, "window status"))
+            val before = status().raise
+            Service.request(laptop.dirs, "window /resolve")
+            assertEquals(before + 1 to "/resolve", status().let { it.raise to it.show })
+            assertEquals(listOf("status", "/resolve"), launches)
+        } finally {
+            service.stop()
+            thread.join(10_000)
+        }
+    }
+
     /** Notifications the service showed, with their buttons. */
     private class RecordingNotifier : Notifier {
         val shown = CopyOnWriteArrayList<Pair<String, List<NotificationAction>>>()
@@ -204,7 +267,7 @@ class ReviewTest {
     fun theServiceAsksAndTheReviewPageDecides() = TestWorld().use { world ->
         val (desktop, laptop) = world.twoPcs()
         val notes = RecordingNotifier()
-        val service = Service(laptop.dirs, laptop.config, laptop.token, makeTray = { NoTray }) { notes }
+        val service = Service(laptop.dirs, laptop.config, laptop.token, makeTray = { NoTray }, makeNotifier = { notes })
         val thread = Thread { service.run() }.apply { isDaemon = true; start() }
         try {
             val url = waitFor("the page") { runCatching { Files.readString(laptop.dirs.reviewUrl).trim() }.getOrNull() }

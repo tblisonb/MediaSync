@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.desktop
 import com.tlisonbee.mediasync.api.ApiJson
 import com.tlisonbee.mediasync.sync.ApiClient
 import com.tlisonbee.mediasync.sync.ClientConfig
+import com.tlisonbee.mediasync.sync.ClientInfo
 import com.tlisonbee.mediasync.sync.Decisions
 import com.tlisonbee.mediasync.sync.Review
 import com.tlisonbee.mediasync.sync.ReviewSettings
@@ -65,6 +66,30 @@ data class JobProgress(
         if (totalBytes <= 0 || moved <= 0 || elapsed < 5_000) return null
         return ((totalBytes - bytes) * elapsed / moved).coerceAtLeast(0)
     }
+
+    /** "Uploading: 3 of 10 files · 1.2 GiB of 4 GiB (30%) · about 5 min left". */
+    fun describe(now: Long): String {
+        val what = when (stage) {
+            SyncStage.SCANNING -> "Reading files"
+            SyncStage.PULLING -> "Asking the server"
+            SyncStage.UPLOADING -> "Uploading"
+            SyncStage.DOWNLOADING -> "Downloading"
+        }
+        return listOfNotNull(
+            "$what:",
+            if (total > 0) "${"%,d".format(done)} of ${"%,d".format(total)} files" else null,
+            if (totalBytes > 0) "· ${bytes(bytes)} of ${bytes(totalBytes)}" else if (bytes > 0) "· ${bytes(bytes)}" else null,
+            fraction?.let { "(${(it * 100).toInt()}%)" },
+            remainingMs(now)?.let { "· about ${duration(it)} left" },
+        ).joinToString(" ")
+    }
+
+    companion object {
+        fun duration(ms: Long): String {
+            val minutes = (ms + 59_999) / 60_000
+            return if (minutes < 60) "$minutes min" else "${minutes / 60} h ${minutes % 60} min"
+        }
+    }
 }
 
 /** Something for the service's one engine to do; [reply] gets the outcome when it's done. */
@@ -95,6 +120,7 @@ class Service(
     private val token: String,
     private val makeTray: (TrayActions) -> Tray = ::desktopTray,
     private val makeNotifier: () -> Notifier = ::desktopNotifier,
+    private val launchWindow: (Dirs, String) -> WindowLaunch = DesktopWindow::launch,
 ) {
     /** The config, once it follows any folders the server renamed (at [run]). */
     var config: ClientConfig = initialConfig
@@ -104,6 +130,37 @@ class Service(
     private lateinit var index: Index
     private lateinit var engine: SyncEngine
     lateinit var settings: ReviewSettings
+        private set
+    lateinit var api: ApiClient
+        private set
+    private lateinit var page: ReviewPage
+
+    /** This program's version, for the window. */
+    val version: String? get() = ClientInfo.version
+
+    /** The last job's failure, until one works again. */
+    @Volatile
+    var error: String? = null
+        private set
+
+    /** What the last job did, or why it failed. */
+    @Volatile
+    var lastOutcome: String? = null
+        private set
+
+    /** Goes up after each job, when what the index says may have changed. */
+    @Volatile
+    var jobsDone = 0L
+        private set
+
+    /** Goes up when the window is asked for while it's open, so it comes forward and shows [show]. */
+    @Volatile
+    var raise = 0
+        private set
+
+    /** "status", or the web UI path the Library tab should show. */
+    @Volatile
+    var show = WINDOW_STATUS
         private set
 
     /** What the engine is doing right now, for the review page. */
@@ -141,6 +198,29 @@ class Service(
 
     fun lastCheck(): Long? = index.state(SyncEngine.LAST_CHECK)?.toLong()
 
+    fun lastSync(): Long? = index.state(SyncEngine.LAST_SUCCESS)?.toLong()
+
+    /** Every file the index tracks, for the window's folder counts. */
+    fun rows() = index.all()
+
+    /**
+     * Opens the window on [show] ("status", or a web UI path for the Library tab), or brings it
+     * forward if it's open. Without Qt's qml tool, opens the same thing in the browser.
+     */
+    fun openWindow(show: String = WINDOW_STATUS): String = when (launchWindow(dirs, show)) {
+        WindowLaunch.STARTED -> "Opening the MediaSync window."
+        WindowLaunch.RUNNING -> {
+            this.show = show
+            raise++
+            "The MediaSync window is already open; it comes to the front."
+        }
+        WindowLaunch.UNAVAILABLE -> {
+            openInBrowser(if (show == WINDOW_STATUS) page.url else config.serverUrl.trimEnd('/') + show)
+            System.err.println(DesktopWindow.NEEDS)
+            DesktopWindow.NEEDS + ". Opened the browser instead."
+        }
+    }
+
     fun run() = runBlocking {
         val lock = acquireLock(dirs) ?: run {
             System.err.println("Another mediasync-desktop is already running.")
@@ -148,11 +228,11 @@ class Service(
         }
         index = Index(dirs.index)
         settings = ReviewSettings(index)
-        val api = ApiClient(config.serverUrl, token)
+        api = ApiClient(config.serverUrl, token)
         config = followServerRenames(dirs, config, token, api, index)
         engine = SyncEngine(config, api, index, dirs.pictures, listener = listener)
         val notifier = makeNotifier()
-        val page = ReviewPage(this@Service).apply { start() }
+        page = ReviewPage(this@Service).apply { start() }
         writePrivate(dirs.reviewUrl, page.url + "\n")
         println("MediaSync desktop started: ${config.folders.joinToString { "${it.folder} → ${it.prefix}" }} with ${config.serverUrl}")
         println(if (settings.enabled) "Asking before syncing; checking every ${settings.checkMinutes} minutes. Review page: mediasync-desktop review" else "Syncing automatically.")
@@ -208,9 +288,11 @@ class Service(
 
         launch(Dispatchers.IO) { serveControlSocket() }
 
-        val tracker = Tracker(index, notifier, config, api, openReview = { openInBrowser(page.url) }, apply = { submit(Job.Apply(it)) })
+        val tracker = Tracker(index, notifier, api, open = { openWindow(it) }, apply = { submit(Job.Apply(it)) })
         val tray = makeTray(object : TrayActions {
-            override fun openReview() = openInBrowser(page.url)
+            override fun openWindow() {
+                this@Service.openWindow()
+            }
 
             override fun acceptAll(decisions: Decisions) {
                 if (!decisions.isEmpty) submit(Job.Apply(decisions))
@@ -249,6 +331,9 @@ class Service(
                 busy = null
                 progress = null
             }
+            error = tracker.error
+            lastOutcome = outcome
+            jobsDone++
             refreshTray()
             job.reply?.complete(outcome)
         }
@@ -274,9 +359,13 @@ class Service(
             try {
                 val reader = Channels.newReader(client, Charsets.UTF_8).buffered()
                 val command = reader.readLine().orEmpty()
-                val reply = CompletableDeferred<String>()
-                jobs.send(if (command.startsWith("check")) Job.Check(reply, full = "--full" in command) else Job.Sync(allowDeletes = "--allow-deletes" in command, reply = reply))
-                val text = reply.await()
+                val text = if (command.startsWith("window")) {
+                    openWindow(command.removePrefix("window").trim().ifEmpty { WINDOW_STATUS })
+                } else {
+                    val reply = CompletableDeferred<String>()
+                    jobs.send(if (command.startsWith("check")) Job.Check(reply, full = "--full" in command) else Job.Sync(allowDeletes = "--allow-deletes" in command, reply = reply))
+                    reply.await()
+                }
                 Channels.newWriter(client, Charsets.UTF_8).apply {
                     write(text + "\n")
                     flush()
@@ -291,11 +380,12 @@ class Service(
 
     companion object {
         val PERIOD = 15.minutes
+        const val WINDOW_STATUS = "status"
 
         /** Asks a running service to sync; returns its reply, or null if no service is running. */
         fun requestSync(dirs: Dirs, allowDeletes: Boolean): String? = request(dirs, if (allowDeletes) "sync --allow-deletes" else "sync")
 
-        /** Sends [command] ("sync", "check") to a running service; null if none is running. */
+        /** Sends [command] ("sync", "check", "window …") to a running service; null if none is running. */
         fun request(dirs: Dirs, command: String): String? {
             if (!Files.exists(dirs.socket)) return null
             return try {
@@ -326,9 +416,9 @@ class Service(
 private class Tracker(
     private val index: Index,
     private val notifier: Notifier,
-    private val config: ClientConfig,
     private val api: ApiClient,
-    private val openReview: () -> Unit,
+    /** Opens the window: "status", or a web UI path in the Library tab. */
+    private val open: (String) -> Unit,
     private val apply: (Decisions) -> Unit,
 ) {
     private var lastError: String? = null
@@ -348,6 +438,7 @@ private class Tracker(
         val body = review.groups.take(4).joinToString("\n") { "${it.title} (${it.items.size})" } +
             if (review.groups.size > 4) "\n…and ${review.groups.size - 4} more" else ""
         val decisions = review.acceptAll()
+        val openReview = { open(Service.WINDOW_STATUS) }
         notifier.show(
             "review", review.summary("this PC").replaceFirstChar { it.uppercase() }, body, onClick = openReview,
             actions = listOf(NotificationAction("Review", openReview), NotificationAction("Accept all") { apply(decisions) }),
@@ -387,7 +478,7 @@ private class Tracker(
         if (fresh.isNotEmpty()) {
             val n = open.size
             notifier.show("issues", "$n ${if (n == 1) "file needs" else "files need"} a decision", fresh.take(3).joinToString("\n") { it.path }, onClick = {
-                openInBrowser(config.serverUrl + "/resolve")
+                open("/resolve")
             })
         }
         index.setState(NOTIFIED_ISSUES, ApiJson.encodeToString(ids, open.map { it.id }))
