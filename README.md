@@ -213,7 +213,8 @@ or run `mediasync-desktop review`. On the phone, open the app.
 To sync without being asked, turn asking off on the review page (on the phone, the **Ask before
 syncing** switch). A PC
 then syncs about 10 seconds after files stop changing, and within a second or two of a change
-from elsewhere. The phone syncs every 15 minutes on Wi-Fi, and whenever you open it.
+from elsewhere. The phone syncs every 15 minutes on Wi-Fi. Opening the app doesn't sync or check: use **Sync now**
+(or **Check now** when asking is on), or wait for the schedule.
 
 ### The web UI
 

@@ -316,9 +316,6 @@ object SyncScheduler {
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
-    /** When the app comes to the front: check, or sync without review. */
-    fun onOpen(context: Context) = if (ReviewSettings(context.app.index).enabled) checkNow(context) else syncNow(context)
-
     fun checkNow(context: Context, replace: Boolean = false) =
         oneTime(context, CHECK, if (replace) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, SyncWorker.MODE_CHECK)
 

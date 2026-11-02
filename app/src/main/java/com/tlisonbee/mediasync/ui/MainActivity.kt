@@ -13,8 +13,6 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
-import com.tlisonbee.mediasync.app
-import com.tlisonbee.mediasync.sync.SyncScheduler
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -31,9 +29,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Only shows what's known; checking is left to the schedule and the buttons.
         viewModel.refresh()
-        // Pick up changes from elsewhere whenever the app comes to the front.
-        if (app.settings.ready) SyncScheduler.onOpen(this)
     }
 
     companion object {
