@@ -52,7 +52,8 @@ data class TrayState(
 
 /** What the tray's clicks and menu entries do. */
 interface TrayActions {
-    fun openReview()
+    /** The MediaSync window, on its Status tab. */
+    fun openWindow()
     fun acceptAll(decisions: Decisions)
     fun checkNow()
     fun openWebUi()
@@ -64,7 +65,7 @@ data class TrayEntry(val id: Int, val label: String, val enabled: Boolean = true
 fun trayMenu(state: TrayState, actions: TrayActions): List<TrayEntry> = listOf(
     TrayEntry(1, state.headline, enabled = false),
     TrayEntry(2, "", separator = true),
-    TrayEntry(3, "Review changes…", icon = "view-list-details", run = actions::openReview),
+    TrayEntry(3, "Open MediaSync…", icon = "mediasync", run = actions::openWindow),
     TrayEntry(4, "Accept all", enabled = state.waiting > 0 && state.busy == null, icon = "dialog-ok-apply", run = { actions.acceptAll(state.acceptAll) }),
     TrayEntry(5, if (state.reviewing) "Check now" else "Sync now", enabled = state.busy == null, icon = "view-refresh", run = actions::checkNow),
     TrayEntry(6, "Open web UI", icon = "internet-web-browser", run = actions::openWebUi),
@@ -253,7 +254,7 @@ class PlasmaTray(private val actions: TrayActions) : Tray {
             "WindowId" to Variant(0),
         )
 
-        override fun activate(x: Int, y: Int) = actions.openReview()
+        override fun activate(x: Int, y: Int) = actions.openWindow()
 
         override fun secondaryActivate(x: Int, y: Int) = actions.checkNow()
 

@@ -6,7 +6,7 @@ plugins {
     application
 }
 
-version = "1.1.0"
+version = "1.2.0"
 
 // Runs on any Java 17+ runtime, not just the JDK it was built with.
 java {
@@ -63,6 +63,8 @@ distributions {
                 into("share")
                 rename { "mediasync.svg" }
             }
+            // The window, run by Qt's qml tool (DesktopWindow).
+            from("src/main/qml") { into("share/qml") }
         }
     }
 }

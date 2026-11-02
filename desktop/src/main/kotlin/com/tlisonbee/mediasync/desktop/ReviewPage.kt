@@ -2,11 +2,8 @@ package com.tlisonbee.mediasync.desktop
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
-import com.tlisonbee.mediasync.sync.Decisions
-import com.tlisonbee.mediasync.sync.ReviewAction
 import com.tlisonbee.mediasync.sync.ReviewGroup
 import com.tlisonbee.mediasync.sync.ReviewSettings
-import com.tlisonbee.mediasync.sync.SyncStage
 import com.tlisonbee.mediasync.sync.bytes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
@@ -33,6 +30,7 @@ class ReviewPage(private val service: Service) {
     private val secret = ByteArray(24).also(SecureRandom()::nextBytes).let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
     private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 16)
     private val port get() = server.address.port
+    private val api = WindowApi(service)
     val url get() = "http://127.0.0.1:$port/$secret/"
 
     fun start() {
@@ -58,7 +56,9 @@ class ReviewPage(private val service: Service) {
         val path = ex.requestURI.rawPath
         if (!path.startsWith("/$secret/")) return respond(ex, 404, "Not found. Open the review page with: mediasync-desktop review")
         val post = ex.requestMethod == "POST"
-        when (path.removePrefix("/$secret/")) {
+        val rest = path.removePrefix("/$secret/")
+        if (rest.startsWith("api/")) return api.handle(ex, rest.removePrefix("api/"), post)
+        when (rest) {
             "" -> if (post) respond(ex, 405, "") else page(ex)
             "act" -> if (post) act(ex, form(ex)) else back(ex)
             "check" -> if (post) run(ex, Job.Check(CompletableDeferred())) else back(ex)
@@ -68,17 +68,8 @@ class ReviewPage(private val service: Service) {
     }
 
     private fun act(ex: HttpExchange, form: Map<String, String>) {
-        val review = service.review()
-        val stale = "That list changed since the page was shown, so nothing was done. Here it is again."
-        val decisions: Decisions = if (form["group"] == "all") {
-            if (form["version"] != review.version) return back(ex, stale)
-            review.acceptAll()
-        } else {
-            val group = review.group(form["group"].orEmpty())
-            if (group == null || group.version != form["version"]) return back(ex, stale)
-            val action = ReviewAction.entries.firstOrNull { it.name.lowercase() == form["action"] } ?: return back(ex, "Pick an action.")
-            review.decide(group, action)
-        }
+        val decisions = decisionsFor(service.review(), form["group"].orEmpty(), form["version"], form["action"])
+            .getOrElse { return back(ex, it.message) }
         if (decisions.isEmpty) return back(ex)
         run(ex, Job.Apply(decisions, CompletableDeferred()))
     }
@@ -163,20 +154,7 @@ class ReviewPage(private val service: Service) {
     private fun progress(out: StringBuilder, busy: String, p: JobProgress?) = with(out) {
         append("<div class=\"notice\"><p>").append(esc(busy)).append("… This page refreshes by itself.</p>")
         if (p != null) {
-            val what = when (p.stage) {
-                SyncStage.SCANNING -> "Reading files"
-                SyncStage.PULLING -> "Asking the server"
-                SyncStage.UPLOADING -> "Uploading"
-                SyncStage.DOWNLOADING -> "Downloading"
-            }
-            val parts = listOfNotNull(
-                "$what:",
-                if (p.total > 0) "${"%,d".format(p.done)} of ${"%,d".format(p.total)} files" else null,
-                if (p.totalBytes > 0) "· ${bytes(p.bytes)} of ${bytes(p.totalBytes)}" else if (p.bytes > 0) "· ${bytes(p.bytes)}" else null,
-                p.fraction?.let { "(${(it * 100).toInt()}%)" },
-                p.remainingMs(System.currentTimeMillis())?.let { "· about ${duration(it)} left" },
-            )
-            append("<p>").append(esc(parts.joinToString(" "))).append("</p>")
+            append("<p>").append(esc(p.describe(System.currentTimeMillis()))).append("</p>")
             p.fraction?.let { append("<progress max=\"1000\" value=\"").append((it * 1000).toInt()).append("\"></progress>") }
         }
         append("</div>")
@@ -224,11 +202,6 @@ class ReviewPage(private val service: Service) {
         val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
         fun time(millis: Long) = TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
-
-        fun duration(ms: Long): String {
-            val minutes = (ms + 59_999) / 60_000
-            return if (minutes < 60) "$minutes min" else "${minutes / 60} h ${minutes % 60} min"
-        }
 
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 

@@ -57,7 +57,7 @@ flowchart LR
 | --- | --- |
 | **The server** | A Linux PC with systemd (Debian, Ubuntu, Fedora, …) that's on whenever you want to sync, with room for the library. Java 17 or newer and Python 3. |
 | **Tailscale** | Installed and logged in on the server and on every device, all in the same tailnet (the free plan is plenty). |
-| **Desktop client** (optional) | Linux with systemd, x86_64 for the ready-made download. The tray icon needs KDE Plasma, or GNOME with the AppIndicator extension; notifications work on any desktop. |
+| **Desktop client** (optional) | Linux with systemd, x86_64 for the ready-made download. The tray icon needs KDE Plasma, or GNOME with the AppIndicator extension; notifications work on any desktop. The MediaSync window needs Qt 6's `qml` tool, QtWebEngine and KDE's Kirigami (on Debian with Plasma: `sudo apt install qml-qt6 qml6-module-qtwebengine qml6-module-org-kde-kirigamiaddons-formcard`). |
 | **Android app** (optional) | Android 13 or newer, with the Tailscale app. |
 
 Windows and macOS aren't supported.
@@ -140,7 +140,13 @@ never been tidied, back it up first. The server keeps the original tags, but a b
 peace of mind.
 
 The client runs as a user service that starts with your desktop session. An icon in the system
-tray shows when something is waiting.
+tray shows when something is waiting, and **MediaSync** in the app menu opens its window (see
+[The MediaSync window](#the-mediasync-window)). The window needs a few Qt packages; the installer
+says which if they're missing:
+
+```sh
+sudo apt install qml-qt6 qml6-module-qtwebengine qml6-module-org-kde-kirigamiaddons-formcard
+```
 
 The first PC you set up fills the library, so set up the PC with your music on it first. If
 `mediasync-desktop` isn't found, add `~/.local/bin` to your `PATH`.
@@ -201,8 +207,9 @@ stay where they are, on the PC and on the server, and other devices keep syncing
 
 ### Reviewing changes
 
-When a device finds changes, it notifies you. On a PC, click the notification or the tray icon,
-or run `mediasync-desktop review`. On the phone, open the app.
+When a device finds changes, it notifies you. On a PC, click the notification or the tray icon:
+the MediaSync window's Status tab lists them (`mediasync-desktop review` shows the same in the
+browser). On the phone, open the app.
 
 - **Changes from the server** are grouped by revision. You can **Accept** them, or **Revert on the
   server** to undo them for every device.
@@ -347,9 +354,30 @@ internet, it can only write to the repository's `gamedb/` folder, and it sends n
 library. The server itself stays on loopback. If a download fails, the Games page says why, and
 `journalctl -u mediasync-gamedb` has the details.
 
+### The MediaSync window
+
+The desktop client's window has two tabs, like the Android app:
+
+- **Status**: this PC's folders, what the client is doing (with progress), what waits for approval
+  and the buttons to decide (**Accept**, **Undo here**, **Revert on the server**, **Accept all**),
+  **Check now** (or **Sync now** without asking), the last sync, and the **Ask before syncing**
+  settings. In a wide window, what waits for approval gets a column of its own beside the rest.
+- **Library**: the web UI. The first time, it asks for the web UI's password to let this PC in;
+  after that it logs in by itself, until you revoke the PC's web access on the Devices page or change
+  the password. Downloads go to `~/Downloads`, links to other sites open in the browser, and videos
+  can go full screen. Alt+Left / Alt+Right (or the mouse's back and forward buttons) go back and
+  forward, F5 reloads, and Ctrl+plus / Ctrl+minus zoom.
+
+Open it from the app menu, the tray icon, or with `mediasync-desktop window` (`window library` opens
+the Library tab). There's one window: opening it again brings it to the front. The window is a view
+of the client's service, so the service has to be running. It's QML run by Qt's `qml` tool, with
+Plasma's own Qt, Kirigami and QtWebEngine; without them, the tray and notifications open the browser
+instead.
+
 ### The desktop client's commands
 
 ```sh
+mediasync-desktop window          # the MediaSync window (window library: its Library tab)
 mediasync-desktop status          # the server, the folders, and what's waiting
 mediasync-desktop review          # the review page, in the browser
 mediasync-desktop check           # look for changes now
@@ -360,7 +388,7 @@ mediasync-desktop help            # everything else
 ```
 
 The tray icon is highlighted when something is waiting, or when syncs keep failing. Clicking it
-opens the review page, and a middle click checks now.
+opens the MediaSync window, and a middle click checks now.
 
 The config is in `~/.config/mediasync/` and the client's state in `~/.local/state/mediasync/`. The
 service can only write to the folders it syncs and to its own state.
@@ -530,7 +558,7 @@ MediaSync is Kotlin throughout, built with Gradle.
 | --- | --- |
 | `shared/` | Plain Kotlin used everywhere: media hashing (`media/`), tag reading and writing with jaudiotagger (`tags/`), the sync API types (`api/`), tag policy, path rules, subscriptions and the three-way merge (`library/`), and the sync engine both clients run (`sync/`) |
 | `server/` | Ktor server: repository, sync API, web UI, game identification, and the `setup`, `fsck`, `prune`, `snapshot` and `fetch-games-db` commands |
-| `desktop/` | Desktop client: a systemd user service, the review page, tray icon, notifications and the CLI |
+| `desktop/` | Desktop client: a systemd user service, the review page, tray icon, notifications, the CLI, and the window (`src/main/qml`: Kirigami and QtWebEngine, run by Qt's `qml` tool and fed by the service's `WindowApi`) |
 | `app/` | Android app (Jetpack Compose and WorkManager) |
 | `spike/` | The first tag round-trip check (see [MILESTONES.md](MILESTONES.md)) |
 | `deploy/` | The server's systemd unit, install script, backups and an end-to-end smoke test |

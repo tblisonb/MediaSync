@@ -37,6 +37,8 @@ private const val USAGE = """Usage: mediasync-desktop <command>
   remove-folder <prefix> Stop syncing a folder here; its files stay where they are, and on the server
   preview                Show what the first sync will do to your files, without changing them
   run                    Run the sync service (systemd starts this for you)
+  window [library|resolve]
+                         Open the MediaSync window: its status, or the web UI in its Library tab
   status                 Show the server, the folders and what is waiting to sync
   review                 Open the page where you approve or undo changes waiting to sync
   check [--full]         Look for changes now and say what waits (through the running service);
@@ -57,7 +59,7 @@ private val VERSION: String? = object {}.javaClass.`package`?.implementationVers
  * something newer. A sync with an older server stops and says so, and scripts/release.sh puts it
  * in the release notes.
  */
-const val MIN_SERVER = "1.0.0"
+const val MIN_SERVER = "1.3.0"
 
 fun main(args: Array<String>) {
     val dirs = Dirs.xdg()
@@ -75,6 +77,7 @@ fun main(args: Array<String>) {
             "status" -> status(dirs)
             "sync" -> sync(dirs, allowDeletes = "--allow-deletes" in args)
             "review" -> review(dirs)
+            "window" -> window(dirs, args.getOrNull(1))
             "check" -> println(Service.request(dirs, if ("--full" in args) "check --full" else "check") ?: fail("The service isn't running: systemctl --user start mediasync-desktop"))
             "log" -> log(dirs, args.getOrNull(1)?.toIntOrNull() ?: 20)
             "diff" -> diff(dirs, args.getOrNull(1)?.toLongOrNull() ?: usage())
@@ -349,6 +352,17 @@ private fun sync(dirs: Dirs, allowDeletes: Boolean) = withConfig(dirs) { config,
         println(report.summary())
     }
     lock.release()
+}
+
+private fun window(dirs: Dirs, what: String?) {
+    val show = when (what) {
+        null, "status" -> Service.WINDOW_STATUS
+        "library" -> "/"
+        "resolve" -> "/resolve"
+        else -> usage()
+    }
+    val reply = Service.request(dirs, "window $show") ?: fail("The service isn't running: systemctl --user start mediasync-desktop")
+    if (reply.startsWith(DesktopWindow.NEEDS)) System.err.println(reply)
 }
 
 private fun review(dirs: Dirs) {

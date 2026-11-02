@@ -9,8 +9,8 @@ import kotlin.test.assertTrue
 class TrayTest {
     private val done = mutableListOf<String>()
     private val actions = object : TrayActions {
-        override fun openReview() {
-            done += "review"
+        override fun openWindow() {
+            done += "window"
         }
 
         override fun acceptAll(decisions: Decisions) {
@@ -37,10 +37,10 @@ class TrayTest {
         assertTrue(state.needsAttention)
 
         menu.entry("Accept all").run!!()
-        menu.entry("Review changes…").run!!()
+        menu.entry("Open MediaSync…").run!!()
         menu.entry("Check now").run!!()
         menu.entry("Open web UI").run!!()
-        assertEquals(listOf("accept [a, b]", "review", "check", "web"), done)
+        assertEquals(listOf("accept [a, b]", "window", "check", "web"), done)
     }
 
     @Test
