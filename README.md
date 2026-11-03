@@ -560,6 +560,7 @@ MediaSync is Kotlin throughout, built with Gradle.
 | `server/` | Ktor server: repository, sync API, web UI, game identification, and the `setup`, `fsck`, `prune`, `snapshot` and `fetch-games-db` commands |
 | `desktop/` | Desktop client: a systemd user service, the review page, tray icon, notifications, the CLI, and the window (`src/main/qml`: Kirigami and QtWebEngine, run by Qt's `qml` tool and fed by the service's `WindowApi`) |
 | `app/` | Android app (Jetpack Compose and WorkManager) |
+| `player/` | The music player for Android, being built ([player/DESIGN.md](player/DESIGN.md)): Compose and Media3 |
 | `spike/` | The first tag round-trip check (see [MILESTONES.md](MILESTONES.md)) |
 | `deploy/` | The server's systemd unit, install script, backups and an end-to-end smoke test |
 | `scripts/` | `update.sh` (build and install), `release.sh`, `make-release-key.sh`, `make-fixtures.sh` |
