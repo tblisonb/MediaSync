@@ -30,7 +30,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.sin
 
 /**
  * Phase 0: plays the fixtures from player/make-fixtures.sh (one 220 Hz tone cut in two) through
@@ -63,6 +65,11 @@ class GaplessAndroidTest {
         val files = names.map { name ->
             File(dir, name).also { f -> instrumentation.context.assets.open("gapless/$name").use { i -> f.outputStream().use { i.copyTo(it) } } }
         }
+        return play(files, gains, names.joinToString("+"))
+    }
+
+    private fun play(files: List<File>, gains: List<Float>, outName: String): Run {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
 
         val pcm = ByteArrayOutputStream()
         var encoding = C.ENCODING_INVALID
@@ -120,7 +127,7 @@ class GaplessAndroidTest {
             player.prepare()
             player.play()
         }
-        assertTrue("playback didn't end", ended.await(60, TimeUnit.SECONDS))
+        assertTrue("playback didn't end", ended.await(15, TimeUnit.MINUTES))
         handler.post { player.release() }
         thread.quitSafely()
         thread.join()
@@ -128,6 +135,9 @@ class GaplessAndroidTest {
 
         assertEquals("16-bit output", C.ENCODING_PCM_16BIT, encoding)
         assertEquals(2, channels)
+        // Kept for a closer look: adb pull /sdcard/Android/data/<package>/files/gapless-out/
+        File(instrumentation.targetContext.getExternalFilesDir(null), "gapless-out").apply { mkdirs() }
+            .resolve("$outName.s16").writeBytes(pcm.toByteArray())
         val shorts = ByteBuffer.wrap(pcm.toByteArray()).order(ByteOrder.nativeOrder()).asShortBuffer()
         val left = ShortArray(shorts.remaining() / 2) { shorts.get(it * 2) }
         return Run(left, audioTracks, underruns, gain.switches.toList())
@@ -147,7 +157,12 @@ class GaplessAndroidTest {
     fun withTheEncoderHeaderTheCutIsSeamless() {
         val run = play(listOf("with-header-1.mp3", "with-header-2.mp3"), listOf(0f, 0f))
         report("with header", run)
-        assertTrue("frames: ${run.frames.size}, want $TOTAL", abs(run.frames.size - TOTAL) <= 8)
+        // Every frame of the tone, then at most a little silence after the last track.
+        assertTrue("frames: ${run.frames.size}, want $TOTAL", run.frames.size in TOTAL - 8..TOTAL + 2048)
+        val tail = (TOTAL + 8 until run.frames.size).maxOfOrNull { abs(run.frames[it].toInt()) } ?: 0
+        assertTrue("after the tone: $tail", tail < 100)
+        val worst = (0 until TOTAL).maxOf { abs(run.frames[it] - TONE * sin(2 * PI * 220 * it / 44100)) }
+        assertTrue("differs from the tone by $worst", worst < 200)
         assertEquals("one audio track for both", 1, run.audioTracks)
         val elsewhere = run.maxStep(10_000..CUT - 10_000)
         val atCut = run.maxStep(CUT - 3000..CUT + 3000)
@@ -182,10 +197,32 @@ class GaplessAndroidTest {
         assertEquals(listOf(1f, 0.5f), run.switches.map { Math.round(it.second * 100) / 100f }.distinct())
     }
 
+    /**
+     * Real tracks, for comparing with ffmpeg's decoding on the PC: `-e files /sdcard/Music/a.mp3,/sdcard/Music/b.mp3`
+     * writes what was played to gapless-out/real.s16. Skipped without the argument.
+     */
+    @Test
+    fun realFilesFromArguments() {
+        val paths = InstrumentationRegistry.getArguments().getString("files")?.split(',')?.filter { it.isNotBlank() }
+        org.junit.Assume.assumeTrue("no -e files", !paths.isNullOrEmpty())
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pkg = instrumentation.targetContext.packageName
+        fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        shell("appops set $pkg MANAGE_EXTERNAL_STORAGE allow")
+        try {
+            val run = play(paths!!.map(::File), paths.map { 0f }, "real")
+            Log.i(TAG, "real: ${run.frames.size} frames, ${run.audioTracks} audio track(s), ${run.underruns} underrun(s)")
+            assertEquals(1, run.audioTracks)
+        } finally {
+            shell("appops set $pkg MANAGE_EXTERNAL_STORAGE default")
+        }
+    }
+
     private companion object {
         const val TAG = "PlayerPhase0"
         const val CUT = 132301 // as in player/make-fixtures.sh
         const val TOTAL = 6 * 44100
         const val PERIOD = 200 // samples in one 220 Hz period, rounded down
+        const val TONE = 0.5 * 32767
     }
 }

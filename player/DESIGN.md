@@ -46,18 +46,16 @@ and the rest a header without them. So gapless works for roughly half the librar
 short gap (a few tens of milliseconds) between tracks, as it would in any player. Re-encoding can't fix that
 without losing quality, so the player accepts it.
 
-**ReplayGain has no source yet.** MediaSync's tag policy only knows title, artists, album, album
-artist, date, genre, track and disc (`TagField.MUSIC`), and strips everything else from the files,
-so ReplayGain tags couldn't reach the phone even if the files had them. Options, best first:
-
-1. **The server measures it** with the ffmpeg it already has (EBU R128 loudness, track and album),
-   and MediaSync writes standard `REPLAYGAIN_*` tags into every device's files as part of the tag
-   policy. fooyin on the desktop reads the same tags, so both players agree. Costs: the policy and
-   `AudioTags` learn four new fields (`TXXX` frames in MP3), the server scans the library once (a
-   few hours in the background), and every track gets a small tag-only change to sync.
-2. The player measures each track itself on the phone: no MediaSync change, but hours of decoding
-   on the phone and nothing shared with the desktop.
-3. No volume levelling.
+**ReplayGain comes from the server** (decided 2026-11-02). MediaSync's tag policy only knows
+title, artists, album, album artist, date, genre, track and disc (`TagField.MUSIC`), and strips
+everything else from the files, so ReplayGain tags can't reach the phone today. The plan: the
+server measures each track and album with the ffmpeg it already has (EBU R128 loudness), and
+MediaSync writes standard `REPLAYGAIN_TRACK_GAIN/PEAK` and `REPLAYGAIN_ALBUM_GAIN/PEAK` tags into
+every device's files as part of the tag policy. fooyin on the desktop reads the same tags, so both
+players agree. It needs the policy and `AudioTags` to learn the four fields (`TXXX` frames in MP3),
+a one-off background scan of the library on the server (a few hours), and a small tag-only change
+on every track, reviewed and synced like any other. The alternatives were measuring on the phone
+(hours of decoding there, nothing shared with the desktop) or no levelling.
 
 **TIDAL** (for later): TIDAL's Android Player SDK gives third-party apps only 30-second previews
 (`FULL_REQUIRES_HIGHER_ACCESS_TIER`), so the player would use the fooyin-tidal plugin's split: the
@@ -69,8 +67,8 @@ ExoPlayer plays as they are. The playback login the plugin uses is TIDAL's own A
 | Phase | What |
 | --- | --- |
 | **0. Checks** | The module and a test app. On the phone: ExoPlayer plays consecutive MP3s with the LAME/Lavc header without a gap and without restarting its audio output; a per-track gain applies exactly at each track boundary (what ReplayGain needs); how fast `:shared`'s tag reading scans `Music/`. See "Phase 0 checks" below. |
-| **1. Local player** | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain once it has a source. |
-| **2. MediaSync** | Rescan the changed files right after a sync. Playlists as `.m3u8` files in a synced `Music/Playlists/` folder, shared with fooyin on the desktop. Streaming tracks the phone doesn't hold from the server over Tailscale. |
+| **1. Local player** | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain tags, once MediaSync carries them. |
+| **2. MediaSync** | The server's ReplayGain (above). Rescan the changed files right after a sync. Playlists as `.m3u8` files in a synced `Music/Playlists/` folder, shared with fooyin on the desktop. Streaming tracks the phone doesn't hold from the server over Tailscale. |
 | **3. TIDAL** | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
 | **4. Polish** | Widget, equalizer, sleep timer, releases. Android Auto when there's a use for it. |
 
@@ -90,8 +88,30 @@ only the player's own package) and read with `adb logcat -s PlayerPhase0`:
 
 Volume levelling uses `GainProcessor` in ExoPlayer's audio sink. Since Media3 1.11 the sink tells
 its processors, each time it flushes them, which playlist item the following audio belongs to
-(`AudioProcessor.StreamMetadata`), so the gain is looked up per item there, with no custom
-renderer. The check shows whether that flush also happens at a gapless transition.
+(`AudioProcessor.StreamMetadata`), so the gain is looked up per item there, with no custom renderer.
+
+**Results** (motorola edge 40 pro, Android 15, 2026-11-02):
+
+- **Android's own MP3 decoder isn't gapless.** With it, each track lost about 128 samples at the
+  start and its last few hundred samples faded into silence, so the cut clicked (a step of 12,881
+  against 515 elsewhere). ExoPlayer's trimming was right; the decoder's output wasn't.
+- **Media3's FFmpeg decoder is.** With it preferred (`PlayerRenderers`), the output matched the tone
+  sample for sample (at most 9 off out of 32,767) across the cut, with one audio track throughout
+  and no underruns. The only extra frames (228) are silence after the last track. Google publishes
+  that module only as source; the player uses Jellyfin's build (`org.jellyfin.media3:media3-ffmpeg-decoder`
+  1.9.0+1, about 1.4 MB of native code per ABI), which loads and plays with Media3 1.11.1. If it ever
+  stops matching Media3, build the module from Media3's source with the NDK instead.
+- **Real tracks:** Boston's "My Destination" into "A New World" (a segue, LAME-encoded) played on the
+  phone matched ffmpeg's decoding on the PC to within 1 (out of 32,767) everywhere, and exactly
+  around the track change. `realFilesFromArguments` does this for any files.
+- **The gain switches at the track change:** the level halved within one period of the cut, and
+  the gain processor saw the second item when the sink flushed for it.
+- **Scanning:** 9,080 audio files in `Music/`, listed in 7.7 s; reading tags with `:shared`'s
+  `AudioTags` took 5.4 ms a file (none failed, 48% with a cover), so a first scan takes about a
+  minute. Later scans only read files whose size or date changed.
+
+**Licence:** Jellyfin's FFmpeg build is GPL-3.0, so the player's APK is a GPL-3.0 work when it's
+distributed; the repository has no licence yet.
 
 ### Phase 2 notes
 
