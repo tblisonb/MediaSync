@@ -25,6 +25,9 @@ class PlayerApp : Application() {
     }
     val library by libraryLazy
 
+    /** TIDAL: the logins, the catalog and the streams. */
+    val tidal by lazy { com.tlisonbee.mediasync.player.tidal.Tidal(File(filesDir, "tidal")) }
+
     /** Whether anything in this process has used the library yet (a screen, or playback). */
     val libraryStarted: Boolean get() = libraryLazy.isInitialized()
 

@@ -26,6 +26,12 @@ data class Track(
 ) {
     val isRemote: Boolean get() = stream != null
 
+    /** A TIDAL track ("tidal:<id>"), which streams from TIDAL. */
+    val isTidal: Boolean get() = path.startsWith("tidal:")
+
+    /** A file on the phone. */
+    val isLocal: Boolean get() = !isRemote && !isTidal
+
     val artist: String get() = artists.joinToString(", ").ifEmpty { UNKNOWN_ARTIST }
 
     /** Who the album is filed under: its album artist, else its (first) artist. */

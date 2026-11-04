@@ -19,8 +19,8 @@ android {
         applicationId = "com.tlisonbee.mediasync.player"
         minSdk = 33
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -34,6 +34,10 @@ android {
             }
         }
     }
+
+    // -Pplayer.testBuildType=release runs the instrumented tests against the release build, signed
+    // like the installed app, so testing on the phone doesn't mean uninstalling it.
+    testBuildType = providers.gradleProperty("player.testBuildType").getOrElse("debug")
 
     buildTypes {
         release {
@@ -62,6 +66,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    implementation(libs.media3.dash)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.media3.ffmpeg.decoder)

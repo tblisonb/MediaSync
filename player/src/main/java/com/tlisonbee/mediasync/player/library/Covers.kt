@@ -94,10 +94,11 @@ class Covers(private val dir: File) {
         return bitmap
     }
 
-    /** Deletes the stored covers no track uses any more. */
+    /** Deletes the stored covers no track in the library uses any more; TIDAL's are kept (a cache of their own). */
     fun keepOnly(keys: Set<String>) {
         dir.listFiles()?.forEach { f ->
-            if (f.name.endsWith(".jpg") && f.name.removeSuffix(".jpg") !in keys) f.delete()
+            val key = f.name.removeSuffix(".jpg")
+            if (f.name.endsWith(".jpg") && key !in keys && !key.startsWith("t")) f.delete()
         }
     }
 
