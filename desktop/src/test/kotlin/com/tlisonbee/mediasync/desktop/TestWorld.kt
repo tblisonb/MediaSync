@@ -34,6 +34,8 @@ class TestWorld(serverVersion: String? = null) : AutoCloseable {
     init {
         Setup.create(repoDir, "correct horse battery")
         repo = Repository(repoDir)
+        // Loudness measuring writes revisions of its own after pushes; these tests count theirs.
+        repo.updateSettings(repo.settings.copy(measureLoudness = false))
         server = embeddedServer(Netty, host = "127.0.0.1", port = 0) { mediaSyncModule(repo, serverVersion) }.start(wait = false)
         url = "http://127.0.0.1:" + runBlocking { server.engine.resolvedConnectors().first().port }
     }

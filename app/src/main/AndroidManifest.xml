@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Shared only with apps signed with MediaSync's key (the player): what a sync changed, and
+         later the server's address for streaming. Both apps declare it, whichever comes first. -->
+    <permission
+        android:name="com.tlisonbee.mediasync.permission.PLAYER"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.tlisonbee.mediasync.permission.PLAYER" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

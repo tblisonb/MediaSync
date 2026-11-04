@@ -397,7 +397,7 @@ class SyncEngine(
     /** Whether a file holds tags the policy doesn't keep, which the next write removes. */
     private fun hasExtras(state: FileState): Boolean {
         if (state.kind != AssetKind.AUDIO) return false
-        val allowed = policy.fields[AssetKind.AUDIO].orEmpty()
+        val allowed = policy.allowed(AssetKind.AUDIO)
         return state.hasExtras || state.tags.keys.any { it !in allowed } ||
             (state.cover != null && TagPolicy.FRONT_COVER !in policy.pictures[AssetKind.AUDIO].orEmpty())
     }

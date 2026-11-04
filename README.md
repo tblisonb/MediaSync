@@ -10,6 +10,9 @@ seen what's coming.
 - **Tags are versioned apart from the audio.** A retag only sends the new tags, never the whole
   file again. Tags you don't want (ripper comments and the like) are stripped, and the server keeps
   the originals.
+- **Every track's loudness is measured** (ReplayGain 2.0, with ffmpeg on the server) and written
+  into the files as the standard ReplayGain tags, so any player that levels volume plays your
+  library at an even loudness, the same on every device. Turn it off in the web UI's Settings.
 - **Photos are filed by year** (`images/photos/2019/2019-07-14 IMG_1234.jpg`), dated from the
   camera's EXIF data or the file name. **Videos** are filed as movies or show episodes, and a device
   can keep only the ones you pick for it.
