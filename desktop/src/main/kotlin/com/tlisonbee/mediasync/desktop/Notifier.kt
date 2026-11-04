@@ -10,6 +10,9 @@ import org.freedesktop.dbus.types.UInt32
 import org.freedesktop.dbus.types.Variant
 import java.util.concurrent.ConcurrentHashMap
 
+/** The launcher entry install.sh writes, named after the window's Wayland app id; notifications name it to be grouped under MediaSync. */
+internal const val DESKTOP_ENTRY = "com.tlisonbee.mediasync.qml"
+
 /** The freedesktop notification spec, which Plasma implements. */
 @DBusInterfaceName("org.freedesktop.Notifications")
 interface Notifications : DBusInterface {
@@ -69,7 +72,7 @@ class PlasmaNotifier : Notifier {
             summary,
             body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
             keyed.flatMap { (k, v) -> listOf(k, v.first) }.toTypedArray(),
-            mapOf("desktop-entry" to Variant("mediasync")),
+            mapOf("desktop-entry" to Variant(DESKTOP_ENTRY)),
             -1,
         )
         byKey[key] = id

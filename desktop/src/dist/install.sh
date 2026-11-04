@@ -46,11 +46,14 @@ fi
 mkdir -p "$HOME/.local/bin" "$STATE_DIR" "$CACHE_DIR"
 ln -sfn "$DEST/bin/mediasync-desktop" "$HOME/.local/bin/mediasync-desktop"
 
-# Icon and launcher entry (also used by Plasma to group the notifications). The window's Wayland app
-# id is com.tlisonbee.mediasync.qml (see share/qml/Main.qml); StartupWMClass ties it to this entry.
+# Icon and launcher entry (also used by Plasma to group the notifications). It's named after the
+# window's Wayland app id, com.tlisonbee.mediasync.qml (see share/qml/Main.qml): KWin finds a
+# window's icon by that name, so under any other the window shows Wayland's. (StartupWMClass ties
+# them on X11.) Releases before 1.3.0 named it mediasync.desktop.
 install -Dm644 "$DEST/share/mediasync.svg" "$DATA/icons/hicolor/scalable/apps/mediasync.svg"
 install -d "$DATA/applications"
-cat > "$DATA/applications/mediasync.desktop" <<DESKTOP
+rm -f "$DATA/applications/mediasync.desktop"
+cat > "$DATA/applications/com.tlisonbee.mediasync.qml.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=MediaSync
@@ -62,6 +65,8 @@ Terminal=false
 Categories=AudioVideo;Utility;
 StartupWMClass=com.tlisonbee.mediasync.qml
 DESKTOP
+# So the app menu and KWin see the new entry now, not at the next login.
+command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
 
 # Service: runs with the Plasma session. `mediasync-desktop setup` adds a drop-in that makes the
 # synced folders writable; everything else in the home folder stays read-only to it.

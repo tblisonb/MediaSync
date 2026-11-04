@@ -1,7 +1,8 @@
 // The MediaSync window, run by Qt 6's qml tool:
 //   qml --apptype widget Main.qml -- <file with the service's address> <status | web UI path>
 // The application's domain is set before the window exists, so Wayland gets the app id
-// com.tlisonbee.mediasync.qml, which mediasync.desktop names (StartupWMClass) for its icon.
+// com.tlisonbee.mediasync.qml: install.sh names the launcher entry after it, which is how KWin
+// finds the window's icon.
 import QtQuick
 
 QtObject {
