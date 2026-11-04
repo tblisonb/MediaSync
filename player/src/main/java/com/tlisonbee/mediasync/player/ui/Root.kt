@@ -3,6 +3,12 @@ package com.tlisonbee.mediasync.player.ui
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +63,7 @@ import com.tlisonbee.mediasync.player.library.Track
 import kotlinx.coroutines.launch
 
 @UnstableApi
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
     if (!hasAccess) return PermissionScreen()
@@ -72,10 +78,16 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
     val playing = playback.current?.mediaId
 
     BackHandler(enabled = vm.nowPlayingOpen || vm.stack.size > 1) { vm.back() }
-    Box(Modifier.fillMaxSize()) {
+    // The mini player grows into Now Playing and shrinks back (one shared container, and the cover).
+    SharedTransitionLayout(Modifier.fillMaxSize()) {
+        val shared = this
         Scaffold(
             topBar = { TopBar(ui, route, data) },
-            bottomBar = { MiniPlayer(ui, playback, data) },
+            bottomBar = {
+                AnimatedVisibility(visible = !vm.nowPlayingOpen && playback.current != null, enter = fadeIn(tween(EXPAND_MS)), exit = fadeOut(tween(EXPAND_MS))) {
+                    MiniPlayer(ui, playback, data, Transition(shared, this))
+                }
+            },
             snackbarHost = { SnackbarHost(snackbar) },
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
@@ -90,7 +102,9 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
                 }
             }
         }
-        if (vm.nowPlayingOpen) NowPlayingScreen(ui, playback, data)
+        AnimatedVisibility(visible = vm.nowPlayingOpen, enter = fadeIn(tween(EXPAND_MS)), exit = fadeOut(tween(EXPAND_MS))) {
+            NowPlayingScreen(ui, playback, data, Transition(shared, this))
+        }
     }
     picking?.let { tracks -> AddToPlaylistDialog(vm, tracks) { done -> picking = null; done?.let(ui.message) } }
 }
