@@ -57,6 +57,9 @@ class PlayerActivity : ComponentActivity() {
         super.onStart()
         // Checked again on return from the settings screen.
         hasAccess = Environment.isExternalStorageManager()
-        if (hasAccess) app.library.scanSoon()
+        if (hasAccess) {
+            app.library.scanSoon()
+            app.library.refreshRemote()
+        }
     }
 }

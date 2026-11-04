@@ -189,8 +189,14 @@ declare the permission, so either can be installed first.
   moves a file rewrites the relative entries naming it in every `.m3u`/`.m3u8` under music/
   (`Playlists.kt`); devices get the new playlist with the move. Absolute paths and URLs are left
   alone. The player also still finds a missing entry by its `#EXTINF` title.
-- **Streaming** needs a server endpoint listing the whole music library, not only what this
-  device syncs, and the player gets the server address and the device's token from MediaSync
-  through the signature permission. `/blobs/{hash}` already serves files with range requests.
-  Streamed tracks play from the stored original, whose tags may be older than the repository's, so
-  the player shows the listing's tags.
+- **Streaming** (built: server 1.5.0, app 1.3.0, player 0.2.0). `GET /api/v1/music` lists every
+  live track, whatever the device syncs (`?since=<rev>` answers "unchanged" cheaply). MediaSync
+  lends the player its pairing (server address, this phone's token, its music folder) through
+  `PlayerAccessProvider`, readable only with the signature permission. The player keeps the
+  listing on disk (`files/remote/music.json`), shows the tracks the phone lacks (by where MediaSync
+  would put them) with a cloud mark, and streams them from `/blobs/{hash}` with the token added
+  only for that server; the player's User-Agent isn't `MediaSync-<kind>/…`, so the server doesn't
+  take it for the app's version. Streamed files carry their tags from upload, so the listing's
+  tags are the ones shown, and their covers are fetched as they're shown or played. Settings can
+  hide them. Checked on the phone up to the network: the pairing is read and the provider refuses
+  other apps; the first real stream waits for the server update.

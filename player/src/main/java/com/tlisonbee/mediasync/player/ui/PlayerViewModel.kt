@@ -203,6 +203,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setGainMode(mode: GainMode) = settings.setGainMode(mode)
 
+    fun setShowRemote(show: Boolean) {
+        settings.setShowRemote(show)
+        library.showRemote = show
+    }
+
     fun rescan(full: Boolean) {
         viewModelScope.launch { library.scan(full) }
     }

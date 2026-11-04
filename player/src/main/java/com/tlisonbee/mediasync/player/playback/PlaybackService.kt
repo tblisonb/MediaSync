@@ -9,7 +9,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.tlisonbee.mediasync.player.library.Track
+import com.tlisonbee.mediasync.player.remote.RemoteMusic
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -50,7 +56,19 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         val settings = app.settings
         val gain = GainProcessor { item -> settings.gainMode.value.factor(MediaItems.gains(item)) }
+        // Server tracks stream with this phone's MediaSync token, which goes only to that server.
+        val remote = app.library.remote
+        val http = DefaultHttpDataSource.Factory().setUserAgent(RemoteMusic.USER_AGENT).setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000)
+        val sources = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec ->
+            val access = remote.access
+            if (access != null && spec.uri.toString().startsWith(access.serverUrl + "/")) {
+                spec.withAdditionalHeaders(mapOf("Authorization" to "Bearer ${access.token}"))
+            } else {
+                spec
+            }
+        }
         exo = ExoPlayer.Builder(this, PlayerRenderers(this, listOf(gain)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(sources))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
@@ -89,6 +107,25 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
+    private fun playable(track: Track, queued: Boolean): MediaItem {
+        val remote = app.library.remote
+        if (track.isRemote && remote.access == null) remote.readAccess()
+        return MediaItems.playable(track, app.library.covers, queued, track.stream?.let(remote::streamUri))
+    }
+
+    /** A server track's cover is fetched when it starts playing, for the notification and lock screen. */
+    private fun fetchCover(index: Int) {
+        val item = exo.getMediaItemAt(index)
+        if (item.mediaMetadata.artworkUri != null) return
+        val track = app.library.data.value?.byPath?.get(item.mediaId)?.takeIf { it.isRemote } ?: return
+        val key = track.cover ?: return
+        scope.launch {
+            withContext(Dispatchers.IO) { app.library.covers.load(key, 64) } ?: return@launch
+            val now = (0 until exo.mediaItemCount).firstOrNull { exo.getMediaItemAt(it) === item } ?: return@launch
+            exo.replaceMediaItem(now, playable(track, MediaItems.isQueued(item)))
+        }
+    }
+
     private class Restored(val items: List<MediaItem>, val index: Int, val positionMs: Long, val repeatMode: Int, val shuffle: Boolean, val order: IntArray?)
 
     /** The saved queue, with the tracks that are still in the library. */
@@ -98,7 +135,7 @@ class PlaybackService : MediaSessionService() {
         val library = app.library.loaded()
         val kept = queue.paths.indices.filter { library.byPath[queue.paths[it]] != null }
         if (kept.isEmpty()) return@withContext null
-        val items = kept.map { MediaItems.playable(library.byPath.getValue(queue.paths[it]), app.library.covers, it in queue.queued) }
+        val items = kept.map { playable(library.byPath.getValue(queue.paths[it]), it in queue.queued) }
         val index = position?.index?.let { kept.indexOf(it) }?.takeIf { it >= 0 } ?: 0
         // The order only fits if nothing was dropped.
         val order = queue.shuffleOrder?.takeIf { kept.size == queue.paths.size }
@@ -120,7 +157,7 @@ class PlaybackService : MediaSessionService() {
                 val library = app.library.loaded()
                 future.set(
                     mediaItems.mapNotNullTo(mutableListOf()) { item ->
-                        library.byPath[item.mediaId]?.let { MediaItems.playable(it, app.library.covers, MediaItems.isQueued(item)) }
+                        library.byPath[item.mediaId]?.let { playable(it, MediaItems.isQueued(item)) }
                     },
                 )
             }
@@ -154,6 +191,10 @@ class PlaybackService : MediaSessionService() {
             ) {
                 savePosition()
             }
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (exo.currentMediaItemIndex >= 0) fetchCover(exo.currentMediaItemIndex)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {

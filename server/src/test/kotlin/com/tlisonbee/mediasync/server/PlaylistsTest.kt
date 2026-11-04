@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.server
 
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.api.PushChange
+import io.ktor.client.statement.bodyAsText
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,5 +48,25 @@ class PlaylistsTest {
             "#EXTM3U\n#EXTINF:220,Boston - My Destination\n../Boston/Third Stage/05 My Destination (Remastered).mp3\n",
             Files.readString(repo.dir.blob(media.baseBlob)),
         )
+    }
+}
+
+class MusicListingTest {
+    @Test
+    fun aDeviceListsAllTheMusicNotJustWhatItSyncs() = withServer {
+        val pc = pair("PC").apply { subscribeMusic() }
+        pc.add(TestDevice.fakeFile("a.mp3"), track("Airbag", 1))
+        pc.add(TestDevice.fakeFile("b.mp3"), track("Lucky", 11))
+        // A phone that syncs nothing still sees both, to stream them.
+        val phone = pair("Phone")
+        suspend fun list(path: String) = com.tlisonbee.mediasync.api.ApiJson.decodeFromString(
+            com.tlisonbee.mediasync.api.MusicListing.serializer(), phone.get(path).bodyAsText(),
+        )
+        val listing = list("/music")
+        assertEquals(listOf("Airbag", "Lucky"), listing.tracks.map { it.tags["title"]!!.single() }.sorted())
+        assertEquals(repo.head(), listing.rev)
+        val again = list("/music?since=${listing.rev}")
+        assertEquals(true, again.unchanged)
+        assertEquals(0, again.tracks.size)
     }
 }

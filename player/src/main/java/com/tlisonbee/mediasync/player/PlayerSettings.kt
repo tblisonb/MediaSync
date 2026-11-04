@@ -32,6 +32,16 @@ class PlayerSettings(context: Context) {
     private val _gainMode = MutableStateFlow(prefs.getString("gain_mode", null)?.let { runCatching { GainMode.valueOf(it) }.getOrNull() } ?: GainMode.TRACK)
     val gainMode: StateFlow<GainMode> = _gainMode.asStateFlow()
 
+    private val _showRemote = MutableStateFlow(prefs.getBoolean("show_remote", true))
+
+    /** Whether the server's tracks the phone doesn't hold are in the library. */
+    val showRemote: StateFlow<Boolean> = _showRemote.asStateFlow()
+
+    fun setShowRemote(show: Boolean) {
+        prefs.edit().putBoolean("show_remote", show).apply()
+        _showRemote.value = show
+    }
+
     fun setGainMode(mode: GainMode) {
         prefs.edit().putString("gain_mode", mode.name).apply()
         _gainMode.value = mode

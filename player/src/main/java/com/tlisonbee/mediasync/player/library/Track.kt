@@ -21,7 +21,11 @@ data class Track(
     /** The key of its cover in [Covers], or null without one. */
     val cover: String?,
     val gain: Gains = Gains.NONE,
+    /** Set for a track that's only on the MediaSync server, which plays by streaming it. */
+    val stream: Stream? = null,
 ) {
+    val isRemote: Boolean get() = stream != null
+
     val artist: String get() = artists.joinToString(", ").ifEmpty { UNKNOWN_ARTIST }
 
     /** Who the album is filed under: its album artist, else its (first) artist. */
@@ -57,6 +61,9 @@ data class Track(
         fun titleOf(file: File) = file.nameWithoutExtension
     }
 }
+
+/** Where a server track streams from: its blob, the file's format, and where MediaSync would put it on the phone. */
+data class Stream(val blob: String, val format: String, val localPath: String?)
 
 /** ReplayGain values in dB and peaks (1 = full scale), when the file has them. */
 data class Gains(val trackGain: Float?, val trackPeak: Float?, val albumGain: Float?, val albumPeak: Float?) {

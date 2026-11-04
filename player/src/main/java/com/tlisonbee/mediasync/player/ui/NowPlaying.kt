@@ -245,7 +245,7 @@ private fun QueueList(ui: Ui, state: PlaybackState, data: LibraryData, modifier:
             TrackRow(
                 e.item.mediaMetadata.title?.toString() ?: "",
                 listOfNotNull("Queued".takeIf { e.queued }, e.item.mediaMetadata.artist?.toString()).joinToString(" · "),
-                lead = { Cover(ui.covers, t?.cover, 44.dp) }, durationMs = t?.durationMs, playing = false,
+                lead = { Cover(ui.covers, t?.cover, 44.dp) }, durationMs = t?.durationMs, playing = false, remote = t?.isRemote == true,
                 onClick = { vm.jumpTo(e.index) },
                 menu = listOf("Play next" to { vm.moveToNext(e.index) }, "Remove from queue" to { vm.removeFromQueue(e.index); Unit }),
             )

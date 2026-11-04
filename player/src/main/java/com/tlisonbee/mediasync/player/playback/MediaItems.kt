@@ -28,8 +28,8 @@ object MediaItems {
         .setMediaMetadata(MediaMetadata.Builder().setTitle(track.title).setArtist(track.artist).setExtras(bundleOf(EXTRA_QUEUED to queued)).build())
         .build()
 
-    /** The item the player plays. */
-    fun playable(track: Track, covers: Covers, queued: Boolean): MediaItem {
+    /** The item the player plays: the file, or for a server track [streamUri]. */
+    fun playable(track: Track, covers: Covers, queued: Boolean, streamUri: Uri? = null): MediaItem {
         val extras = Bundle().apply {
             putBoolean(EXTRA_QUEUED, queued)
             track.gain.trackGain?.let { putFloat(TRACK_GAIN, it) }
@@ -47,7 +47,8 @@ object MediaItems {
             .setGenre(track.genre.ifEmpty { null })
             .setRecordingYear(track.year.toIntOrNull())
             .setDurationMs(track.durationMs)
-            .setArtworkUri(track.cover?.let { Uri.fromFile(covers.file(it)) })
+            // A server track's cover is only there once something fetched it (PlaybackService does).
+            .setArtworkUri(track.cover?.let { covers.file(it) }?.takeIf { !track.isRemote || it.isFile }?.let { Uri.fromFile(it) })
             .setIsPlayable(true)
             .setIsBrowsable(false)
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
@@ -55,7 +56,7 @@ object MediaItems {
             .build()
         return MediaItem.Builder()
             .setMediaId(track.path)
-            .setUri(Uri.fromFile(File(track.path)))
+            .setUri(if (track.isRemote) streamUri else Uri.fromFile(File(track.path)))
             .setMediaMetadata(metadata)
             .build()
     }

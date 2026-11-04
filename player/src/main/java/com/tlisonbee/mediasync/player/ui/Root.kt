@@ -275,6 +275,8 @@ private fun SettingsScreen(vm: PlayerViewModel) {
         }
         if (scan.running) Text(if (scan.total > 0) "Reading ${scan.done} of ${scan.total}…" else "Looking for changes…")
 
+        ServerSection(vm)
+
         Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
         Text("MediaSync Player ${BuildConfig.VERSION_NAME}. GPL-3.0-or-later; decodes with FFmpeg (GPL-3.0).", style = MaterialTheme.typography.bodySmall)
     }
@@ -286,5 +288,42 @@ private fun SettingsScreen(vm: PlayerViewModel) {
             confirmButton = { TextButton(onClick = { confirmFull = false; vm.rescan(full = true) }) { Text("Scan") } },
             dismissButton = { TextButton(onClick = { confirmFull = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@UnstableApi
+@Composable
+private fun ServerSection(vm: PlayerViewModel) {
+    val remote by vm.library.remote.state.collectAsState()
+    val show by vm.settings.showRemote.collectAsState()
+    Text("Music from the server", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
+    if (!remote.paired) {
+        Text(
+            "Pair MediaSync with your server (MediaSync 1.3.0 or later) to also play the music that isn't on this phone, streamed from the server.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = { vm.library.refreshRemote(force = true) }) { Text("Check again") }
+        return
+    }
+    Row(
+        Modifier.fillMaxWidth().selectable(selected = show, role = Role.Switch, onClick = { vm.setShowRemote(!show) }).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Show music that's only on the server")
+            Text(
+                "Marked with a cloud; it streams over Tailscale, through MediaSync's pairing.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        androidx.compose.material3.Switch(checked = show, onCheckedChange = null)
+    }
+    Text(
+        if (remote.total > 0) "${remote.server}: ${remote.total} songs, ${remote.notOnPhone} of them not on this phone." else "${remote.server}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    remote.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    OutlinedButton(enabled = !remote.refreshing, onClick = { vm.library.refreshRemote(force = true) }) {
+        Text(if (remote.refreshing) "Asking the server…" else "Ask the server again")
     }
 }

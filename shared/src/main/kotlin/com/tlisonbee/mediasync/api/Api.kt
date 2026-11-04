@@ -458,3 +458,15 @@ data class DeviceCleanup(
     /** Delete the clutter devices never sync (desktop.ini, Thumbs.db, .DS_Store and the like) where it's found. */
     val deleteClutter: Boolean = false,
 )
+
+/**
+ * Every live track in music/, whatever the asking device syncs: what the MediaSync Player can
+ * stream (GET /music, server 1.5.0). [unchanged] answers `?since=` when nothing has changed since
+ * then, with no tracks.
+ */
+@Serializable
+data class MusicListing(
+    val rev: Long,
+    val tracks: List<AssetDto> = emptyList(),
+    val unchanged: Boolean = false,
+)
