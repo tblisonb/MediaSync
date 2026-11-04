@@ -146,6 +146,21 @@ What's built, and how:
   already syncs them as plain files, so a playlist made on the phone reaches the server and the
   desktop (where fooyin reads them) on the next sync, and shows up in its review first.
 
+**Checked on the phone** (2026-11-04, `PlaybackAndroidTest`, which reads only the music and plays
+muted): the first scan of 9,031 tracks took 127 s, covers included (983 albums, 96% of tracks with a
+cover); a scan with nothing new takes 1.6 s, and building the library in memory 0.3 s. Played a
+454-track album through the service from its third track, turned shuffle on (all 453 others
+still to come), added one with Play next and two with Add to queue (they played next, in that
+order, ahead of the shuffled rest), turned shuffle off (the queued three, then the album from
+where it was); the media notification was up, and the saved queue matched. By hand: browsing,
+Now Playing, the queue and search, and the queue coming back at the same position after the app
+was reinstalled.
+
+To run it: `./gradlew :player:installDebug :player:installDebugAndroidTest`, then
+`adb shell am instrument -w -e class com.tlisonbee.mediasync.player.PlaybackAndroidTest com.tlisonbee.mediasync.player.test/androidx.test.runner.AndroidJUnitRunner`.
+The test lets the player in with All files access and leaves it on (taking it back kills the
+process before the result is reported): `adb shell appops set com.tlisonbee.mediasync.player MANAGE_EXTERNAL_STORAGE default`.
+
 ### Phase 2 notes
 
 - **Playlists move with their tracks.** MediaSync renames a track when its tags change

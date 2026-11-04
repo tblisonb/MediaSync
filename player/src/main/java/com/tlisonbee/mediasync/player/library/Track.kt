@@ -29,17 +29,24 @@ data class Track(
 
     val albumOrUnknown: String get() = album.ifEmpty { UNKNOWN_ALBUM }
 
-    val year: String get() = Regex("""\d{4}""").find(date)?.value ?: ""
+    // Worked out once: sorting compares them many times. Not part of equals.
+    val year: String by lazy(LazyThreadSafetyMode.PUBLICATION) { YEAR.find(date)?.value ?: "" }
+    val titleKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { sortKey(title) }
+    val artistKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { sortKey(artist) }
+    val albumTitleKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { sortKey(album) }
+    val ownerKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { sortKey(albumArtistOrArtist) }
+    val fileKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { fold(fileName) }
 
     val folder: String get() = path.substringBeforeLast('/')
 
     val fileName: String get() = path.substringAfterLast('/')
 
-    val albumKey: String get() = albumKey(albumArtistOrArtist, albumOrUnknown)
+    val albumKey: String by lazy(LazyThreadSafetyMode.PUBLICATION) { albumKey(albumArtistOrArtist, albumOrUnknown) }
 
     companion object {
         const val UNKNOWN_ARTIST = "Unknown artist"
         const val UNKNOWN_ALBUM = "Unknown album"
+        private val YEAR = Regex("""\d{4}""")
 
         fun albumKey(artist: String, album: String) = sortKey(artist) + "\u0000" + sortKey(album)
 
@@ -69,7 +76,9 @@ fun sortKey(text: String): String {
 
 /** Lowercase without accents, for sorting and searching. */
 fun fold(text: String): String =
-    Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("""\p{Mn}+"""), "").lowercase().trim()
+    Normalizer.normalize(text, Normalizer.Form.NFD).replace(MARKS, "").lowercase().trim()
+
+private val MARKS = Regex("""\p{Mn}+""")
 
 class Album(
     val key: String,
@@ -79,6 +88,8 @@ class Album(
     /** In disc and track order. */
     val tracks: List<Track>,
 ) {
+    val titleKey = sortKey(title)
+    val artistKey = sortKey(artist)
     val cover: String? get() = tracks.firstNotNullOfOrNull { it.cover }
     val durationMs: Long get() = tracks.sumOf { it.durationMs ?: 0 }
     val discs: Int get() = tracks.mapNotNull { it.discNumber }.distinct().size
@@ -91,6 +102,8 @@ class Artist(
     /** Their tracks on other artists' albums (compilations, guest spots). */
     val appearsOn: List<Track>,
 ) {
+    val key = sortKey(name)
+
     val trackCount: Int get() = albums.sumOf { it.tracks.size } + appearsOn.size
 
     /** Every track, album by album, then the ones on other albums. */
@@ -105,7 +118,7 @@ data class PlaylistFile(val path: String, val mtime: Long) {
 /** Everything the screens show, worked out once from the tracks. */
 class LibraryData(all: List<Track>) {
     /** By title. */
-    val tracks: List<Track> = all.sortedWith(compareBy<Track>({ sortKey(it.title) }, { sortKey(it.artist) }, { it.path }))
+    val tracks: List<Track> = all.sortedWith(compareBy<Track>({ it.titleKey }, { it.artistKey }, { it.path }))
 
     val byPath: Map<String, Track> = tracks.associateBy { it.path }
 
@@ -113,17 +126,17 @@ class LibraryData(all: List<Track>) {
         val sorted = list.sortedWith(trackOrder)
         val first = sorted.first()
         Album(key, first.albumOrUnknown, first.albumArtistOrArtist, sorted.map { it.year }.filter { it.isNotEmpty() }.minOrNull() ?: "", sorted)
-    }.sortedWith(compareBy({ sortKey(it.title) }, { sortKey(it.artist) }))
+    }.sortedWith(compareBy({ it.titleKey }, { it.artistKey }))
 
     val albumsByKey: Map<String, Album> = albums.associateBy { it.key }
 
     val artists: List<Artist> = run {
-        val filed = albums.groupBy { sortKey(it.artist) }
+        val filed = albums.groupBy { it.artistKey }
         // Track artists who aren't the album's artist, by their key.
         val guests = HashMap<String, MutableList<Track>>()
         val names = HashMap<String, String>()
         for (t in tracks) {
-            val owner = sortKey(t.albumArtistOrArtist)
+            val owner = t.ownerKey
             for (a in t.artists) {
                 val k = sortKey(a)
                 if (k.isEmpty() || k == owner) continue
@@ -132,16 +145,16 @@ class LibraryData(all: List<Track>) {
             }
         }
         (filed.keys + guests.keys).map { k ->
-            val own = filed[k].orEmpty().sortedWith(compareBy({ it.year.ifEmpty { "9999" } }, { sortKey(it.title) }))
+            val own = filed[k].orEmpty().sortedWith(compareBy({ it.year.ifEmpty { "9999" } }, { it.titleKey }))
             Artist(
                 name = own.firstOrNull()?.artist ?: names.getValue(k),
                 albums = own,
-                appearsOn = guests[k].orEmpty().sortedWith(compareBy<Track>({ it.year }, { sortKey(it.album) }).then(trackOrder)),
+                appearsOn = guests[k].orEmpty().sortedWith(compareBy<Track>({ it.year }, { it.albumTitleKey }).then(trackOrder)),
             )
-        }.sortedBy { sortKey(it.name) }
+        }.sortedBy { it.key }
     }
 
-    val artistsByKey: Map<String, Artist> = artists.associateBy { sortKey(it.name) }
+    val artistsByKey: Map<String, Artist> = artists.associateBy { it.key }
 
     fun artist(name: String): Artist? = artistsByKey[sortKey(name)]
 
@@ -158,7 +171,7 @@ class LibraryData(all: List<Track>) {
         }
         return FolderListing(
             subfolders.map { (name, count) -> Subfolder(prefix + name, name, count) },
-            here.sortedWith(compareBy({ fold(it.fileName) }, { it.path })),
+            here.sortedWith(compareBy({ it.fileKey }, { it.path })),
         )
     }
 
@@ -178,7 +191,7 @@ class LibraryData(all: List<Track>) {
     companion object {
         val EMPTY = LibraryData(emptyList())
 
-        val trackOrder: Comparator<Track> = compareBy({ it.discNumber ?: 0 }, { it.trackNumber ?: Int.MAX_VALUE }, { fold(it.fileName) })
+        val trackOrder: Comparator<Track> = compareBy({ it.discNumber ?: 0 }, { it.trackNumber ?: Int.MAX_VALUE }, { it.fileKey })
     }
 }
 

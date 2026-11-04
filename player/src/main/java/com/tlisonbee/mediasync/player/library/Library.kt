@@ -121,6 +121,7 @@ class Library(private val db: LibraryDb, val covers: Covers, val root: File, pri
         _playlists.value = playlists
 
         val known = db.all().associateBy { it.path }.toMutableMap()
+
         val seen = audio.mapTo(HashSet()) { it.path }
         val removed = known.keys.filter { it !in seen }
         if (removed.isNotEmpty()) db.delete(removed)
@@ -129,7 +130,12 @@ class Library(private val db: LibraryDb, val covers: Covers, val root: File, pri
         // A full scan reads everything again, over the old index, so the library stays usable meanwhile.
         val changed = if (full) audio else audio.filter { f -> known[f.path].let { it == null || it.size != f.size || it.mtime != f.mtime } }
         _scan.value = ScanState(running = true, done = 0, total = changed.size)
-        publish(known.values)
+        // Nothing new: the library as loaded is still right.
+        if (changed.isEmpty() && removed.isEmpty() && _data.value != null) {
+            Log.i(TAG, "scanned ${audio.size} files: no changes, ${playlists.size} playlists")
+            return
+        }
+        if (removed.isNotEmpty() || _data.value == null) publish(known.values)
 
         val batch = mutableListOf<Track>()
         changed.forEachIndexed { i, f ->

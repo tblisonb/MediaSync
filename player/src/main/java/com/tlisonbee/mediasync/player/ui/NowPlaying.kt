@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -68,7 +69,7 @@ fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData) {
     val track = data.byPath[item.mediaId]
     val position = rememberPosition(vm, state.isPlaying)
     Surface(tonalElevation = 3.dp) {
-        Column {
+        Column(Modifier.navigationBarsPadding()) {
             LinearProgressIndicator(
                 progress = { if (state.durationMs > 0) (position.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f },
                 modifier = Modifier.fillMaxWidth().height(2.dp),

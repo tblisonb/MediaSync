@@ -31,11 +31,23 @@ import java.util.concurrent.TimeUnit
 /**
  * Phase 1 on the phone, with its own Music folder: the scan, then the playback service through a
  * controller as the screens use it, muted (the player's volume is 0). Only reads the music. Lets
- * the player in with All files access for the test, then puts the setting back.
+ * the player in with All files access for the test; take it back with adb afterwards (see tearDown).
  */
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
 class PlaybackAndroidTest {
+    // Taking All files access back kills the process before JUnit reports, so failures are logged here first.
+    @get:org.junit.Rule
+    val log = object : org.junit.rules.TestWatcher() {
+        override fun failed(e: Throwable, description: org.junit.runner.Description) {
+            Log.e(TAG, "FAILED ${description.methodName}", e)
+        }
+
+        override fun succeeded(description: org.junit.runner.Description) {
+            Log.i(TAG, "PASSED ${description.methodName}")
+        }
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val thread = HandlerThread("controller").apply { start() }
@@ -79,7 +91,22 @@ class PlaybackAndroidTest {
             handler.post { controller.release() }
         }
         thread.quitSafely()
-        shell("appops set ${context.packageName} MANAGE_EXTERNAL_STORAGE default")
+        // Not taken back here: that kills the process before JUnit reports. Afterwards, run
+        // adb shell appops set com.tlisonbee.mediasync.player MANAGE_EXTERNAL_STORAGE default
+    }
+
+    /**
+     * Waits for the controller to show [expected]: after a change it first shows its own guess at
+     * the new queue, and the service's arrives a moment later.
+     */
+    private fun <T> eventually(expected: T, actual: () -> T) {
+        val end = System.currentTimeMillis() + 10_000
+        var last = actual()
+        while (last != expected && System.currentTimeMillis() < end) {
+            Thread.sleep(50)
+            last = actual()
+        }
+        assertEquals(expected, last)
     }
 
     private fun upcomingIds() = onController { c -> Queue.upcoming(c).map { c.getMediaItemAt(it).mediaId } }
@@ -94,6 +121,10 @@ class PlaybackAndroidTest {
         val data = library.data.value!!
         Log.i(TAG, "scan: ${(System.nanoTime() - start) / 1_000_000} ms, ${data.tracks.size} tracks, ${data.albums.size} albums, " + "${data.artists.size} artists, ${library.playlists.value.size} playlists, ${data.tracks.count { it.cover != null }} with a cover")
         assertTrue(library.scan.value.lastError == null)
+        val build = System.nanoTime()
+        val rebuilt = com.tlisonbee.mediasync.player.library.LibraryData(data.tracks.map { it.copy() })
+        rebuilt.artists.size
+        Log.i(TAG, "building the library from the index: ${(System.nanoTime() - build) / 1_000_000} ms")
         val album = data.albums.filter { it.tracks.size >= 6 }.maxByOrNull { it.tracks.size }
         assumeTrue("no album with six tracks", album != null)
         album!!
@@ -114,31 +145,31 @@ class PlaybackAndroidTest {
         }
         waitFor("playing") { it.isPlaying }
         assertEquals(album.tracks[2].path, onController { it.currentMediaItem?.mediaId })
-        assertEquals(album.tracks.drop(3).map(Track::path), upcomingIds())
+        eventually(album.tracks.drop(3).map(Track::path)) { upcomingIds() }
         // The service filled in the rest of the item from the library.
         assertEquals(album.title, onController { it.currentMediaItem?.mediaMetadata?.albumTitle?.toString() })
 
         // Shuffle on: the current track stays, everything else is still to come.
         onController { it.shuffleModeEnabled = true }
-        waitFor("shuffled") { it.shuffleModeEnabled }
+        // The controller turns shuffle on at once; the service's new order arrives just after.
+        waitFor("the new order") { c -> c.shuffleModeEnabled && Queue.upcoming(c).size == album.tracks.size - 1 }
         val shuffled = upcomingIds()
         assertEquals(album.tracks.size - 1, shuffled.size)
         assertEquals((album.tracks.map(Track::path) - album.tracks[2].path).toSet(), shuffled.toSet())
 
         // Play next, then two added to the queue: they play in that order, before the shuffled rest.
         onController { c -> c.addMediaItems(c.currentMediaItemIndex + 1, listOf(MediaItems.request(others[0], queued = true))) }
-        waitFor("play next") { it.mediaItemCount == album.tracks.size + 1 }
+        waitFor("play next") { c -> Queue.upcoming(c).firstOrNull()?.let { c.getMediaItemAt(it).mediaId } == others[0].path }
         onController { c -> c.addMediaItems(Queue.insertionIndex(c), listOf(MediaItems.request(others[1], queued = true))) }
-        waitFor("queued") { it.mediaItemCount == album.tracks.size + 2 }
+        waitFor("queued") { c -> Queue.upcoming(c).take(2).map { c.getMediaItemAt(it).mediaId } == others.take(2).map(Track::path) }
         onController { c -> c.addMediaItems(Queue.insertionIndex(c), listOf(MediaItems.request(others[2], queued = true))) }
-        waitFor("queued again") { it.mediaItemCount == album.tracks.size + 3 }
-        assertEquals(others.map(Track::path), upcomingIds().take(3))
-        assertEquals(shuffled, upcomingIds().drop(3))
+        waitFor("queued again") { c -> Queue.upcoming(c).take(3).map { c.getMediaItemAt(it).mediaId } == others.map(Track::path) }
+        eventually(others.map(Track::path) + shuffled) { upcomingIds() }
 
         // Shuffle off: the queued ones still come next, then the album from where it was.
         onController { it.shuffleModeEnabled = false }
         waitFor("unshuffled") { !it.shuffleModeEnabled }
-        assertEquals(others.map(Track::path) + album.tracks.drop(3).map(Track::path), upcomingIds())
+        eventually(others.map(Track::path) + album.tracks.drop(3).map(Track::path)) { upcomingIds() }
 
         // While playing, there's a media notification.
         val notifications = context.getSystemService(NotificationManager::class.java).activeNotifications
