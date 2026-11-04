@@ -16,9 +16,13 @@ class PlayerApp : Application() {
 
     val settings by lazy { PlayerSettings(this) }
 
-    val library by lazy {
+    private val libraryLazy = lazy {
         Library(LibraryDb(this), Covers(File(filesDir, "covers")), File(Environment.getExternalStorageDirectory(), "Music"), scope)
     }
+    val library by libraryLazy
+
+    /** Whether anything in this process has used the library yet (a screen, or playback). */
+    val libraryStarted: Boolean get() = libraryLazy.isInitialized()
 
     override fun onCreate() {
         super.onCreate()
