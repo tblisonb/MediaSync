@@ -11,6 +11,7 @@ import com.tlisonbee.mediasync.api.FolderPickRequest
 import com.tlisonbee.mediasync.api.PairRequest
 import com.tlisonbee.mediasync.api.PickRequest
 import com.tlisonbee.mediasync.api.PickResponse
+import com.tlisonbee.mediasync.api.MusicListing
 import com.tlisonbee.mediasync.api.PushRequest
 import com.tlisonbee.mediasync.api.ResolveRequest
 import com.tlisonbee.mediasync.api.RevertRequest
@@ -288,6 +289,18 @@ private fun Route.apiRoutes(repo: Repository) {
     }
 
     // Clients preview the import and keep files tidy with the same rules the server applies.
+    // The whole music library, for streaming what a device doesn't hold (the MediaSync Player).
+    get("/music") {
+        val since = call.parameters["since"]?.toLongOrNull()
+        call.respond(
+            io {
+                repo.db.read {
+                    val head = repo.head()
+                    if (since == head) MusicListing(head, unchanged = true) else MusicListing(head, repo.liveTracks().map(repo::toDto))
+                }
+            },
+        )
+    }
     get("/policy") { call.respond(repo.policy) }
     get("/cleanup") { call.respond(DeviceCleanup(deleteClutter = repo.settings.deleteClutter)) }
     get("/devices/me") { call.respond(call.device().toDto()) }

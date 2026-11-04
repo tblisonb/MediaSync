@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.player.library
 import android.util.Log
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.player.audio.ReplayGain
+import com.tlisonbee.mediasync.player.remote.RemoteMusic
 import com.tlisonbee.mediasync.tags.AudioTags
 import com.tlisonbee.mediasync.tags.TagField
 import kotlinx.coroutines.CoroutineScope
@@ -29,7 +30,15 @@ data class ScanState(val running: Boolean = false, val done: Int = 0, val total:
  * The music on the phone: the index kept in [LibraryDb], scanned from [root], and the playlists
  * in it. Everything is read into memory ([data]), which for ten thousand tracks is a few megabytes.
  */
-class Library(private val db: LibraryDb, val covers: Covers, val root: File, private val scope: CoroutineScope) {
+class Library(
+    private val db: LibraryDb,
+    val covers: Covers,
+    val root: File,
+    private val scope: CoroutineScope,
+    /** The MediaSync server's music, for what the phone doesn't hold. */
+    val remote: RemoteMusic,
+    showRemote: Boolean,
+) {
     private val _data = MutableStateFlow<LibraryData?>(null)
 
     /** Null until the index has been read. */
@@ -53,15 +62,49 @@ class Library(private val db: LibraryDb, val covers: Covers, val root: File, pri
 
     val playlistFolder: File get() = File(root, "Playlists")
 
-    init {
-        scope.launch(Dispatchers.IO) {
-            if (_data.value == null) _data.value = LibraryData(db.all())
+    /** The tracks on the phone, as last indexed; null until the index is read. */
+    @Volatile
+    private var local: List<Track>? = null
+
+    /** Whether the server's tracks the phone lacks are in the library (Settings). */
+    @Volatile
+    var showRemote: Boolean = showRemote
+        set(value) {
+            field = value
+            rebuild()
         }
+
+    init {
+        covers.fetch = { key -> if (key.startsWith(RemoteMusic.REMOTE_COVER)) remote.download(key.removePrefix(RemoteMusic.REMOTE_COVER)) else null }
+        scope.launch(Dispatchers.IO) { loaded() }
     }
 
     /** Waits for the index; for the playback service, which may start before any screen. */
     suspend fun loaded(): LibraryData = withContext(Dispatchers.IO) {
-        _data.value ?: LibraryData(db.all()).also { _data.compareAndSet(null, it) }
+        _data.value ?: run {
+            remote.loadCached()
+            if (local == null) local = db.all()
+            rebuild()
+            _data.value!!
+        }
+    }
+
+    /** Asks the server for its music again, if it's been a while (or [force]). */
+    fun refreshRemote(force: Boolean = false, minIntervalMs: Long = 5 * 60_000L) {
+        if (!force && System.currentTimeMillis() - remote.state.value.lastRefresh < minIntervalMs) return
+        scope.launch {
+            loaded()
+            if (remote.refresh() || force) rebuild()
+        }
+    }
+
+    /** The library as shown: the phone's tracks, and the server's that aren't on it. */
+    private fun rebuild() {
+        val phone = local ?: return
+        val onPhone = phone.mapTo(HashSet()) { it.path.lowercase() }
+        val extra = remote.tracks.filter { t -> t.stream?.localPath?.lowercase().let { it == null || it !in onPhone } }
+        remote.counted(extra.size)
+        _data.value = LibraryData(if (showRemote) phone + extra else phone)
     }
 
     fun scanSoon(minIntervalMs: Long = 5 * 60_000L) {
@@ -150,12 +193,13 @@ class Library(private val db: LibraryDb, val covers: Covers, val root: File, pri
             }
         }
         publish(known.values)
-        covers.keepOnly(known.values.mapNotNullTo(HashSet()) { it.cover })
+        covers.keepOnly(known.values.mapNotNullTo(HashSet()) { it.cover } + remote.tracks.mapNotNull { it.cover })
         Log.i(TAG, "scanned ${audio.size} files: ${changed.size} read, ${removed.size} gone, ${playlists.size} playlists")
     }
 
     private fun publish(tracks: Collection<Track>) {
-        _data.value = LibraryData(tracks.toList())
+        local = tracks.toList()
+        rebuild()
     }
 
     private fun read(f: Found, folderImage: File?): Track {

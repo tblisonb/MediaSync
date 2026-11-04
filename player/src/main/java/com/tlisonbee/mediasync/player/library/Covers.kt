@@ -22,6 +22,13 @@ class Covers(private val dir: File) {
 
     fun file(key: String) = File(dir, "$key.jpg")
 
+    /** Gets a cover that isn't stored yet (one on the server) as image bytes; null when it can't. */
+    @Volatile
+    var fetch: ((String) -> ByteArray?)? = null
+
+    /** Covers [fetch] couldn't get, not asked for again until the app restarts. */
+    private val unavailable = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
     /** Stores a cover from a file's embedded picture; returns its key, or null if it can't be decoded. */
     fun fromBytes(data: ByteArray): String? {
         val key = hash(data)
@@ -71,6 +78,14 @@ class Covers(private val dir: File) {
         val memoryKey = "$key@$bucket"
         memory.get(memoryKey)?.let { return it }
         val f = file(key)
+        if (!f.isFile) {
+            if (key in unavailable) return null
+            val bytes = fetch?.invoke(key)
+            if (bytes == null || !save(key) { decode(bytes) }) {
+                unavailable += key
+                return null
+            }
+        }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.path, bounds)
         if (bounds.outWidth <= 0) return null

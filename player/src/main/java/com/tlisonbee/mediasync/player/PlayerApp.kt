@@ -5,6 +5,7 @@ import android.os.Environment
 import com.tlisonbee.mediasync.player.library.Covers
 import com.tlisonbee.mediasync.player.library.Library
 import com.tlisonbee.mediasync.player.library.LibraryDb
+import com.tlisonbee.mediasync.player.remote.RemoteMusic
 import com.tlisonbee.mediasync.tags.AudioTags
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -17,7 +18,10 @@ class PlayerApp : Application() {
     val settings by lazy { PlayerSettings(this) }
 
     private val libraryLazy = lazy {
-        Library(LibraryDb(this), Covers(File(filesDir, "covers")), File(Environment.getExternalStorageDirectory(), "Music"), scope)
+        Library(
+            LibraryDb(this), Covers(File(filesDir, "covers")), File(Environment.getExternalStorageDirectory(), "Music"), scope,
+            RemoteMusic(this, File(filesDir, "remote")), settings.showRemote.value,
+        )
     }
     val library by libraryLazy
 

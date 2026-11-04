@@ -145,6 +145,8 @@ fun TrackRow(
     enabled: Boolean = true,
     onClick: () -> Unit,
     menu: List<Pair<String, () -> Unit>>,
+    /** Only on the server: it streams. */
+    remote: Boolean = false,
 ) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 60.dp).clickable(enabled = enabled, onClick = onClick).padding(start = 16.dp, end = 4.dp),
@@ -167,6 +169,11 @@ fun TrackRow(
             if (subtitle.isNotEmpty()) {
                 Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+        if (remote) {
+            androidx.compose.material3.Icon(
+                painterResource(R.drawable.ic_cloud), "On the server", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Text(formatDuration(durationMs), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (menu.isNotEmpty()) MoreMenu(menu) else Box(Modifier.width(8.dp))

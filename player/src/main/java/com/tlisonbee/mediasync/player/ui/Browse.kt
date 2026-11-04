@@ -105,7 +105,7 @@ fun HomeScreen(ui: Ui, data: LibraryData, playing: String?) {
                     TrackRow(
                         t.title, "${t.artist} · ${t.albumOrUnknown}",
                         lead = { Cover(ui.covers, t.cover, 44.dp) },
-                        durationMs = t.durationMs, playing = t.path == playing,
+                        durationMs = t.durationMs, playing = t.path == playing, remote = t.isRemote,
                         onClick = { vm.play(data.tracks, i) },
                         menu = ui.trackMenu(t),
                     )
@@ -210,7 +210,7 @@ fun AlbumScreen(ui: Ui, album: Album, playing: String?) {
                     t.title,
                     if (t.artist != album.artist) t.artist else "",
                     lead = { Text(t.trackNumber?.toString() ?: "", Modifier.width(28.dp), textAlign = TextAlign.End, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    durationMs = t.durationMs, playing = t.path == playing,
+                    durationMs = t.durationMs, playing = t.path == playing, remote = t.isRemote,
                     onClick = { vm.play(album.tracks, i) },
                     menu = ui.trackMenu(t, album = false),
                 )
@@ -252,7 +252,7 @@ fun ArtistScreen(ui: Ui, data: LibraryData, name: String, playing: String?) {
             TrackRow(
                 t.title, "${t.albumOrUnknown} · ${t.albumArtistOrArtist}",
                 lead = { Cover(ui.covers, t.cover, 44.dp) },
-                durationMs = t.durationMs, playing = t.path == playing,
+                durationMs = t.durationMs, playing = t.path == playing, remote = t.isRemote,
                 onClick = { vm.play(artist.appearsOn, i) },
                 menu = ui.trackMenu(t, artist = false),
             )
@@ -275,7 +275,7 @@ fun FolderContent(ui: Ui, data: LibraryData, path: String, playing: String?) {
             TrackRow(
                 t.fileName, "${t.artist} · ${t.title}",
                 lead = { Cover(ui.covers, t.cover, 44.dp) },
-                durationMs = t.durationMs, playing = t.path == playing,
+                durationMs = t.durationMs, playing = t.path == playing, remote = t.isRemote,
                 onClick = { vm.play(listing.tracks, i) },
                 menu = ui.trackMenu(t),
             )
@@ -339,7 +339,7 @@ fun PlaylistScreen(ui: Ui, path: String, playing: String?) {
             } else {
                 TrackRow(
                     track.title, "${track.artist} · ${track.albumOrUnknown}", lead = { Cover(ui.covers, track.cover, 44.dp) },
-                    durationMs = track.durationMs, playing = track.path == playing,
+                    durationMs = track.durationMs, playing = track.path == playing, remote = track.isRemote,
                     onClick = { vm.play(playable, playable.indexOf(track).coerceAtLeast(0)) },
                     menu = ui.trackMenu(track, extra = edits),
                 )
@@ -368,7 +368,7 @@ fun SearchResultsList(ui: Ui, data: LibraryData, query: String, playing: String?
         itemsIndexed(results.tracks.take(300), key = { _, t -> "t:" + t.path }) { i, t ->
             TrackRow(
                 t.title, "${t.artist} · ${t.albumOrUnknown}", lead = { Cover(ui.covers, t.cover, 44.dp) },
-                durationMs = t.durationMs, playing = t.path == playing,
+                durationMs = t.durationMs, playing = t.path == playing, remote = t.isRemote,
                 onClick = { vm.play(results.tracks, i) },
                 menu = ui.trackMenu(t),
             )
