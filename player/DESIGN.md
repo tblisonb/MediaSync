@@ -111,7 +111,7 @@ its processors, each time it flushes them, which playlist item the following aud
   minute. Later scans only read files whose size or date changed.
 
 **Licence:** Jellyfin's FFmpeg build is GPL-3.0, so the player's APK is a GPL-3.0 work when it's
-distributed; the repository has no licence yet.
+distributed. The repository is GPL-3.0-or-later (decided 2026-11-03), which fits.
 
 ### Phase 2 notes
 
