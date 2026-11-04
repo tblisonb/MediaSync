@@ -174,6 +174,14 @@ Settings. Devices write them like any other tag (`TXXX` frames in MP3); older ap
 never send their removal. Most of the library's MP3s have enough tag padding (95% of a sample have
 200 bytes or more) for the tags to be rewritten in place.
 
+### Phase 2: rescanning after a sync
+
+MediaSync tells the player which files each sync changed (`FILES_CHANGED`, sent to the player's
+package under the `com.tlisonbee.mediasync.permission.PLAYER` permission, which is `signature`:
+only apps signed with MediaSync's key send or receive it; adb's shell is turned away). A player
+that's running scans at once; one that isn't finds the changes when it next opens. Both apps
+declare the permission, so either can be installed first.
+
 ### Phase 2 notes
 
 - **Playlists move with their tracks.** MediaSync renames a track when its tags change

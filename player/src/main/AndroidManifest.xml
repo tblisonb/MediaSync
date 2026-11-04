@@ -3,6 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Music/ through plain file APIs, playlists included, as MediaSync reads it (see DESIGN.md). -->
+    <!-- Shared only with apps signed with MediaSync's key (the player): what a sync changed, and
+         later the server's address for streaming. Both apps declare it, whichever comes first. -->
+    <permission
+        android:name="com.tlisonbee.mediasync.permission.PLAYER"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.tlisonbee.mediasync.permission.PLAYER" />
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
@@ -37,6 +43,16 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- MediaSync says which files a sync changed (only MediaSync can send this). -->
+        <receiver
+            android:name=".library.FilesChangedReceiver"
+            android:exported="true"
+            android:permission="com.tlisonbee.mediasync.permission.PLAYER">
+            <intent-filter>
+                <action android:name="com.tlisonbee.mediasync.action.FILES_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <!-- A headset's play button after the app was closed: playback resumes from the saved queue. -->
         <receiver
