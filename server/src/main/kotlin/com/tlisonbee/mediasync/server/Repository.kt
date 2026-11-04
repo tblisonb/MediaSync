@@ -442,6 +442,14 @@ class RevisionScope(
     /** Records the change counts; returns the revision, or null if nothing was written. */
     fun finish(): Long? {
         val r = rev ?: return null
+        // Playlists naming files this revision moved point at their new paths, in this revision.
+        val moves = LinkedHashMap<String, String>()
+        for ((assetId, old) in before.toList()) {
+            if (old == null || old.deleted || !RepoPaths.isMusic(old.path)) continue
+            val now = repo.headVersion(assetId)?.takeIf { !it.deleted } ?: continue
+            if (now.path != old.path) moves[old.path] = now.path
+        }
+        repo.followMoves(this, moves)
         val counts = mutableMapOf<ChangeType, Int>()
         for ((assetId, old) in before) {
             val new = repo.headVersion(assetId) ?: continue

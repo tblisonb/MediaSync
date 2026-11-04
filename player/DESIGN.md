@@ -184,10 +184,11 @@ declare the permission, so either can be installed first.
 
 ### Phase 2 notes
 
-- **Playlists move with their tracks.** MediaSync renames a track when its tags change
-  (`Artist/Album/NN Title`), which would break a playlist's paths. The server knows every move, so
-  it should rewrite the paths in `music/Playlists/*.m3u8` in the same revision. Until then the
-  player falls back to finding a missing entry by its tags.
+- **Playlists move with their tracks** (built, server 1.5.0). MediaSync renames a track when its
+  tags change (`Artist/Album/NN Title`), which would break a playlist's paths, so the revision that
+  moves a file rewrites the relative entries naming it in every `.m3u`/`.m3u8` under music/
+  (`Playlists.kt`); devices get the new playlist with the move. Absolute paths and URLs are left
+  alone. The player also still finds a missing entry by its `#EXTINF` title.
 - **Streaming** needs a server endpoint listing the whole music library, not only what this
   device syncs, and the player gets the server address and the device's token from MediaSync
   through the signature permission. `/blobs/{hash}` already serves files with range requests.
