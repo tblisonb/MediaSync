@@ -39,3 +39,23 @@ class M3uTest {
         assertNull(M3u.match(entry.copy(title = null), data))
     }
 }
+
+class M3uTidalTest {
+    @Test
+    fun tidalEntriesAsTheFooyinPluginWritesThem() {
+        val text = "#EXTM3U\n#EXTINF:238,Radiohead - Creep\ntidal://track/58990486\n../Boston/More.mp3\n"
+        val entries = M3u.parse(text, "/sdcard/Music/Playlists")
+        assertEquals("tidal:58990486", entries[0].path)
+        assertEquals("/sdcard/Music/Boston/More.mp3", entries[1].path)
+        assertEquals(text, M3u.write(entries, "/sdcard/Music/Playlists"))
+        // Not seen before: made from its #EXTINF line, and it plays by its ID.
+        val t = M3u.match(entries[0], LibraryData.EMPTY)!!
+        assertEquals("Creep", t.title)
+        assertEquals(listOf("Radiohead"), t.artists)
+        assertEquals(238_000L, t.durationMs)
+        assert(t.isTidal)
+        // Known: the full track.
+        val known = t.copy(album = "Pablo Honey")
+        assertEquals(known, M3u.match(entries[0], LibraryData.EMPTY) { known })
+    }
+}

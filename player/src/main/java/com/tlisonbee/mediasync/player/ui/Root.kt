@@ -72,7 +72,14 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf<List<Track>?>(null) }
-    val ui = remember(vm) { Ui(vm, pickPlaylist = { picking = it }, message = { text -> scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(text) } }) }
+    var pickingTidal by remember { mutableStateOf<List<Track>?>(null) }
+    val ui = remember(vm) {
+        Ui(
+            vm, pickPlaylist = { picking = it },
+            message = { text -> scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(text) } },
+            pickTidalPlaylist = { pickingTidal = it },
+        )
+    }
     val data = dataOrNull ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     val route = vm.stack.last()
     val playing = playback.current?.mediaId
@@ -111,6 +118,7 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
         }
     }
     picking?.let { tracks -> AddToPlaylistDialog(vm, tracks) { done -> picking = null; done?.let(ui.message) } }
+    pickingTidal?.let { tracks -> TidalPlaylistDialog(ui, tracks) { pickingTidal = null } }
 }
 
 @UnstableApi

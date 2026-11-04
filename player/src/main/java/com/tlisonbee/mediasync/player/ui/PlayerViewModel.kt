@@ -131,6 +131,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val tidal = application.app.tidal
     val tidalBrowser = TidalBrowser(viewModelScope, tidal)
 
+    /** Where TIDAL edits run: they finish even if the screen that started them is left. */
+    val viewModelScopeForEdits get() = viewModelScope
+
     /** The TIDAL login the login page is finishing. */
     var pendingTidalLogin: com.tlisonbee.mediasync.player.tidal.TidalLogin.Request? = null
 

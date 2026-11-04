@@ -66,3 +66,47 @@ class TidalCatalogTest {
         }
     }
 }
+
+class TidalCacheTest {
+    @Test
+    fun listsAreKeptPerAccount() {
+        val dir = kotlin.io.path.createTempDirectory("tidal").toFile()
+        try {
+            java.io.File(dir, "account.json").writeText("""{"client_id":"c","refresh_token":"r","user_id":"42"}""")
+            val cache = TidalCache(java.io.File(dir, "cache"), TidalSession(java.io.File(dir, "account.json"), null))
+            val doc = Json.parseToJsonElement("""{"data":[{"id":"1","type":"artists"}],"included":[{"id":"1","type":"artists","attributes":{"name":"Boston"}}]}""").jsonObject
+            cache.write(TidalList.FAVORITE_ARTISTS, null, "v1", listOf(doc))
+            val back = cache.read(TidalList.FAVORITE_ARTISTS, null)!!
+            assertEquals("v1", back.version)
+            assertEquals(listOf("Boston"), back.items.map { it.title })
+            assert(java.io.File(dir, "cache/42/favorite-artists.json").isFile)
+            assertNull(cache.read(TidalList.FAVORITE_TRACKS, null))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun comparableText() {
+        assertEquals("beyonce", TidalCatalog.comparable("Beyoncé"))
+        assertEquals("dontlookbackinanger", TidalCatalog.comparable("Don't Look Back in Anger"))
+    }
+}
+
+/** A real search reply (2026-11-04, "radiohead creep", with the includes Segue asks for). */
+class TidalRealSearchTest {
+    @Test
+    fun parsesWhatTidalSends() {
+        val text = javaClass.getResource("/tidal/search-creep.json")!!.readText()
+        val results = TidalCatalog.parseSearch(Json.parseToJsonElement(text).jsonObject)
+        val creep = results.tracks.first { it.id == "58990486" }
+        assertEquals("Creep", creep.title.substringBefore(" ("))
+        assert("Radiohead" in creep.artist) { creep.artist }
+        assert(creep.album.isNotEmpty())
+        assert((creep.durationMs ?: 0) in 230_000L..245_000L) { "${creep.durationMs}" }
+        assert(creep.cover?.startsWith("t") == true) { "no cover key" }
+        assert(results.tracks.count { it.cover != null } >= results.tracks.size / 2)
+        assert(results.albums.isNotEmpty() && results.playlists.isNotEmpty()) // (this reply lists no artists)
+        assert(results.albums.all { it.cover != null || it.title.isNotEmpty() })
+    }
+}

@@ -69,7 +69,7 @@ ExoPlayer plays as they are. The playback login the plugin uses is TIDAL's own A
 | **0. Checks** | The module and a test app. On the phone: ExoPlayer plays consecutive MP3s with the LAME/Lavc header without a gap and without restarting its audio output; a per-track gain applies exactly at each track boundary (what ReplayGain needs); how fast `:shared`'s tag reading scans `Music/`. See "Phase 0 checks" below. |
 | **1. Local player** (built) | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain tags, once MediaSync carries them. See "Phase 1" below. |
 | **2. MediaSync** | The server's ReplayGain (above). Rescan the changed files right after a sync. Playlists as `.m3u8` files in a synced `Music/Playlists/` folder, shared with fooyin on the desktop. Streaming tracks the phone doesn't hold from the server over Tailscale. |
-| **3. TIDAL** (logins, browsing, playback built) | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
+| **3. TIDAL** (built) | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
 | **4. Polish** | Widget, equalizer, sleep timer, releases. Android Auto when there's a use for it. |
 
 ### Phase 0 checks
@@ -208,8 +208,20 @@ learned about the APIs):
 - **One queue**: TIDAL tracks mix with local and server ones. The ones played are remembered
   (`files/tidal/tracks.json`), so a saved queue comes back with them.
 
-Still to come: editing playlists and favorites (and finding your own files on TIDAL to add them),
-a disk cache of the lists, and TIDAL tracks in Segue's own playlists.
+- **Editing** (Segue 0.4.0, `TidalEditor`): every track's menu (local, server or TIDAL) has Add
+  to TIDAL playlist (one of your own, or a new unlisted one) and Add to / Remove from TIDAL
+  favorites; albums, artists and other people's playlists can be favorited; in your own TIDAL
+  playlist, Remove from this TIDAL playlist. Your own files are found on TIDAL as the plugin does
+  (search by artist and title; same title, artist and length within 3 s; the same album first),
+  and the message says which weren't found.
+- **A disk cache** (`TidalCache`, `files/tidal/cache/<user>/`): lists as TIDAL sent them, shown at
+  once; after a minute, one request (`numberOfItems`/`lastModifiedAt`) says whether to fetch them
+  again. Albums don't change; an artist's albums are fetched again after a day.
+- **TIDAL tracks in Segue's playlists**: written as `tidal://track/<id>` lines with their
+  `#EXTINF`, as the fooyin plugin writes them, so a playlist synced through MediaSync plays the
+  same TIDAL tracks in both. A TIDAL track Segue hasn't seen comes from its `#EXTINF` line.
+- A real search reply is a test fixture (`src/test/resources/tidal/`), so parsing is checked
+  against what TIDAL sends.
 
 Instrumented tests can run against the installed release build, without uninstalling it:
 `./gradlew -Pplayer.testBuildType=release :player:assembleReleaseAndroidTest`, then install that

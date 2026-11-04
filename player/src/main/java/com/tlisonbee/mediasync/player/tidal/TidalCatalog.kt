@@ -75,19 +75,17 @@ class TidalCatalog(private val account: TidalSession) {
         }
     }
 
-    fun search(query: String): TidalSearch {
-        val doc = request(
+    fun search(query: String): TidalSearch = parseSearch(
+        request(
             "GET", "/searchResults",
             mapOf("filter[query]" to query, "include" to "tracks,tracks.artists,tracks.albums,tracks.albums.coverArt,albums,albums.artists,albums.coverArt,artists,playlists,playlists.coverArt"),
-        )
-        val data = doc["data"] as? JsonArray ?: return TidalSearch(emptyList(), emptyList(), emptyList(), emptyList())
-        val relationships = (data.firstOrNull() as? JsonObject)?.obj("relationships") ?: return TidalSearch(emptyList(), emptyList(), emptyList(), emptyList())
-        val included = Included(doc)
-        fun relation(name: String) = items(relationships.obj(name)?.get("data") as? JsonArray ?: JsonArray(emptyList()), included)
-        return TidalSearch(relation("tracks"), relation("albums"), relation("artists"), relation("playlists"))
-    }
+        ),
+    )
 
-    fun page(list: TidalList, id: String?, cursor: String?): TidalPage {
+    fun page(list: TidalList, id: String?, cursor: String?): TidalPage = parsePage(pageDocument(list, id, cursor))
+
+    /** One page of a list as TIDAL sent it, for the cache. */
+    fun pageDocument(list: TidalList, id: String?, cursor: String?): JsonObject {
         val (path, include, sort) = when (list) {
             TidalList.FAVORITE_TRACKS -> Triple("/userCollectionTracks/me/relationships/items", "items,items.artists,items.albums,items.albums.coverArt", "-addedAt")
             TidalList.FAVORITE_ALBUMS -> Triple("/userCollectionAlbums/me/relationships/items", "items,items.artists,items.coverArt", "-addedAt")
@@ -102,7 +100,45 @@ class TidalCatalog(private val account: TidalSession) {
             sort?.let { put("sort", it) }
             cursor?.let { put("page[cursor]", it) }
         }
-        return parsePage(request("GET", path, query))
+        return request("GET", path, query)
+    }
+
+    /** Every page of a list as TIDAL sent it; [onPage] sees the items so far. */
+    fun allDocuments(list: TidalList, id: String? = null, onPage: (List<TidalItem>) -> Unit = {}): List<JsonObject> {
+        val docs = mutableListOf<JsonObject>()
+        val items = mutableListOf<TidalItem>()
+        var cursor: String? = null
+        do {
+            val doc = pageDocument(list, id, cursor)
+            docs += doc
+            val page = parsePage(doc)
+            items += page.items
+            onPage(items.toList())
+            cursor = page.nextCursor
+        } while (cursor != null)
+        return docs
+    }
+
+    /**
+     * What a list's version is now, to tell whether a cached copy is still right; null for lists
+     * without one (albums don't change; an artist's albums are fetched again after a day).
+     */
+    fun version(list: TidalList, id: String?): String? {
+        val path = when (list) {
+            TidalList.FAVORITE_TRACKS -> "/userCollectionTracks/me"
+            TidalList.FAVORITE_ALBUMS -> "/userCollectionAlbums/me"
+            TidalList.FAVORITE_ARTISTS -> "/userCollectionArtists/me"
+            TidalList.PLAYLISTS -> "/userCollectionPlaylists/me"
+            TidalList.PLAYLIST_TRACKS -> "/playlists/${TidalHttp.enc(id!!)}"
+            TidalList.ALBUM_TRACKS, TidalList.ARTIST_ALBUMS -> return null
+        }
+        val attrs = request("GET", path).obj("data")?.obj("attributes")
+        var version = "${attrs?.string("lastModifiedAt")}/${attrs?.get("numberOfItems") ?: attrs?.get("numberOfTrackItems")}"
+        if (list == TidalList.PLAYLISTS) {
+            // Each playlist's track count shows in the list, and an edited playlist comes first: the first page counts too.
+            version += ";" + page(list, null, null).items.joinToString(";") { "${it.id}@${it.info}" }.hashCode()
+        }
+        return version
     }
 
     /** Every page of a list. */
@@ -165,6 +201,24 @@ class TidalCatalog(private val account: TidalSession) {
         for (chunk in data.chunked(50)) request(method, path, body = buildJsonObject { put("data", JsonArray(chunk)) })
     }
 
+    /**
+     * The TIDAL track for one of your files, or null: by its artist and title in TIDAL's search,
+     * taking only a track with the same title, the artist among its artists and the same length
+     * (within 3 s), so a live version or a cover isn't taken in its place; the same album first.
+     */
+    fun findTrack(track: Track): String? {
+        if (TidalTracks.isTidal(track.path)) return TidalTracks.idOf(track.path)
+        val title = comparable(track.title)
+        val artist = comparable(track.artists.firstOrNull() ?: track.albumArtist)
+        if (title.isEmpty() || artist.isEmpty()) return null
+        val found = search("${track.artists.firstOrNull() ?: track.albumArtist} ${track.title}").tracks.filter { c ->
+            comparable(c.title) == title && comparable(c.artist).contains(artist) &&
+                (track.durationMs == null || c.durationMs == null || kotlin.math.abs(c.durationMs - track.durationMs) <= 3000)
+        }
+        val album = comparable(track.album)
+        return (found.firstOrNull { album.isNotEmpty() && comparable(it.album) == album } ?: found.firstOrNull())?.id
+    }
+
     /** The account's user ID: playlists it owns are the ones it can edit. */
     val userId: String get() = account.user
 
@@ -178,10 +232,23 @@ class TidalCatalog(private val account: TidalSession) {
             return "TIDAL said HTTP ${result.status}" + (detail?.let { ": $it" } ?: "")
         }
 
+        fun parseSearch(doc: JsonObject): TidalSearch {
+            val none = TidalSearch(emptyList(), emptyList(), emptyList(), emptyList())
+            val data = doc["data"] as? JsonArray ?: return none
+            val relationships = (data.firstOrNull() as? JsonObject)?.obj("relationships") ?: return none
+            val included = Included(doc)
+            fun relation(name: String) = items(relationships.obj(name)?.get("data") as? JsonArray ?: JsonArray(emptyList()), included)
+            return TidalSearch(relation("tracks"), relation("albums"), relation("artists"), relation("playlists"))
+        }
+
         fun parsePage(doc: JsonObject): TidalPage = TidalPage(
             items(doc["data"] as? JsonArray ?: JsonArray(emptyList()), Included(doc)),
             doc.obj("links")?.obj("meta")?.string("nextCursor")?.takeIf { it.isNotEmpty() },
         )
+
+        /** Text as compared when matching tracks: letters and digits only, case and accents folded. */
+        fun comparable(text: String): String =
+            java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKD).filter { it.isLetterOrDigit() }.lowercase()
 
         /** `PT3M59S` in milliseconds. */
         fun durationMs(iso: String?): Long? {

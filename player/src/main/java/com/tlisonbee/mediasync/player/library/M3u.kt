@@ -26,7 +26,8 @@ object M3u {
                 }
                 line.startsWith("#") -> {}
                 else -> {
-                    entries += Entry(resolve(line, playlistFolder), title, duration)
+                    val tidal = TIDAL_LINE.find(line)?.groupValues?.get(1)
+                    entries += Entry(if (tidal != null) TIDAL_PREFIX + tidal else resolve(line, playlistFolder), title, duration)
                     title = null
                     duration = null
                 }
@@ -47,8 +48,19 @@ object M3u {
         append("#EXTM3U\n")
         for (e in entries) {
             if (e.title != null || e.durationSec != null) append("#EXTINF:").append(e.durationSec ?: -1).append(',').append(e.title.orEmpty()).append('\n')
-            append(relative(e.path, playlistFolder)).append('\n')
+            append(if (e.path.startsWith(TIDAL_PREFIX)) "tidal://track/" + e.path.removePrefix(TIDAL_PREFIX) else relative(e.path, playlistFolder)).append('\n')
         }
+    }
+
+    /** A TIDAL track known only from a playlist line: "Artist - Title" and its length. */
+    private fun fromExtinf(entry: Entry): Track {
+        val info = entry.title.orEmpty()
+        val artist = info.substringBefore(" - ", "").trim()
+        val title = if (" - " in info) info.substringAfter(" - ").trim() else info.ifEmpty { entry.path }
+        return Track(
+            path = entry.path, size = 0, mtime = 0, title = title, artists = listOfNotNull(artist.ifEmpty { null }), album = "",
+            albumArtist = "", date = "", genre = "", trackNumber = null, discNumber = null, durationMs = entry.durationSec?.let { it * 1000L }, cover = null,
+        )
     }
 
     fun entry(track: Track) = Entry(track.path, "${track.artist} - ${track.title}", track.durationMs?.let { (it / 1000).toInt() })
@@ -58,12 +70,18 @@ object M3u {
         File(folder).toPath().normalize().relativize(File(path).toPath().normalize()).toString()
     }.getOrDefault(path)
 
+    /** TIDAL tracks in playlists, as the fooyin plugin writes them too: `tidal://track/58990486`. */
+    private val TIDAL_LINE = Regex("""^tidal://track/(\d+)""")
+    private const val TIDAL_PREFIX = "tidal:"
+
     /**
      * The track an entry means: the file at its path, else (after MediaSync moved the file for a
-     * changed tag) a track whose "artist - title" matches its `#EXTINF` title.
+     * changed tag) a track whose "artist - title" matches its `#EXTINF` title. A TIDAL entry is the
+     * TIDAL track [tidal] knows, or one made from its `#EXTINF` line.
      */
-    fun match(entry: Entry, library: LibraryData): Track? {
+    fun match(entry: Entry, library: LibraryData, tidal: (String) -> Track? = { null }): Track? {
         library.byPath[entry.path]?.let { return it }
+        if (entry.path.startsWith(TIDAL_PREFIX)) return tidal(entry.path) ?: fromExtinf(entry)
         val title = entry.title?.let(::fold) ?: return null
         return library.tracks.firstOrNull { fold("${it.artist} - ${it.title}") == title }
     }

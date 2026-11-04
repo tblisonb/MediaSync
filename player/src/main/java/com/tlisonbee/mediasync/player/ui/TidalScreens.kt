@@ -60,7 +60,10 @@ private fun TidalItem.subtitle() = listOf(artist, album).filter { it.isNotEmpty(
 /** A TIDAL track's row; tapping plays [list] from it. */
 @UnstableApi
 @Composable
-private fun TidalTrackRow(ui: Ui, item: TidalItem, list: List<TidalItem>, index: Int, playing: String?, numbered: Boolean = false) {
+private fun TidalTrackRow(
+    ui: Ui, item: TidalItem, list: List<TidalItem>, index: Int, playing: String?, numbered: Boolean = false,
+    extra: List<Pair<String, () -> Unit>> = emptyList(),
+) {
     val track = item.track ?: return
     TrackRow(
         item.title, if (numbered) item.artist else item.subtitle(),
@@ -73,14 +76,16 @@ private fun TidalTrackRow(ui: Ui, item: TidalItem, list: List<TidalItem>, index:
         },
         durationMs = item.durationMs, playing = track.path == playing,
         onClick = { ui.vm.play(list.mapNotNull { it.track }, list.take(index).count { it.track != null }) },
-        menu = ui.tidalTrackMenu(listOf(track), item.title),
+        menu = ui.tidalTrackMenu(listOf(track), "“${item.title}”", extra),
     )
 }
 
 @UnstableApi
-fun Ui.tidalTrackMenu(tracks: List<Track>, name: String) = TrackActions(
+fun Ui.tidalTrackMenu(tracks: List<Track>, name: String, extra: List<Pair<String, () -> Unit>> = emptyList()) = TrackActions(
     playNext = { vm.playNext(tracks); message("$name plays next") },
     addToQueue = { vm.addToQueue(tracks); message("Added $name to the queue") },
+    addToPlaylist = { pickPlaylist(tracks) },
+    extra = tidalActions(tracks) + extra,
 ).list()
 
 /** A row for a TIDAL album, artist or playlist. */
@@ -99,6 +104,13 @@ private fun TidalEntryRow(ui: Ui, item: TidalItem) {
             if (item.kind == TidalItem.Kind.ARTIST) RoundIcon(R.drawable.ic_note) else Cover(ui.covers, item.cover, 52.dp)
         },
         onClick = { ui.vm.navigate(route) },
+        menu = if (item.kind == TidalItem.Kind.PLAYLIST && ui.vm.tidal.account.user in item.owners) emptyList() else {
+            val favorite = item.id in ui.vm.tidalBrowser.favoriteIds(item.kind)
+            listOf(
+                if (favorite) "Remove from TIDAL favorites" to { ui.tidalEditor.favorite(item, add = false) }
+                else "Add to TIDAL favorites" to { ui.tidalEditor.favorite(item, add = true) },
+            )
+        },
     )
 }
 
@@ -182,7 +194,11 @@ fun TidalTabContent(ui: Ui, playing: String?) {
 @Composable
 fun TidalTracksScreen(ui: Ui, list: TidalList, id: String, playing: String?) {
     val browser = ui.vm.tidalBrowser
-    LaunchedEffect(list, id) { browser.load(list, id) }
+    LaunchedEffect(list, id) {
+        browser.load(list, id)
+        // Whether it's yours (and so editable) comes from your playlists.
+        if (list == TidalList.PLAYLIST_TRACKS) browser.load(TidalList.PLAYLISTS)
+    }
     val state = browser.state(list, id)
     val tracks = state.items.mapNotNull { it.track }
     LazyColumn(Modifier.fillMaxSize()) {
@@ -199,7 +215,15 @@ fun TidalTracksScreen(ui: Ui, list: TidalList, id: String, playing: String?) {
                 }
             }
         }
-        itemsIndexed(state.items, key = { i, it -> "$i:${it.id}" }) { i, it -> TidalTrackRow(ui, it, state.items, i, playing, numbered = list == TidalList.ALBUM_TRACKS) }
+        // Your own playlist: its entries can be taken out.
+        val own = list == TidalList.PLAYLIST_TRACKS && browser.ownPlaylists().any { it.id == id }
+        val title = browser.state(TidalList.PLAYLISTS).items.firstOrNull { it.id == id }?.title ?: "the playlist"
+        itemsIndexed(state.items, key = { i, it -> "$i:${it.id}" }) { i, it ->
+            TidalTrackRow(
+                ui, it, state.items, i, playing, numbered = list == TidalList.ALBUM_TRACKS,
+                extra = if (own) listOf("Remove from this TIDAL playlist" to { ui.tidalEditor.removeFromPlaylist(id, title, listOf(it)) }) else emptyList(),
+            )
+        }
         listStatus(state, "No tracks.")
     }
 }
@@ -337,4 +361,47 @@ fun TidalSettingsSection(vm: PlayerViewModel) {
         Button(enabled = playbackClient.isNotBlank(), onClick = { vm.startTidalLogin(playback = true, playbackClient, playbackSecret) }) { Text("Log in") }
     }
     Spacer(Modifier.height(4.dp))
+}
+
+/** Picks one of your TIDAL playlists for [tracks], or makes a new one. */
+@UnstableApi
+@Composable
+fun TidalPlaylistDialog(ui: Ui, tracks: List<Track>, onDone: () -> Unit) {
+    val browser = ui.vm.tidalBrowser
+    LaunchedEffect(Unit) { browser.load(TidalList.PLAYLISTS) }
+    var creating by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    val what = if (tracks.size == 1) "“${tracks[0].title}”" else "${tracks.size} tracks"
+    if (creating) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDone,
+            title = { Text("New TIDAL playlist") },
+            text = {
+                Column {
+                    OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+                    Text("Unlisted: anyone with its link can see it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { ui.tidalEditor.createPlaylist(name.trim(), tracks); onDone() }) { Text("Create") } },
+            dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+        )
+        return
+    }
+    val state = browser.state(TidalList.PLAYLISTS)
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Add $what to") },
+        text = {
+            LazyColumn(Modifier.height(400.dp)) {
+                item { EntryRow("New TIDAL playlist…", "", lead = { RoundIcon(R.drawable.ic_add, 40.dp) }, onClick = { creating = true }) }
+                items(browser.ownPlaylists(), key = { it.id }) { p ->
+                    EntryRow(p.title, p.info, lead = { Cover(ui.covers, p.cover, 40.dp) }, onClick = { ui.tidalEditor.addToPlaylist(tracks, p); onDone() })
+                }
+                if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp)) }
+                state.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+    )
 }
