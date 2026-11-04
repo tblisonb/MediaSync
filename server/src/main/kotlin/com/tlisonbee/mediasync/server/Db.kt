@@ -138,6 +138,11 @@ class Db(path: Path) : AutoCloseable {
         }
         // 6 moves photos/ to images/, 7 corrects that move: revisions, not schema changes, made at startup (Images.kt).
         // So later columns are added when missing instead of by version, which would skip those moves.
+        // Each media's loudness (Loudness.kt): its sample peak and 400 ms blocks; failed = 1 when ffmpeg couldn't read it.
+        exec(
+            "CREATE TABLE IF NOT EXISTS loudness (media_hash TEXT PRIMARY KEY, peak REAL NOT NULL, blocks TEXT NOT NULL, " +
+                "failed INTEGER NOT NULL DEFAULT 0, measured_at INTEGER NOT NULL)",
+        )
         val deviceColumns = query("PRAGMA table_info(device)") { it.getString("name") }
         if ("web_grant" !in deviceColumns) {
             // A phone allowed into the web UI: a fingerprint of the password it was allowed with,

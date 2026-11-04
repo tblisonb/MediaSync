@@ -36,7 +36,8 @@ data class TagPolicy(
      * A kind the saved settings don't mention (videos, in settings from before them) gets the
      * default fields; MediaSync's own fields are always kept.
      */
-    fun allowed(kind: AssetKind): List<String> = ((fields[kind] ?: DEFAULT_FIELDS[kind].orEmpty()) + OWN_FIELDS[kind].orEmpty()).distinct()
+    fun allowed(kind: AssetKind): List<String> =
+        ((fields[kind] ?: DEFAULT_FIELDS[kind].orEmpty()) + OWN_FIELDS[kind].orEmpty() + MEASURED[kind].orEmpty()).distinct()
 
     companion object {
         const val FRONT_COVER = "front"
@@ -44,6 +45,12 @@ data class TagPolicy(
 
         /** Fields MediaSync keeps itself and never writes into the files: a photo's (or a clip's) date. */
         val OWN_FIELDS = mapOf(AssetKind.IMAGE to listOf(TagField.DATE), AssetKind.VIDEO to listOf(TagField.DATE))
+
+        /**
+         * Fields the server works out from the media (ReplayGain loudness), kept whatever the
+         * policy lists, and written into files like any other tag.
+         */
+        val MEASURED = mapOf(AssetKind.AUDIO to TagField.REPLAYGAIN)
 
         fun cleanValue(value: String): String =
             Normalizer.normalize(value.trim(), Normalizer.Form.NFC).take(Limits.MAX_TAG_VALUE)

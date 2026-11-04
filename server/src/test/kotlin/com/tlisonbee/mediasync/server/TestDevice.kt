@@ -182,6 +182,8 @@ fun withServer(block: suspend ServerFixture.() -> Unit) {
     val dir = RepoDir(root.resolve("repo"))
     Setup.create(dir, ADMIN_PASSWORD)
     val repo = Repository(dir)
+    // Measuring loudness writes revisions of its own after pushes; LoudnessTest turns it on.
+    repo.updateSettings(repo.settings.copy(measureLoudness = false))
     try {
         testApplication {
             application { mediaSyncModule(repo) }

@@ -4,7 +4,7 @@ plugins {
     application
 }
 
-version = "1.4.1"
+version = "1.5.0"
 
 // The version names the release tarball, not the jar: install.sh checks lib/server.jar.
 tasks.jar {

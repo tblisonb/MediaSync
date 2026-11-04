@@ -58,6 +58,6 @@ class PhotoDatesTest {
         val policy = TagPolicy(fields = mapOf(AssetKind.AUDIO to listOf(TagField.TITLE), AssetKind.VIDEO to listOf(TagField.TITLE)))
         assertEquals(mapOf(TagField.DATE to listOf("2024")), policy.filter(AssetKind.IMAGE, mapOf(TagField.DATE to listOf("2024"), TagField.TITLE to listOf("x"))))
         assertEquals(listOf(TagField.TITLE, TagField.DATE), policy.allowed(AssetKind.VIDEO))
-        assertEquals(listOf(TagField.TITLE), policy.allowed(AssetKind.AUDIO))
+        assertEquals(listOf(TagField.TITLE) + TagField.REPLAYGAIN, policy.allowed(AssetKind.AUDIO))
     }
 }

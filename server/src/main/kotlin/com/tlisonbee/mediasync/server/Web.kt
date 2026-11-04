@@ -230,7 +230,10 @@ fun Route.webRoutes(repo: Repository) {
         homeRoutes(repo)
         imageRoutes(repo)
 
-        get("/settings") { call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null) } }
+        get("/settings") {
+            val loudness = io { repo.loudnessStatus() }
+            call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null, loudness) }
+        }
         post("/settings") {
             val form = call.receiveParameters()
             val fields = TagField.MUSIC.filter { form["field.$it"] != null }
@@ -239,7 +242,9 @@ fun Route.webRoutes(repo: Repository) {
                 fields = repo.settings.tagPolicy.fields + (AssetKind.AUDIO to fields),
                 pictures = repo.settings.tagPolicy.pictures + (AssetKind.AUDIO to pictures),
             )
-            io { repo.updateSettings(repo.settings.copy(tagPolicy = policy)) }
+            val measure = form["loudness"] != null
+            io { repo.updateSettings(repo.settings.copy(tagPolicy = policy, measureLoudness = measure)) }
+            if (measure) io { repo.startMeasuring() }
             call.respondRedirect("/settings?saved")
         }
 
@@ -771,11 +776,11 @@ private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Lon
 
 private val prettyJson = kotlinx.serialization.json.Json(ApiJson) { prettyPrint = true }
 
-private fun HTML.settingsPage(settings: Settings, saved: Boolean) = page("Settings") {
+private fun HTML.settingsPage(settings: Settings, saved: Boolean, loudness: String?) = page("Settings") {
     h1 { +"Settings" }
     form(action = "/settings", method = FormMethod.post, classes = "card") {
         h2 { +"Music tag policy" }
-        p("muted") { +"Only these fields are kept. Every other tag is removed from files at their next sync." }
+        p("muted") { +"Only these fields are kept, and the ReplayGain values the server measures. Every other tag is removed from files at their next sync." }
         val fields = settings.tagPolicy.fields[AssetKind.AUDIO].orEmpty()
         TagField.MUSIC.forEach { field ->
             label("check") {
@@ -789,6 +794,17 @@ private fun HTML.settingsPage(settings: Settings, saved: Boolean) = page("Settin
             }
             +"front cover"
         }
+        h2 { +"Volume levelling" }
+        label("check") {
+            input(type = InputType.checkBox, name = "loudness") { checked = settings.measureLoudness }
+            +"Measure every track's loudness for ReplayGain"
+        }
+        p("muted") {
+            +"The server measures each track and album with ffmpeg and writes the standard ReplayGain tags into the files, "
+            +"so players on every device (the MediaSync Player, fooyin) play them at the same loudness. "
+            +"New tracks are measured as they arrive."
+        }
+        loudness?.let { p { +it } }
         if (saved) p("notice") { +"Saved." }
         div("actions") { button(classes = "primary") { +"Save" } }
     }

@@ -161,6 +161,19 @@ To run it: `./gradlew :player:installDebug :player:installDebugAndroidTest`, the
 The test lets the player in with All files access and leaves it on (taking it back kills the
 process before the result is reported): `adb shell appops set com.tlisonbee.mediasync.player MANAGE_EXTERNAL_STORAGE default`.
 
+### Phase 2: loudness from the server
+
+Built (server 1.5.0, apps 1.3.0). `Loudness.kt` measures each track's media with ffmpeg's EBU R128
+meter (about 1 s a track, a few at a time: 20 minutes or so for this library) and keeps a
+histogram of its 400 ms blocks' loudness in the `loudness` table, so an album's gated loudness is
+worked out from its tracks' histograms without decoding anything again. The four values are tags
+(`TagField.REPLAYGAIN`, kept by every music policy as `TagPolicy.MEASURED`), written in revisions
+of up to 1,000 tracks ("Measured the loudness of … tracks"), and again when a track joins or
+leaves an album. It runs at startup and after every push of music, and can be turned off in
+Settings. Devices write them like any other tag (`TXXX` frames in MP3); older apps ignore them and
+never send their removal. Most of the library's MP3s have enough tag padding (95% of a sample have
+200 bytes or more) for the tags to be rewritten in place.
+
 ### Phase 2 notes
 
 - **Playlists move with their tracks.** MediaSync renames a track when its tags change

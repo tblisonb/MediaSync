@@ -43,6 +43,9 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
     /** The game identification running or last run (Games.kt): one at a time. */
     internal val gameJob = java.util.concurrent.atomic.AtomicReference<GameJob?>(null)
 
+    /** The loudness measuring running or last run (Loudness.kt): one at a time. */
+    internal val loudnessJob = java.util.concurrent.atomic.AtomicReference<LoudnessJob?>(null)
+
     /** Runs background work such as game identification; tests run it in place. */
     var inBackground: (name: String, work: () -> Unit) -> Unit = { name, work -> Thread(work, name).apply { isDaemon = true }.start() }
 
