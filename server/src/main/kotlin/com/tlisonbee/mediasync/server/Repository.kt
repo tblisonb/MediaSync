@@ -40,6 +40,9 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
     /** The WMA conversion running or last run (Convert.kt): one at a time. */
     internal val conversion = java.util.concurrent.atomic.AtomicReference<Conversion?>(null)
 
+    /** The video conversion running or last run (ConvertVideos.kt): one at a time. */
+    internal val videoConversion = java.util.concurrent.atomic.AtomicReference<VideoConversion?>(null)
+
     /** The game identification running or last run (Games.kt): one at a time. */
     internal val gameJob = java.util.concurrent.atomic.AtomicReference<GameJob?>(null)
 

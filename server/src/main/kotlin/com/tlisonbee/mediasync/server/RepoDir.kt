@@ -74,6 +74,8 @@ data class Settings(
     val deleteClutter: Boolean = false,
     /** Audio formats converted to MP3 as tracks in them arrive (Cleanup > Convert to MP3). */
     val convertToMp3: List<String> = emptyList(),
+    /** Video formats re-encoded as HEVC in MKV as videos in them arrive (Cleanup > Convert videos). */
+    val convertVideos: List<String> = emptyList(),
 )
 
 @Serializable

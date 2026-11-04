@@ -234,6 +234,7 @@ private fun Route.apiRoutes(repo: Repository) {
         val request = call.receive<PushRequest>()
         val response = io { repo.push(call.device(), request) }
         io { repo.convertArrivals(request) }
+        io { repo.convertVideoArrivals(request) }
         io { repo.identifyArrivals(request, response.results.map { it.outcome }) }
         call.respond(response)
     }
@@ -343,4 +344,6 @@ fun Repository.startup() {
     }
     // Game files a stopped server never got to.
     if (liveGames().any { it.assetId !in gameIdents() }) startIdentifying(webDeviceId())
+    // A video conversion a restart interrupted, and videos that arrived while it was off.
+    resumeVideoConversion()
 }

@@ -12,8 +12,18 @@ import java.nio.file.Path
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-/** A video as ffprobe reads it: codecs by ffmpeg's names (h264, hevc, aac, dts…). */
-class Probe(val seconds: Double?, val video: String?, val width: Int?, val height: Int?, val audio: List<String>) {
+/**
+ * A video as ffprobe reads it: codecs by ffmpeg's names (h264, hevc, aac, dts…). [channels] has
+ * each of [audio]'s channel counts, null where ffprobe didn't say.
+ */
+class Probe(
+    val seconds: Double?,
+    val video: String?,
+    val width: Int?,
+    val height: Int?,
+    val audio: List<String>,
+    val channels: List<Int?> = emptyList(),
+) {
     /**
      * Why a browser might not play it, for the viewer to say. Current Firefox and Chrome open MP4,
      * WebM and MKV, and play H.264, VP8, VP9 and AV1 pictures (HEVC too, mostly) with AAC, MP3, Opus,
@@ -53,7 +63,7 @@ internal object Ffmpeg {
     /** What ffprobe reads of [input]: its length, its size and the codecs of its picture and sound; null if it can't. */
     fun probe(input: Path): Probe? = runCatching {
         val process = ProcessBuilder(
-            "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height:stream_disposition=attached_pic",
+            "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,channels:stream_disposition=attached_pic",
             "-of", "json", input.toString(),
         ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val out = process.inputStream.readBytes().decodeToString()
@@ -76,6 +86,8 @@ internal object Ffmpeg {
             width = picture?.get("width")?.jsonPrimitive?.intOrNull,
             height = picture?.get("height")?.jsonPrimitive?.intOrNull,
             audio = streams.filter { it.text("codec_type") == "audio" }.mapNotNull { it.text("codec_name") },
+            channels = streams.filter { it.text("codec_type") == "audio" && it.text("codec_name") != null }
+                .map { it["channels"]?.jsonPrimitive?.intOrNull },
         )
     }.getOrNull()
 
@@ -120,5 +132,66 @@ internal object Ffmpeg {
         }
         Files.deleteIfExists(out)
         return null
+    }
+
+    /** What [toHevc] made: the file, or why it couldn't. */
+    class Encoded(val file: Path?, val error: String?)
+
+    /** `nice`, to run an encode at the lowest priority; null where there's none. */
+    private val nice: String? by lazy { listOf("/usr/bin/nice", "/bin/nice").firstOrNull { Files.isExecutable(Path.of(it)) } }
+
+    /**
+     * [input] re-encoded as HEVC in a temporary MKV under [work], the way rip-disc encodes a disc:
+     * x265 10-bit at CRF 22, preset medium. Each sound track becomes AAC, at 192 kbit/s for stereo
+     * or mono and 384 for more channels; subtitles, attachments, chapters and tags are copied. A
+     * subtitle MKV can't hold (MP4's) is left out rather than the video. It runs at the lowest CPU
+     * priority and takes as long as it takes (about real time for 1080p), calling [onSeconds] with
+     * how far it has got; [started] gets the process, for stopping it, and [stopped] says when it was.
+     */
+    fun toHevc(
+        input: Path,
+        work: Path,
+        probe: Probe,
+        started: (Process) -> Unit,
+        stopped: () -> Boolean,
+        onSeconds: (Double) -> Unit,
+    ): Encoded {
+        val out = Files.createTempFile(work, "convert-", ".mkv")
+        val log = Files.createTempFile(work, "convert-", ".log")
+        val audio = probe.audio.indices.flatMap { i ->
+            val channels = probe.channels.getOrNull(i) ?: 2
+            listOf("-b:a:$i", if (channels > 2) "384k" else "192k")
+        }
+        val withSubtitles = listOf("-map", "0:s?", "-c:s", "copy")
+        try {
+            for (subtitles in listOf(withSubtitles, emptyList())) {
+                val command = nice?.let { listOf(it, "-n", "19") }.orEmpty() +
+                    listOf("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-nostats", "-y", "-i", input.toString(), "-map", "0:V:0", "-map", "0:a?") +
+                    subtitles + listOf(
+                        "-map", "0:t?", "-c:t", "copy", "-map_metadata", "0", "-map_chapters", "0",
+                        "-c:v", "libx265", "-preset", "medium", "-crf", "22", "-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error",
+                        "-c:a", "aac",
+                    ) + audio + listOf("-progress", "pipe:1", "-f", "matroska", out.toString())
+                val process = ProcessBuilder(command).redirectError(log.toFile()).start()
+                started(process)
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        // out_time_us, in microseconds (out_time_ms is too, despite its name).
+                        if (line.startsWith("out_time_us=")) line.substringAfter('=').toLongOrNull()?.let { onSeconds(it / 1e6) }
+                    }
+                }
+                process.waitFor()
+                if (process.exitValue() == 0 && Files.size(out) > 0) return Encoded(out, null)
+                if (stopped()) break
+            }
+            Files.deleteIfExists(out)
+            val why = runCatching { Files.readAllLines(log) }.getOrDefault(emptyList()).map { it.trim() }.filter { it.isNotEmpty() }.takeLast(2)
+            return Encoded(null, why.joinToString(" ").take(300).ifEmpty { "ffmpeg failed" })
+        } catch (e: Exception) {
+            Files.deleteIfExists(out)
+            return Encoded(null, e.message ?: e.toString())
+        } finally {
+            Files.deleteIfExists(log)
+        }
     }
 }

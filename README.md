@@ -267,6 +267,12 @@ from elsewhere. The phone syncs every 15 minutes on Wi-Fi. Opening the app doesn
     also keep converting tracks in those formats as they're added. Tracks keep their tags, cover
     and place, and devices swap their copies for the MP3s at their next sync. Needs `ffmpeg` on
     the server.
+  - Converts videos in older formats (WebM, AVI, WMV…) to HEVC in MKV, the way rip-disc encodes a
+    disc (x265 10-bit, CRF 22, AAC sound; subtitles and chapters kept), and can keep converting
+    new ones as they arrive. It's slow (about real time for 1080p), runs at the lowest priority,
+    saves each folder as a revision when it's done, carries on after a restart, and stops itself
+    before the repository's disk gets within 5 GB of full. Devices swap the `.webm` for the `.mkv`
+    at their next sync. MP4 and MKV videos are left alone.
   - Each cleanup is one revision, so it can be reverted.
 - **Devices**: pair and revoke devices, and see which folders each one syncs. A phone that opens
   the web UI in the app says so, with **Revoke web access** to log it out and make it ask for the
