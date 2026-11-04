@@ -1,5 +1,10 @@
 package com.tlisonbee.mediasync.player.ui
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -60,16 +66,38 @@ private fun rememberPosition(vm: PlayerViewModel, active: Boolean): Long {
     return position
 }
 
+const val EXPAND_MS = 350
+
+/** What the mini player and Now Playing need to share their container and cover while one turns into the other. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+class Transition(val shared: SharedTransitionScope, val visibility: AnimatedVisibilityScope) {
+    @Composable
+    fun Modifier.container(): Modifier = with(shared) {
+        sharedBounds(
+            rememberSharedContentState("player"), visibility,
+            boundsTransform = { _, _ -> tween(EXPAND_MS, easing = FastOutSlowInEasing) },
+            resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
+        )
+    }
+
+    @Composable
+    fun Modifier.cover(): Modifier = with(shared) {
+        sharedElement(rememberSharedContentState("cover"), visibility, boundsTransform = { _, _ -> tween(EXPAND_MS, easing = FastOutSlowInEasing) })
+    }
+}
+
 /** The bar above the bottom of the screens: what's playing, play/pause and next. */
 @UnstableApi
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData) {
+fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData, transition: Transition) = with(transition) {
     val vm = ui.vm
-    val item = state.current ?: return
+    val item = state.current ?: return@with
     val track = data.byPath[item.mediaId]
     val position = rememberPosition(vm, state.isPlaying)
-    Surface(tonalElevation = 3.dp) {
-        Column(Modifier.navigationBarsPadding()) {
+    Surface(Modifier.container(), tonalElevation = 3.dp) {
+        // Kept at the bottom while the container is still taller than the bar.
+        Column(Modifier.wrapContentHeight(Alignment.Bottom).navigationBarsPadding()) {
             LinearProgressIndicator(
                 progress = { if (state.durationMs > 0) (position.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f },
                 modifier = Modifier.fillMaxWidth().height(2.dp),
@@ -80,7 +108,7 @@ fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Cover(ui.covers, track?.cover, 44.dp)
+                Cover(ui.covers, track?.cover, 44.dp, Modifier.cover())
                 Column(Modifier.weight(1f)) {
                     Text(item.mediaMetadata.title?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(item.mediaMetadata.artist?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -93,12 +121,13 @@ fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData) {
 }
 
 @UnstableApi
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData) {
+fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData, transition: Transition) = with(transition) {
     val vm = ui.vm
     val item = state.current
     val track = item?.let { data.byPath[it.mediaId] }
-    Surface(Modifier.fillMaxSize()) {
+    Surface(Modifier.container().fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().fillMaxSize()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconAction(R.drawable.ic_collapse, "Close") { if (vm.queueOpen) vm.queueOpen = false else vm.nowPlayingOpen = false }
@@ -118,7 +147,7 @@ fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData) {
                 QueueList(ui, state, data, Modifier.weight(1f))
             } else {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Cover(ui.covers, track?.cover, min(maxWidth, maxHeight), corner = 12.dp)
+                    Cover(ui.covers, track?.cover, min(maxWidth, maxHeight), Modifier.cover(), corner = 12.dp)
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
                     Text(item.mediaMetadata.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
