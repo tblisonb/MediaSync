@@ -70,9 +70,10 @@ fun Route.cleanupRoutes(repo: Repository) {
         val art = io { repo.artPlans(options) }
         val incomplete = io { repo.incompleteAlbums() }
         val running = repo.conversion.get()?.takeIf { !it.finished }
+        val videos = io { repo.videoSection() }
         call.respondHtml {
             cleanupPage(
-                variants, strays, leftovers, convertible, repo.settings, options, art, incomplete, running, call.parameters["done"]?.toLongOrNull(),
+                variants, strays, leftovers, convertible, repo.settings, options, art, incomplete, running, videos, call.parameters["done"]?.toLongOrNull(),
             )
         }
     }
@@ -119,6 +120,35 @@ fun Route.cleanupRoutes(repo: Repository) {
     get("/cleanup/convert/progress") {
         val job = repo.conversion.get()
         call.respond(job?.let { ConversionProgress(it.finished, it.done, it.total, progressText(it)) } ?: ConversionProgress(true, 0, 0, ""))
+    }
+    // Re-encodes the ticked video formats as HEVC now and, if asked, as videos in them arrive later.
+    post("/cleanup/videos") {
+        val form = call.receiveParameters()
+        val formats = form.getAll("format").orEmpty().filter { it in VIDEO_CONVERTIBLE_FORMATS }.toSet()
+        val later = if (form["later"] != null) formats.sorted() else emptyList()
+        io { repo.updateSettings(repo.settings.copy(convertVideos = later)) }
+        val started = formats.isNotEmpty() && io { repo.convertibleVideos().keys.any { it in formats } }
+        if (started) io { repo.startVideoConversion(repo.webDeviceId(), formats) }
+        call.respondRedirect(if (started) "/cleanup/videos" else "/cleanup#convert-videos")
+    }
+    post("/cleanup/videos/stop") {
+        io { repo.stopVideoConversion() }
+        call.respondRedirect("/cleanup/videos")
+    }
+    post("/cleanup/videos-later") {
+        io { repo.updateSettings(repo.settings.copy(convertVideos = emptyList())) }
+        call.respondRedirect("/cleanup#convert-videos")
+    }
+    get("/cleanup/videos") {
+        val job = repo.videoConversion.get() ?: return@get call.respondRedirect("/cleanup#convert-videos")
+        call.respondHtml { videoConversionPage(job) }
+    }
+    get("/cleanup/videos/progress") {
+        val job = repo.videoConversion.get()
+        call.respond(
+            job?.let { ConversionProgress(it.finished, it.secondsSoFar.toInt(), it.totalSeconds.toInt(), videoProgressText(it)) }
+                ?: ConversionProgress(true, 0, 0, ""),
+        )
     }
     post("/cleanup/art") {
         val options = artOptions(call.receiveParameters())
@@ -190,6 +220,7 @@ private fun HTML.cleanupPage(
     art: List<ArtPlan>,
     incomplete: List<Pair<String, Int>>,
     running: Conversion?,
+    videos: VideoSection,
     done: Long?,
 ) = page("Cleanup") {
     h1 { +"Cleanup" }
@@ -203,8 +234,18 @@ private fun HTML.cleanupPage(
             }
             conversionProgress(running)
         }
-        script(src = "/static/progress.js") { }
     }
+    videos.job?.takeIf { !it.finished }?.let { job ->
+        section("notice conversion") {
+            attributes["data-progress"] = "/cleanup/videos/progress"
+            p {
+                strong { +"Converting videos to HEVC. " }
+                a(href = "/cleanup/videos") { +"See its progress page" }
+            }
+            videoProgress(job)
+        }
+    }
+    if (running != null || videos.job?.finished == false) script(src = "/static/progress.js") { }
     if (done != null) {
         p("notice") {
             +"Saved as "
@@ -257,6 +298,7 @@ private fun HTML.cleanupPage(
 
     leftoverSection(leftovers, settings.deleteClutter)
     convertSection(convertible, settings.convertToMp3, running != null)
+    videoSection(videos, settings.convertVideos)
     albumArtSection(artOptions, art)
 
     h2 { +"Albums with missing tags" }
@@ -435,7 +477,7 @@ internal fun progressText(job: Conversion): String {
     }
 }
 
-private fun timeLeft(ms: Long): String {
+internal fun timeLeft(ms: Long): String {
     val minutes = (ms + 59_999) / 60_000
     return when {
         minutes <= 1 -> "about a minute left"

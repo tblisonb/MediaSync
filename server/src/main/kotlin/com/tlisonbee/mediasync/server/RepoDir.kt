@@ -76,6 +76,8 @@ data class Settings(
     val convertToMp3: List<String> = emptyList(),
     /** Tracks get ReplayGain values the server measures (Loudness.kt). */
     val measureLoudness: Boolean = true,
+    /** Video formats re-encoded as HEVC in MKV as videos in them arrive (Cleanup > Convert videos). */
+    val convertVideos: List<String> = emptyList(),
 )
 
 @Serializable

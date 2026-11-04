@@ -74,21 +74,31 @@ class BlobStore(private val repo: Repository) {
      */
     fun putBytes(bytes: ByteArray, name: String): MediaRow {
         val tmp = Files.createTempFile(dir.uploads, "web-", ".part")
+        Files.write(tmp, bytes)
+        return putFile(tmp, name)
+    }
+
+    /**
+     * Moves [file], which must be under the repository's uploads folder (the same disk), into the
+     * blobs as [name]; returns its media. Made for files too big to hold in memory, such as a
+     * converted video. Call outside a database transaction.
+     */
+    fun putFile(file: java.nio.file.Path, name: String): MediaRow {
         try {
-            Files.write(tmp, bytes)
-            val hash = sha256(tmp)
-            val media = MediaHasher.hash(tmp, name)
+            val hash = sha256(file)
+            val size = Files.size(file)
+            val media = MediaHasher.hash(file, name)
             val target = dir.blob(hash)
             Files.createDirectories(target.parent)
-            if (!Files.exists(target)) Files.move(tmp, target, ATOMIC_MOVE)
+            if (!Files.exists(target)) Files.move(file, target, ATOMIC_MOVE)
             val format = formatOf(name)
             repo.db.tx {
-                repo.db.exec("INSERT OR IGNORE INTO blob (hash, size, mime, created_at) VALUES (?, ?, ?, ?)", hash, bytes.size.toLong(), mimeOf(format), repo.clock())
+                repo.db.exec("INSERT OR IGNORE INTO blob (hash, size, mime, created_at) VALUES (?, ?, ?, ?)", hash, size, mimeOf(format), repo.clock())
                 repo.db.exec("INSERT OR IGNORE INTO media (media_hash, base_blob, format) VALUES (?, ?, ?)", media.hex, hash, format)
             }
             return repo.media(media.hex)!!
         } finally {
-            Files.deleteIfExists(tmp)
+            Files.deleteIfExists(file)
         }
     }
 
