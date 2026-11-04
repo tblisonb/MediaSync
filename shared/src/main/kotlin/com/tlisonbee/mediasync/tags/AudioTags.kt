@@ -4,6 +4,11 @@ import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.audio.mp3.MP3File
 import org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagField as JTagField
+import org.jaudiotagger.tag.TagTextField
+import org.jaudiotagger.tag.id3.AbstractID3v2Frame
+import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
+import org.jaudiotagger.tag.mp4.field.Mp4TagReverseDnsField
 import org.jaudiotagger.tag.Tag
 import org.jaudiotagger.tag.TagOptionSingleton
 import org.jaudiotagger.tag.flac.FlacTag
@@ -61,7 +66,23 @@ object AudioTags {
          * an encoder note, a second picture. Writing [tags] back would remove it.
          */
         val hasExtras: Boolean,
+        /**
+         * The file's ReplayGain tags, by their usual names ([REPLAYGAIN]) as written (`-6.02 dB`):
+         * `TXXX` frames in MP3, comments in FLAC and Ogg, iTunes fields in M4A.
+         */
+        val replayGain: Map<String, String> = emptyMap(),
     )
+
+    /** The ReplayGain tags [Inspection.replayGain] holds. */
+    val REPLAYGAIN = listOf("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK")
+
+    /** A field's free-form name and text, for the formats that let a tag name its own fields. */
+    private fun namedText(field: JTagField): Pair<String, String>? = when {
+        field is AbstractID3v2Frame -> (field.body as? FrameBodyTXXX)?.let { it.description to it.textWithoutTrailingNulls }
+        field is Mp4TagReverseDnsField -> field.descriptor to field.content
+        field is TagTextField -> field.id to field.content
+        else -> null
+    }
 
     fun inspect(path: Path): Inspection {
         val audio = AudioFileIO.read(path.toFile())
@@ -90,7 +111,14 @@ object AudioTags {
         // Vorbis comments carry the encoder's VENDOR string, which is part of the format, not a tag.
         val vendor = raw["VENDOR"]?.size ?: 0
         val hasExtras = tag.artworkList.size > 1 || tag.fieldCount - vendor > allowedCount
-        return Inspection(TagSet(fields, cover?.let { Picture(it.mimeType, it.binaryData) }), raw, duration, hasExtras)
+        val replayGain = buildMap {
+            for (field in tag.fields) {
+                val (name, text) = namedText(field) ?: continue
+                val key = name.uppercase()
+                if (key in REPLAYGAIN && text.isNotBlank()) putIfAbsent(key, text.trim())
+            }
+        }
+        return Inspection(TagSet(fields, cover?.let { Picture(it.mimeType, it.binaryData) }), raw, duration, hasExtras, replayGain)
     }
 
     fun write(path: Path, tags: TagSet) {

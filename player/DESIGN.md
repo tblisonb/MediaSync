@@ -67,7 +67,7 @@ ExoPlayer plays as they are. The playback login the plugin uses is TIDAL's own A
 | Phase | What |
 | --- | --- |
 | **0. Checks** | The module and a test app. On the phone: ExoPlayer plays consecutive MP3s with the LAME/Lavc header without a gap and without restarting its audio output; a per-track gain applies exactly at each track boundary (what ReplayGain needs); how fast `:shared`'s tag reading scans `Music/`. See "Phase 0 checks" below. |
-| **1. Local player** | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain tags, once MediaSync carries them. |
+| **1. Local player** (built) | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain tags, once MediaSync carries them. See "Phase 1" below. |
 | **2. MediaSync** | The server's ReplayGain (above). Rescan the changed files right after a sync. Playlists as `.m3u8` files in a synced `Music/Playlists/` folder, shared with fooyin on the desktop. Streaming tracks the phone doesn't hold from the server over Tailscale. |
 | **3. TIDAL** | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
 | **4. Polish** | Widget, equalizer, sleep timer, releases. Android Auto when there's a use for it. |
@@ -112,6 +112,54 @@ its processors, each time it flushes them, which playlist item the following aud
 
 **Licence:** Jellyfin's FFmpeg build is GPL-3.0, so the player's APK is a GPL-3.0 work when it's
 distributed. The repository is GPL-3.0-or-later (decided 2026-11-03), which fits.
+
+### Phase 1: the local player
+
+What's built, and how:
+
+- **The index** (`library/`): `Library` walks `Music/` (one `stat` per file, through
+  `Files.walkFileTree`), reads the tags of new and changed files with `:shared`'s `AudioTags`, and
+  keeps them in `library.db`. All tracks are held in memory (`LibraryData`), from which albums
+  (by album artist and album), artists (with the tracks they have on other artists' albums),
+  folders and search are worked out. The scan runs each time the app opens (at most every five
+  minutes); a full scan from Settings reads every file again.
+- **Covers** come from the file's embedded picture, else a `cover.jpg`/`folder.jpg` beside it, and
+  are stored once per picture at 720 px in the app's own storage; lists, Now Playing and the
+  notification read those copies.
+- **ReplayGain** tags are read now (`AudioTags.Inspection.replayGain`: `TXXX` frames, Vorbis
+  comments, iTunes fields) and applied by `GainProcessor` in Track or Album mode (Settings; Track by
+  default). Until the server writes them (phase 2), tracks play as they are.
+- **Playback** is a `MediaSessionService` (`playback/`), which gives the media notification, the
+  lock screen, Bluetooth and headset buttons, and audio focus. Screens talk to it through a
+  `MediaController` and send only paths; the service fills in each item from the library.
+- **The queue.** Tapping a track plays its list (album, artist, folder, playlist, search results)
+  from it. **Play next** inserts after the current track, **Add to queue** after whatever is
+  already queued; queued tracks are marked, play before the rest of the list, and keep doing so
+  when shuffle is turned on or off. Shuffle uses `QueueShuffleOrder`, so a new shuffle always
+  starts from the current track and nothing is skipped.
+- **Picking up where it left off:** the queue, the track, the position, shuffle and repeat are
+  saved (`files/queue/`), put back when the service starts, and used for a headset's play button
+  after the app was closed (`onPlaybackResumption`).
+- **Playlists** are `.m3u`/`.m3u8` files anywhere in `Music/`. The player makes new ones in
+  `Music/Playlists/`, writing paths relative to the playlist with `#EXTINF` "Artist - Title"
+  lines, which is also how it finds an entry whose file MediaSync has since renamed. MediaSync
+  already syncs them as plain files, so a playlist made on the phone reaches the server and the
+  desktop (where fooyin reads them) on the next sync, and shows up in its review first.
+
+**Checked on the phone** (2026-11-04, `PlaybackAndroidTest`, which reads only the music and plays
+muted): the first scan of 9,031 tracks took 127 s, covers included (983 albums, 96% of tracks with a
+cover); a scan with nothing new takes 1.6 s, and building the library in memory 0.3 s. Played a
+454-track album through the service from its third track, turned shuffle on (all 453 others
+still to come), added one with Play next and two with Add to queue (they played next, in that
+order, ahead of the shuffled rest), turned shuffle off (the queued three, then the album from
+where it was); the media notification was up, and the saved queue matched. By hand: browsing,
+Now Playing, the queue and search, and the queue coming back at the same position after the app
+was reinstalled.
+
+To run it: `./gradlew :player:installDebug :player:installDebugAndroidTest`, then
+`adb shell am instrument -w -e class com.tlisonbee.mediasync.player.PlaybackAndroidTest com.tlisonbee.mediasync.player.test/androidx.test.runner.AndroidJUnitRunner`.
+The test lets the player in with All files access and leaves it on (taking it back kills the
+process before the result is reported): `adb shell appops set com.tlisonbee.mediasync.player MANAGE_EXTERNAL_STORAGE default`.
 
 ### Phase 2 notes
 
