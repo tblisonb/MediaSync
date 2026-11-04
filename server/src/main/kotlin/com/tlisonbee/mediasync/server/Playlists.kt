@@ -6,7 +6,7 @@ import com.tlisonbee.mediasync.library.RepoPaths
 /**
  * Playlists (`.m3u`/`.m3u8` files in music/) keep pointing at their tracks when MediaSync renames
  * them: the revision that moves a track rewrites the entries that named it. Entries are paths
- * relative to the playlist's folder, as the MediaSync Player and fooyin write them; absolute paths
+ * relative to the playlist's folder, as Segue and fooyin write them; absolute paths
  * and URLs are a device's own business and are left alone.
  */
 object Playlists {

@@ -460,7 +460,7 @@ data class DeviceCleanup(
 )
 
 /**
- * Every live track in music/, whatever the asking device syncs: what the MediaSync Player can
+ * Every live track in music/, whatever the asking device syncs: what Segue can
  * stream (GET /music, server 1.5.0). [unchanged] answers `?since=` when nothing has changed since
  * then, with no tracks.
  */

@@ -183,7 +183,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
             /**
              * Music players learn about tag edits, renames and deletions through MediaStore; the
-             * MediaSync Player hears straight away, through a broadcast only it can receive.
+             * Segue hears straight away, through a broadcast only it can receive.
              */
             override fun filesChanged(paths: List<Path>) {
                 paths.chunked(500).forEach { chunk ->
@@ -378,7 +378,7 @@ object SyncScheduler {
     }
 }
 
-// The MediaSync Player (the player/ module), told of each sync's changes.
+// Segue (the player/ module), told of each sync's changes.
 private const val PLAYER_PACKAGE = "com.tlisonbee.mediasync.player"
 private const val PLAYER_PERMISSION = "com.tlisonbee.mediasync.permission.PLAYER"
 private const val PLAYER_FILES_CHANGED = "com.tlisonbee.mediasync.action.FILES_CHANGED"

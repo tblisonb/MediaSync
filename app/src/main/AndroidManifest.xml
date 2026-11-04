@@ -50,7 +50,7 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
-        <!-- The pairing, for the MediaSync Player's streaming; only apps signed with MediaSync's key may read it. -->
+        <!-- The pairing, for Segue's streaming; only apps signed with MediaSync's key may read it. -->
         <provider
             android:name=".data.PlayerAccessProvider"
             android:authorities="com.tlisonbee.mediasync.player-access"
