@@ -16,6 +16,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.tlisonbee.mediasync.player.library.Track
 import com.tlisonbee.mediasync.player.remote.RemoteMusic
+import com.tlisonbee.mediasync.player.tidal.TidalDataSource
+import com.tlisonbee.mediasync.player.tidal.TidalTracks
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -52,6 +54,9 @@ class PlaybackService : MediaSessionService() {
     private var positionSaver: Job? = null
     private var errorsInARow = 0
 
+    /** The TIDAL track last prepared again after its stream expired. */
+    private var retried: String? = null
+
     override fun onCreate() {
         super.onCreate()
         val settings = app.settings
@@ -59,7 +64,8 @@ class PlaybackService : MediaSessionService() {
         // Server tracks stream with this phone's MediaSync token, which goes only to that server.
         val remote = app.library.remote
         val http = DefaultHttpDataSource.Factory().setUserAgent(RemoteMusic.USER_AGENT).setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000)
-        val sources = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec ->
+        val tidal = app.tidal
+        val resolving = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec ->
             val access = remote.access
             if (access != null && spec.uri.toString().startsWith(access.serverUrl + "/")) {
                 spec.withAdditionalHeaders(mapOf("Authorization" to "Bearer ${access.token}"))
@@ -67,6 +73,8 @@ class PlaybackService : MediaSessionService() {
                 spec
             }
         }
+        // TIDAL tracks' manifests come from TIDAL when they're due (TidalDataSource).
+        val sources = androidx.media3.datasource.DataSource.Factory { TidalDataSource(tidal, resolving.createDataSource()) }
         exo = ExoPlayer.Builder(this, PlayerRenderers(this, listOf(gain)))
             .setMediaSourceFactory(DefaultMediaSourceFactory(sources))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -107,6 +115,10 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
+    /** A track by its ID: the library's (the phone's, the server's), or a TIDAL track a screen showed. */
+    private fun find(library: com.tlisonbee.mediasync.player.library.LibraryData, path: String): Track? =
+        library.byPath[path] ?: if (TidalTracks.isTidal(path)) app.tidal.tracks.get(path) else null
+
     private fun playable(track: Track, queued: Boolean): MediaItem {
         val remote = app.library.remote
         if (track.isRemote && remote.access == null) remote.readAccess()
@@ -117,7 +129,7 @@ class PlaybackService : MediaSessionService() {
     private fun fetchCover(index: Int) {
         val item = exo.getMediaItemAt(index)
         if (item.mediaMetadata.artworkUri != null) return
-        val track = app.library.data.value?.byPath?.get(item.mediaId)?.takeIf { it.isRemote } ?: return
+        val track = app.library.data.value?.let { find(it, item.mediaId) }?.takeIf { !it.isLocal } ?: return
         val key = track.cover ?: return
         scope.launch {
             withContext(Dispatchers.IO) { app.library.covers.load(key, 64) } ?: return@launch
@@ -133,9 +145,9 @@ class PlaybackService : MediaSessionService() {
         val queue = saved.loadQueue() ?: return@withContext null
         val position = saved.loadPosition()
         val library = app.library.loaded()
-        val kept = queue.paths.indices.filter { library.byPath[queue.paths[it]] != null }
+        val kept = queue.paths.indices.filter { find(library, queue.paths[it]) != null }
         if (kept.isEmpty()) return@withContext null
-        val items = kept.map { playable(library.byPath.getValue(queue.paths[it]), it in queue.queued) }
+        val items = kept.map { playable(find(library, queue.paths[it])!!, it in queue.queued) }
         val index = position?.index?.let { kept.indexOf(it) }?.takeIf { it >= 0 } ?: 0
         // The order only fits if nothing was dropped.
         val order = queue.shuffleOrder?.takeIf { kept.size == queue.paths.size }
@@ -157,7 +169,7 @@ class PlaybackService : MediaSessionService() {
                 val library = app.library.loaded()
                 future.set(
                     mediaItems.mapNotNullTo(mutableListOf()) { item ->
-                        library.byPath[item.mediaId]?.let { playable(it, MediaItems.isQueued(item)) }
+                        find(library, item.mediaId)?.let { playable(it, MediaItems.isQueued(item)) }
                     },
                 )
             }
@@ -213,6 +225,15 @@ class PlaybackService : MediaSessionService() {
         /** A file that won't play (gone, or damaged) is skipped, as long as others still play. */
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "can't play ${exo.currentMediaItem?.mediaId}", error)
+            // A TIDAL track paused for long: its segments' signed addresses ran out. Preparing
+            // again fetches a fresh manifest, once.
+            val id = exo.currentMediaItem?.mediaId
+            val expired = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode in setOf(401, 403, 410)
+            if (id != null && TidalTracks.isTidal(id) && expired && id != retried) {
+                retried = id
+                exo.prepare()
+                return
+            }
             if (++errorsInARow <= 10 && exo.hasNextMediaItem()) {
                 exo.seekToNextMediaItem()
                 exo.prepare()

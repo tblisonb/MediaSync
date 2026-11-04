@@ -69,7 +69,7 @@ ExoPlayer plays as they are. The playback login the plugin uses is TIDAL's own A
 | **0. Checks** | The module and a test app. On the phone: ExoPlayer plays consecutive MP3s with the LAME/Lavc header without a gap and without restarting its audio output; a per-track gain applies exactly at each track boundary (what ReplayGain needs); how fast `:shared`'s tag reading scans `Music/`. See "Phase 0 checks" below. |
 | **1. Local player** (built) | The index and its scan; browsing by artist, album, folder and playlist, and search; playback in context with a queue, shuffle and repeat; the media notification, lock screen and Bluetooth; covers from the files; picking up where it left off. ReplayGain tags, once MediaSync carries them. See "Phase 1" below. |
 | **2. MediaSync** | The server's ReplayGain (above). Rescan the changed files right after a sync. Playlists as `.m3u8` files in a synced `Music/Playlists/` folder, shared with fooyin on the desktop. Streaming tracks the phone doesn't hold from the server over Tailscale. |
-| **3. TIDAL** | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
+| **3. TIDAL** (logins, browsing, playback built) | Port the plugin's logins, catalog, cache and edits to Kotlin; TIDAL tracks mixed with local ones in the queue. |
 | **4. Polish** | Widget, equalizer, sleep timer, releases. Android Auto when there's a use for it. |
 
 ### Phase 0 checks
@@ -181,6 +181,39 @@ package under the `com.tlisonbee.mediasync.permission.PLAYER` permission, which 
 only apps signed with MediaSync's key send or receive it; adb's shell is turned away). A player
 that's running scans at once; one that isn't finds the changes when it next opens. Both apps
 declare the permission, so either can be installed first.
+
+### Phase 3: TIDAL
+
+Built (Segue 0.3.0, `tidal/`), ported from the fooyin plugin (its docs/design.md has what was
+learned about the APIs):
+
+- **Two logins**, in Settings: the account (your developer app, PKCE; its redirect
+  `http://localhost:47130/callback` is caught by the login page itself, so the same developer app
+  as fooyin's works) and playback (a client of TIDAL's Android app, PKCE ending on
+  `https://tidal.com/android/login/auth`). Both run in a web view that catches the redirect; if
+  TIDAL's page won't work there, the browser and the address it ended on pasted back do the same.
+  Tokens are in `files/tidal/{account,session}.json`, refreshed a minute before they expire.
+  Client IDs and secrets are typed in by you and never in the repository.
+- **Browsing** (v2): a TIDAL tab with search (tracks, albums, artists, playlists) and your
+  favorite tracks, albums and artists and your playlists (mixes too); albums, playlists and
+  artists open as pages. Lists come page by page and are kept for the session (10 minutes). Covers
+  are TIDAL's 640-pixel images, kept with the others (keys `t…`).
+- **Playback** (v1): a TIDAL track is `tidal://track/<id>` with the DASH type; `TidalDataSource`
+  answers that address with the track's `playbackinfo` manifest when ExoPlayer gets to the track
+  (it prepares playlist items lazily), so a long TIDAL queue asks for one at a time and segment
+  addresses are fresh. Best quality TIDAL has (24-bit FLAC where there is one). Checked on the
+  phone (`TidalDashAndroidTest`, with a manifest from the plugin's probe): 16- and 24-bit tracks
+  play through the player's audio path and seek. A track whose signed addresses ran out (paused
+  for long) is prepared again once with a fresh manifest.
+- **One queue**: TIDAL tracks mix with local and server ones. The ones played are remembered
+  (`files/tidal/tracks.json`), so a saved queue comes back with them.
+
+Still to come: editing playlists and favorites (and finding your own files on TIDAL to add them),
+a disk cache of the lists, and TIDAL tracks in Segue's own playlists.
+
+Instrumented tests can run against the installed release build, without uninstalling it:
+`./gradlew -Pplayer.testBuildType=release :player:assembleReleaseAndroidTest`, then install that
+test APK and `am instrument` as above.
 
 ### Phase 2 notes
 

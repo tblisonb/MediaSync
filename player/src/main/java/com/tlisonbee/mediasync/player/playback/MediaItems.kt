@@ -5,6 +5,9 @@ import android.os.Bundle
 import androidx.core.os.bundleOf
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
+import com.tlisonbee.mediasync.player.tidal.Tidal
+import com.tlisonbee.mediasync.player.tidal.TidalTracks
 import com.tlisonbee.mediasync.player.library.Covers
 import com.tlisonbee.mediasync.player.library.Gains
 import com.tlisonbee.mediasync.player.library.Track
@@ -48,17 +51,20 @@ object MediaItems {
             .setRecordingYear(track.year.toIntOrNull())
             .setDurationMs(track.durationMs)
             // A server track's cover is only there once something fetched it (PlaybackService does).
-            .setArtworkUri(track.cover?.let { covers.file(it) }?.takeIf { !track.isRemote || it.isFile }?.let { Uri.fromFile(it) })
+            .setArtworkUri(track.cover?.let { covers.file(it) }?.takeIf { track.isLocal || it.isFile }?.let { Uri.fromFile(it) })
             .setIsPlayable(true)
             .setIsBrowsable(false)
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
             .setExtras(extras)
             .build()
-        return MediaItem.Builder()
-            .setMediaId(track.path)
-            .setUri(if (track.isRemote) streamUri else Uri.fromFile(File(track.path)))
-            .setMediaMetadata(metadata)
-            .build()
+        val builder = MediaItem.Builder().setMediaId(track.path).setMediaMetadata(metadata)
+        when {
+            // A DASH manifest TidalDataSource fetches when the player gets to the track.
+            track.isTidal -> builder.setUri(Tidal.uri(TidalTracks.idOf(track.path))).setMimeType(MimeTypes.APPLICATION_MPD)
+            track.isRemote -> builder.setUri(streamUri)
+            else -> builder.setUri(Uri.fromFile(File(track.path)))
+        }
+        return builder.build()
     }
 
     /** A screen's request for an item already in the queue, marked queued. */

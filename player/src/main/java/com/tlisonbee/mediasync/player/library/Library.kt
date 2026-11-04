@@ -4,6 +4,8 @@ import android.util.Log
 import com.tlisonbee.mediasync.library.RepoPaths
 import com.tlisonbee.mediasync.player.audio.ReplayGain
 import com.tlisonbee.mediasync.player.remote.RemoteMusic
+import com.tlisonbee.mediasync.player.tidal.TidalCatalog
+import com.tlisonbee.mediasync.player.tidal.TidalHttp
 import com.tlisonbee.mediasync.tags.AudioTags
 import com.tlisonbee.mediasync.tags.TagField
 import kotlinx.coroutines.CoroutineScope
@@ -75,7 +77,14 @@ class Library(
         }
 
     init {
-        covers.fetch = { key -> if (key.startsWith(RemoteMusic.REMOTE_COVER)) remote.download(key.removePrefix(RemoteMusic.REMOTE_COVER)) else null }
+        covers.fetch = { key ->
+            when {
+                key.startsWith(RemoteMusic.REMOTE_COVER) -> remote.download(key.removePrefix(RemoteMusic.REMOTE_COVER))
+                // TIDAL's images are public.
+                key.startsWith(TidalCatalog.COVER_PREFIX) -> TidalCatalog.coverUrl(key)?.let { url -> runCatching { TidalHttp.get(url) }.getOrNull()?.takeIf { it.ok }?.body }
+                else -> null
+            }
+        }
         scope.launch(Dispatchers.IO) { loaded() }
     }
 

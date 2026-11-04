@@ -35,9 +35,13 @@ sealed interface Route {
     data class PlaylistPage(val path: String) : Route
     data object Search : Route
     data object Settings : Route
+    data class TidalAlbum(val id: String, val title: String) : Route
+    data class TidalPlaylist(val id: String, val title: String) : Route
+    data class TidalArtist(val id: String, val name: String) : Route
+    data class TidalLoginPage(val playback: Boolean) : Route
 }
 
-enum class HomeTab(val label: String) { ARTISTS("Artists"), ALBUMS("Albums"), SONGS("Songs"), FOLDERS("Folders"), PLAYLISTS("Playlists") }
+enum class HomeTab(val label: String) { ARTISTS("Artists"), ALBUMS("Albums"), SONGS("Songs"), FOLDERS("Folders"), PLAYLISTS("Playlists"), TIDAL("TIDAL") }
 
 /** One item of the queue, by its place in the player's playlist. */
 class QueueEntry(val index: Int, val item: MediaItem) {
@@ -117,10 +121,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         else -> false
     }
 
+    /** TIDAL tracks are kept (on disk too), so the service can play them and a saved queue keeps them. */
+    private fun rememberTidal(tracks: List<Track>) {
+        if (tracks.none { it.isTidal }) return
+        tidal.tracks.remember(tracks)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { tidal.tracks.save() }
+    }
+
+    val tidal = application.app.tidal
+    val tidalBrowser = TidalBrowser(viewModelScope, tidal)
+
+    /** The TIDAL login the login page is finishing. */
+    var pendingTidalLogin: com.tlisonbee.mediasync.player.tidal.TidalLogin.Request? = null
+
+    fun startTidalLogin(playback: Boolean, clientId: String, clientSecret: String) {
+        pendingTidalLogin = if (playback) com.tlisonbee.mediasync.player.tidal.TidalLogin.playbackRequest(clientId, clientSecret)
+        else com.tlisonbee.mediasync.player.tidal.TidalLogin.accountRequest(clientId)
+        navigate(Route.TidalLoginPage(playback))
+    }
+
     /** Plays [tracks] from [index], as a new queue; [shuffle] null keeps the shuffle setting. */
     fun play(tracks: List<Track>, index: Int = 0, shuffle: Boolean? = null) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
+        rememberTidal(tracks)
         if (shuffle != null) c.shuffleModeEnabled = shuffle
         val start = if (shuffle == true && index == 0) tracks.indices.random() else index
         c.setMediaItems(tracks.map { MediaItems.request(it) }, start.coerceIn(tracks.indices), 0)
@@ -135,6 +159,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun insert(tracks: List<Track>, at: (MediaController) -> Int) {
         val c = controller ?: return
         if (tracks.isEmpty()) return
+        rememberTidal(tracks)
         val empty = c.mediaItemCount == 0
         c.addMediaItems(at(c), tracks.map { MediaItems.request(it, queued = true) })
         if (empty) c.prepare()
@@ -212,7 +237,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { library.scan(full) }
     }
 
-    fun tracksOf(items: List<QueueEntry>) = items.mapNotNull { library.data.value?.byPath?.get(it.item.mediaId) }
+    /** A track by its ID: the library's, or a TIDAL one. */
+    fun track(path: String): Track? = library.data.value?.byPath?.get(path) ?: if (path.startsWith("tidal:")) tidal.tracks.get(path) else null
 
     override fun onCleared() {
         MediaController.releaseFuture(controllerFuture)

@@ -114,6 +114,7 @@ fun HomeScreen(ui: Ui, data: LibraryData, playing: String?) {
             }
             HomeTab.FOLDERS -> FolderContent(ui, data, vm.library.root.path, playing)
             HomeTab.PLAYLISTS -> PlaylistsTab(ui)
+            HomeTab.TIDAL -> TidalTabContent(ui, playing)
         }
     }
 }

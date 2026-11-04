@@ -99,6 +99,10 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
                     is Route.PlaylistPage -> PlaylistScreen(ui, route.path, playing)
                     Route.Search -> SearchResultsList(ui, data, vm.searchQuery, playing)
                     Route.Settings -> SettingsScreen(vm)
+                    is Route.TidalAlbum -> TidalTracksScreen(ui, com.tlisonbee.mediasync.player.tidal.TidalList.ALBUM_TRACKS, route.id, playing)
+                    is Route.TidalPlaylist -> TidalTracksScreen(ui, com.tlisonbee.mediasync.player.tidal.TidalList.PLAYLIST_TRACKS, route.id, playing)
+                    is Route.TidalArtist -> TidalArtistScreen(ui, route.id)
+                    is Route.TidalLoginPage -> TidalLoginScreen(ui, route.playback)
                 }
             }
         }
@@ -149,6 +153,10 @@ private fun TopBar(ui: Ui, route: Route, data: com.tlisonbee.mediasync.player.li
                     is Route.ArtistPage -> route.name
                     is Route.FolderPage -> route.path.substringAfterLast('/')
                     Route.Settings -> "Settings"
+                    is Route.TidalAlbum -> route.title
+                    is Route.TidalPlaylist -> route.title
+                    is Route.TidalArtist -> route.name
+                    is Route.TidalLoginPage -> if (route.playback) "TIDAL playback login" else "TIDAL login"
                     else -> ""
                 }
                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -276,6 +284,8 @@ private fun SettingsScreen(vm: PlayerViewModel) {
         if (scan.running) Text(if (scan.total > 0) "Reading ${scan.done} of ${scan.total}…" else "Looking for changes…")
 
         ServerSection(vm)
+
+        TidalSettingsSection(vm)
 
         Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
         Text("Segue ${BuildConfig.VERSION_NAME}, the MediaSync player. GPL-3.0-or-later; decodes with FFmpeg (GPL-3.0).", style = MaterialTheme.typography.bodySmall)

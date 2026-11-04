@@ -103,7 +103,7 @@ class Transition(val shared: SharedTransitionScope, val visibility: AnimatedVisi
 fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData, transition: Transition) = with(transition) {
     val vm = ui.vm
     val item = state.current ?: return@with
-    val track = data.byPath[item.mediaId]
+    val track = vm.track(item.mediaId)
     val position = rememberPosition(vm, state.isPlaying)
     Surface(Modifier.container(), tonalElevation = 3.dp) {
         // Kept at the bottom while the container is still taller than the bar.
@@ -136,7 +136,7 @@ fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData, transition: Tran
 fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData, transition: Transition) = with(transition) {
     val vm = ui.vm
     val item = state.current
-    val track = item?.let { data.byPath[it.mediaId] }
+    val track = item?.let { vm.track(it.mediaId) }
     // Swiping down anywhere (the cover, the titles) pulls the screen down with the finger; far or
     // fast enough and it closes into the mini player, else it springs back. Not over the queue,
     // whose list scrolls.
@@ -182,12 +182,12 @@ fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData, transition
                     Text(item.mediaMetadata.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         item.mediaMetadata.artist?.toString() ?: "",
-                        Modifier.clickable(enabled = track != null) { track?.let { vm.navigate(Route.ArtistPage(it.albumArtistOrArtist)) } },
+                        Modifier.clickable(enabled = track != null && !track.isTidal) { track?.let { vm.navigate(Route.ArtistPage(it.albumArtistOrArtist)) } },
                         style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         listOfNotNull(item.mediaMetadata.albumTitle?.toString(), track?.year?.takeIf { it.isNotEmpty() }).joinToString(" · "),
-                        Modifier.clickable(enabled = track != null) { track?.let { vm.navigate(Route.AlbumPage(it.albumKey)) } },
+                        Modifier.clickable(enabled = track != null && !track.isTidal) { track?.let { vm.navigate(Route.AlbumPage(it.albumKey)) } },
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -254,7 +254,7 @@ private fun QueueList(ui: Ui, state: PlaybackState, data: LibraryData, modifier:
     LazyColumn(modifier.fillMaxWidth()) {
         item { SectionHeader("Now playing") }
         item {
-            val t = data.byPath[current.mediaId]
+            val t = vm.track(current.mediaId)
             TrackRow(
                 current.mediaMetadata.title?.toString() ?: "", current.mediaMetadata.artist?.toString() ?: "",
                 lead = { Cover(ui.covers, t?.cover, 44.dp) }, durationMs = t?.durationMs, playing = true, onClick = {}, menu = emptyList(),
@@ -270,7 +270,7 @@ private fun QueueList(ui: Ui, state: PlaybackState, data: LibraryData, modifier:
         }
         // Long queues show their first few hundred; the rest still plays.
         items(state.upNext.take(500), key = { "q${it.index}:${it.item.mediaId}" }) { e ->
-            val t = data.byPath[e.item.mediaId]
+            val t = vm.track(e.item.mediaId)
             TrackRow(
                 e.item.mediaMetadata.title?.toString() ?: "",
                 listOfNotNull("Queued".takeIf { e.queued }, e.item.mediaMetadata.artist?.toString()).joinToString(" · "),
