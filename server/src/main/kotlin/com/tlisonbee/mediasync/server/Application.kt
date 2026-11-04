@@ -289,7 +289,7 @@ private fun Route.apiRoutes(repo: Repository) {
     }
 
     // Clients preview the import and keep files tidy with the same rules the server applies.
-    // The whole music library, for streaming what a device doesn't hold (the MediaSync Player).
+    // The whole music library, for streaming what a device doesn't hold (Segue).
     get("/music") {
         val since = call.parameters["since"]?.toLongOrNull()
         call.respond(

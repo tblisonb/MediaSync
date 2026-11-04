@@ -9,7 +9,7 @@ import com.tlisonbee.mediasync.app
 import com.tlisonbee.mediasync.library.RepoPaths
 
 /**
- * Lends the MediaSync Player this phone's pairing, so it can stream what the phone doesn't hold:
+ * Lends Segue this phone's pairing, so it can stream what the phone doesn't hold:
  * the server's address, this device's token, and the folder music/ syncs to. Only apps signed with
  * MediaSync's key can read it (the provider's permission is a `signature` one), and nothing can
  * write. Empty until the phone is paired.

@@ -1,6 +1,6 @@
-# MediaSync Player: design notes
+# Segue (the MediaSync player): design notes
 
-An Android music player for the library MediaSync keeps on the phone, built in this repository as
+Segue (named 2026-11-04) is an Android music player for the library MediaSync keeps on the phone, built in this repository as
 its own app (`:player`, `com.tlisonbee.mediasync.player`). Local playback comes first; TIDAL comes
 after it. These notes hold the decisions, what was found, and the plan; the [README](../README.md)
 will cover using it once there's something to use.

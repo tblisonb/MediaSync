@@ -801,7 +801,7 @@ private fun HTML.settingsPage(settings: Settings, saved: Boolean, loudness: Stri
         }
         p("muted") {
             +"The server measures each track and album with ffmpeg and writes the standard ReplayGain tags into the files, "
-            +"so players on every device (the MediaSync Player, fooyin) play them at the same loudness. "
+            +"so players on every device (Segue, fooyin) play them at the same loudness. "
             +"New tracks are measured as they arrive."
         }
         loudness?.let { p { +it } }

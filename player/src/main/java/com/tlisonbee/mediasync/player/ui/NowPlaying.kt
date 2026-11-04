@@ -5,7 +5,17 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -127,7 +137,26 @@ fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData, transition
     val vm = ui.vm
     val item = state.current
     val track = item?.let { data.byPath[it.mediaId] }
-    Surface(Modifier.container().fillMaxSize()) {
+    // Swiping down anywhere (the cover, the titles) pulls the screen down with the finger; far or
+    // fast enough and it closes into the mini player, else it springs back. Not over the queue,
+    // whose list scrolls.
+    val drag = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val closeAt = with(LocalDensity.current) { 120.dp.toPx() }
+    val dragState = rememberDraggableState { delta -> scope.launch { drag.snapTo((drag.value + delta).coerceAtLeast(0f)) } }
+    Surface(
+        Modifier
+            // Before the shared container, so closing starts from where the finger left it.
+            .offset { IntOffset(0, drag.value.roundToInt()) }
+            .container()
+            .fillMaxSize()
+            .draggable(
+                dragState, Orientation.Vertical, enabled = !vm.queueOpen,
+                onDragStopped = { velocity ->
+                    if (drag.value > closeAt || velocity > 1500f) vm.nowPlayingOpen = false else scope.launch { drag.animateTo(0f) }
+                },
+            ),
+    ) {
         Column(Modifier.safeDrawingPadding().fillMaxSize()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconAction(R.drawable.ic_collapse, "Close") { if (vm.queueOpen) vm.queueOpen = false else vm.nowPlayingOpen = false }

@@ -278,7 +278,7 @@ private fun SettingsScreen(vm: PlayerViewModel) {
         ServerSection(vm)
 
         Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
-        Text("MediaSync Player ${BuildConfig.VERSION_NAME}. GPL-3.0-or-later; decodes with FFmpeg (GPL-3.0).", style = MaterialTheme.typography.bodySmall)
+        Text("Segue ${BuildConfig.VERSION_NAME}, the MediaSync player. GPL-3.0-or-later; decodes with FFmpeg (GPL-3.0).", style = MaterialTheme.typography.bodySmall)
     }
     if (confirmFull) {
         androidx.compose.material3.AlertDialog(
