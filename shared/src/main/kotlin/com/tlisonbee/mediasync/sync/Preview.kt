@@ -84,7 +84,7 @@ object Preview {
                 lines += "keep\t${root.relativize(file)}\t\ttags unreadable: ${e.message}"
                 continue
             }
-            val allowed = policy.fields[AssetKind.AUDIO].orEmpty()
+            val allowed = policy.allowed(AssetKind.AUDIO)
             if (inspection.hasExtras || inspection.tags.fields.keys.any { it !in allowed }) junk++
             tracks += file to policy.filter(AssetKind.AUDIO, inspection.tags.fields)
         }

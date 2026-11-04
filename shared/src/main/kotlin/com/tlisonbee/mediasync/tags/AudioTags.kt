@@ -7,6 +7,9 @@ import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.TagField as JTagField
 import org.jaudiotagger.tag.TagTextField
 import org.jaudiotagger.tag.id3.AbstractID3v2Frame
+import org.jaudiotagger.tag.id3.AbstractID3v2Tag
+import org.jaudiotagger.tag.id3.valuepair.TextEncoding
+import org.jaudiotagger.tag.mp4.Mp4Tag
 import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import org.jaudiotagger.tag.mp4.field.Mp4TagReverseDnsField
 import org.jaudiotagger.tag.Tag
@@ -51,7 +54,7 @@ object AudioTags {
     }
 
     /** Canonical names this class can read and write. */
-    val FIELDS: Set<String> = keys.keys
+    val FIELDS: Set<String> = keys.keys + TagField.REPLAYGAIN
 
     fun read(path: Path): TagSet = inspect(path).tags
 
@@ -67,14 +70,15 @@ object AudioTags {
          */
         val hasExtras: Boolean,
         /**
-         * The file's ReplayGain tags, by their usual names ([REPLAYGAIN]) as written (`-6.02 dB`):
-         * `TXXX` frames in MP3, comments in FLAC and Ogg, iTunes fields in M4A.
+         * The file's ReplayGain tags, by their names in files ([REPLAYGAIN]) as written (`-6.02 dB`):
+         * `TXXX` frames in MP3, comments in FLAC and Ogg, iTunes fields in M4A. They're in [tags] too,
+         * under [TagField.REPLAYGAIN]'s names.
          */
         val replayGain: Map<String, String> = emptyMap(),
     )
 
-    /** The ReplayGain tags [Inspection.replayGain] holds. */
-    val REPLAYGAIN = listOf("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK")
+    /** The ReplayGain tags' names in files: [TagField.REPLAYGAIN], upper case. */
+    val REPLAYGAIN = TagField.REPLAYGAIN.map { it.uppercase() }
 
     /** A field's free-form name and text, for the formats that let a tag name its own fields. */
     private fun namedText(field: JTagField): Pair<String, String>? = when {
@@ -110,15 +114,19 @@ object AudioTags {
         val allowedCount = keys.values.sumOf { key -> tag.getFields(key).size } + minOf(tag.artworkList.size, 1)
         // Vorbis comments carry the encoder's VENDOR string, which is part of the format, not a tag.
         val vendor = raw["VENDOR"]?.size ?: 0
-        val hasExtras = tag.artworkList.size > 1 || tag.fieldCount - vendor > allowedCount
+        var replayGainFields = 0
         val replayGain = buildMap {
             for (field in tag.fields) {
                 val (name, text) = namedText(field) ?: continue
                 val key = name.uppercase()
-                if (key in REPLAYGAIN && text.isNotBlank()) putIfAbsent(key, text.trim())
+                if (key !in REPLAYGAIN) continue
+                replayGainFields++
+                if (text.isNotBlank()) putIfAbsent(key, text.trim())
             }
         }
-        return Inspection(TagSet(fields, cover?.let { Picture(it.mimeType, it.binaryData) }), raw, duration, hasExtras, replayGain)
+        val hasExtras = tag.artworkList.size > 1 || tag.fieldCount - vendor > allowedCount + replayGainFields
+        val all = fields + replayGain.map { (k, v) -> k.lowercase() to listOf(v) }
+        return Inspection(TagSet(all, cover?.let { Picture(it.mimeType, it.binaryData) }), raw, duration, hasExtras, replayGain)
     }
 
     fun write(path: Path, tags: TagSet) {
@@ -138,11 +146,30 @@ object AudioTags {
         }
         val tag = audio.tagOrCreateAndSetDefault
         for ((name, values) in tags.fields) {
+            if (name in TagField.REPLAYGAIN) {
+                values.firstOrNull()?.let { setNamed(tag, name.uppercase(), it) }
+                continue
+            }
             val key = keys[name] ?: throw IllegalArgumentException("'$name' is not an allowed tag field")
             values.forEachIndexed { i, value -> if (i == 0) tag.setField(key, value) else tag.addField(key, value) }
         }
         tags.frontCover?.let { cover -> setCover(tag, cover) }
         audio.commit()
+    }
+
+    /** Adds a field the format names itself (a ReplayGain value): a `TXXX` frame, a comment, an iTunes field. */
+    private fun setNamed(tag: Tag, name: String, value: String) {
+        when (tag) {
+            is AbstractID3v2Tag -> {
+                val frame = tag.createFrame("TXXX")
+                frame.body = FrameBodyTXXX(TextEncoding.ISO_8859_1, name, value)
+                tag.addField(frame)
+            }
+            is FlacTag -> tag.vorbisCommentTag.addField(tag.vorbisCommentTag.createField(name, value))
+            is VorbisCommentTag -> tag.addField(tag.createField(name, value))
+            is Mp4Tag -> tag.addField(Mp4TagReverseDnsField("----:com.apple.iTunes:$name", "com.apple.iTunes", name, value))
+            else -> {} // WMA and the like: not kept
+        }
     }
 
     /**

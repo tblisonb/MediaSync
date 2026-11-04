@@ -11,6 +11,14 @@ object TagField {
     const val TRACK_NUMBER = "tracknumber"
     const val DISC_NUMBER = "discnumber"
 
+    // Loudness, as ReplayGain 2.0 writes it ("-6.02 dB", peaks as "0.988000"). The server measures
+    // them (Loudness.kt); every music policy keeps them (TagPolicy.MEASURED).
+    const val REPLAYGAIN_TRACK_GAIN = "replaygain_track_gain"
+    const val REPLAYGAIN_TRACK_PEAK = "replaygain_track_peak"
+    const val REPLAYGAIN_ALBUM_GAIN = "replaygain_album_gain"
+    const val REPLAYGAIN_ALBUM_PEAK = "replaygain_album_peak"
+    val REPLAYGAIN = listOf(REPLAYGAIN_TRACK_GAIN, REPLAYGAIN_TRACK_PEAK, REPLAYGAIN_ALBUM_GAIN, REPLAYGAIN_ALBUM_PEAK)
+
     /** The default music tag policy: everything else is stripped. */
     val MUSIC = listOf(TITLE, ARTIST, ALBUM, ALBUM_ARTIST, DATE, GENRE, TRACK_NUMBER, DISC_NUMBER)
 
