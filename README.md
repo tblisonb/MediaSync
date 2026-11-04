@@ -604,3 +604,7 @@ Losing them means every phone has to uninstall the app to take a new release. An
 them can sign an update your phones would accept.
 
 How MediaSync got here, milestone by milestone, is in [MILESTONES.md](MILESTONES.md).
+
+## License
+
+GPL-3.0-or-later (see [COPYING](COPYING)). The player bundles a GPL-3.0 build of FFmpeg's decoders.
