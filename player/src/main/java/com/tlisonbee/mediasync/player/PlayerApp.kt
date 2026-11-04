@@ -21,7 +21,7 @@ class PlayerApp : Application() {
         Library(
             LibraryDb(this), Covers(File(filesDir, "covers")), File(Environment.getExternalStorageDirectory(), "Music"), scope,
             RemoteMusic(this, File(filesDir, "remote")), settings.showRemote.value,
-        )
+        ).also { it.tidalLookup = { path -> tidal.tracks.get(path) } }
     }
     val library by libraryLazy
 

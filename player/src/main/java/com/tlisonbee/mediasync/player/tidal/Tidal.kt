@@ -28,6 +28,7 @@ class Tidal(dir: File) {
     val playback = TidalSession(File(dir, "session.json"), TidalLogin.PLAYBACK_SCOPES)
     val catalog = TidalCatalog(account)
     val tracks = TidalTracks(File(dir, "tracks.json"))
+    val cache = TidalCache(File(dir, "cache"), account)
 
     private val _state = MutableStateFlow(current())
     val state: StateFlow<TidalState> = _state.asStateFlow()

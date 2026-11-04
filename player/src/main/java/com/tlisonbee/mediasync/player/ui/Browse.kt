@@ -48,8 +48,27 @@ import kotlinx.coroutines.launch
 
 /** What every screen needs: the view model, and the dialogs and messages the root shows. */
 @UnstableApi
-class Ui(val vm: PlayerViewModel, val pickPlaylist: (List<Track>) -> Unit, val message: (String) -> Unit) {
+class Ui(
+    val vm: PlayerViewModel,
+    val pickPlaylist: (List<Track>) -> Unit,
+    val message: (String) -> Unit,
+    /** Picks one of your TIDAL playlists (or a new one) for tracks. */
+    val pickTidalPlaylist: (List<Track>) -> Unit = {},
+) {
     val covers get() = vm.library.covers
+    val tidalEditor = TidalEditor(vm.viewModelScopeForEdits, vm.tidalBrowser, message)
+
+    /** The TIDAL entries of a track menu, when you're logged in to TIDAL. */
+    fun tidalActions(tracks: List<Track>): List<Pair<String, () -> Unit>> {
+        if (!vm.tidal.state.value.account || tracks.isEmpty()) return emptyList()
+        val favorites = vm.tidalBrowser.favoriteIds(com.tlisonbee.mediasync.player.tidal.TidalItem.Kind.TRACK)
+        val allFavorite = tracks.all { it.isTidal && com.tlisonbee.mediasync.player.tidal.TidalTracks.idOf(it.path) in favorites }
+        return listOf(
+            "Add to TIDAL playlist…" to { pickTidalPlaylist(tracks) },
+            if (allFavorite) "Remove from TIDAL favorites" to { tidalEditor.favoriteTracks(tracks, add = false) }
+            else "Add to TIDAL favorites" to { tidalEditor.favoriteTracks(tracks, add = true) },
+        )
+    }
 
     fun trackMenu(t: Track, album: Boolean = true, artist: Boolean = true, extra: List<Pair<String, () -> Unit>> = emptyList()) = TrackActions(
         playNext = { vm.playNext(listOf(t)); message("“${t.title}” plays next") },
@@ -57,13 +76,14 @@ class Ui(val vm: PlayerViewModel, val pickPlaylist: (List<Track>) -> Unit, val m
         addToPlaylist = { pickPlaylist(listOf(t)) },
         goToAlbum = if (album) ({ vm.navigate(Route.AlbumPage(t.albumKey)) }) else null,
         goToArtist = if (artist) ({ vm.navigate(Route.ArtistPage(t.albumArtistOrArtist)) }) else null,
-        extra = extra,
+        extra = extra + tidalActions(listOf(t)),
     ).list()
 
     fun listMenu(tracks: List<Track>, name: String) = TrackActions(
         playNext = { vm.playNext(tracks); message("$name plays next") },
         addToQueue = { vm.addToQueue(tracks); message("Added $name to the queue") },
         addToPlaylist = { pickPlaylist(tracks) },
+        extra = tidalActions(tracks),
     ).list()
 }
 

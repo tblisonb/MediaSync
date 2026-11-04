@@ -64,6 +64,10 @@ class Library(
 
     val playlistFolder: File get() = File(root, "Playlists")
 
+    /** TIDAL tracks Segue has seen, by ID, for playlists that name them (set by PlayerApp). */
+    @Volatile
+    var tidalLookup: (String) -> Track? = { null }
+
     /** The tracks on the phone, as last indexed; null until the index is read. */
     @Volatile
     private var local: List<Track>? = null
@@ -247,7 +251,7 @@ class Library(
     /** A playlist's entries, each with the track it means (null when it isn't in the library). */
     suspend fun readPlaylist(path: String): List<Pair<M3u.Entry, Track?>> = withContext(Dispatchers.IO) {
         val library = loaded()
-        entries(path).map { it to M3u.match(it, library) }
+        entries(path).map { it to M3u.match(it, library, tidalLookup) }
     }
 
     private fun entries(path: String): List<M3u.Entry> {
@@ -297,7 +301,7 @@ class Library(
             val file = File(path)
             val library = loaded()
             // Entries found by their title are written with their file's path now.
-            val entries = entries(path).map { e -> M3u.match(e, library)?.takeIf { it.path != e.path }?.let(M3u::entry) ?: e }
+            val entries = entries(path).map { e -> M3u.match(e, library, tidalLookup)?.takeIf { it.path != e.path }?.let(M3u::entry) ?: e }
             write(file, change(entries))
         }
     }
