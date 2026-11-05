@@ -120,6 +120,8 @@ fun PlayerRoot(vm: PlayerViewModel, hasAccess: Boolean) {
                     is Route.TidalPlaylist -> TidalTracksScreen(ui, com.tlisonbee.mediasync.player.tidal.TidalList.PLAYLIST_TRACKS, route.id, playing)
                     is Route.TidalArtist -> TidalArtistScreen(ui, route.id)
                     is Route.TidalLoginPage -> TidalLoginScreen(ui, route.playback)
+                    Route.LastFmLoginPage -> LastFmLoginScreen(ui)
+                    Route.LastFmStatsPage -> LastFmStatsScreen(ui, data, playing)
                 }
             }
         }
@@ -142,7 +144,7 @@ private fun TopBar(ui: Ui, route: Route, data: com.tlisonbee.mediasync.player.li
             title = { Text("Segue") },
             actions = {
                 IconAction(R.drawable.ic_search, "Search") { vm.navigate(Route.Search) }
-                MoreMenu(listOf("Scan for changes" to { vm.rescan(full = false) }, "Settings" to { vm.navigate(Route.Settings) }))
+                MoreMenu(listOf("Scan for changes" to { vm.rescan(full = false) }, "Last.fm" to { vm.navigate(Route.LastFmStatsPage) }, "Settings" to { vm.navigate(Route.Settings) }))
             },
         )
         Route.Search -> {
@@ -175,6 +177,8 @@ private fun TopBar(ui: Ui, route: Route, data: com.tlisonbee.mediasync.player.li
                     is Route.TidalPlaylist -> route.title
                     is Route.TidalArtist -> route.name
                     is Route.TidalLoginPage -> if (route.playback) "TIDAL playback login" else "TIDAL login"
+                    Route.LastFmLoginPage -> "Last.fm login"
+                    Route.LastFmStatsPage -> "Last.fm"
                     else -> ""
                 }
                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -355,6 +359,8 @@ private fun SettingsScreen(vm: PlayerViewModel) {
         ServerSection(vm)
 
         TidalSettingsSection(vm)
+
+        LastFmSettingsSection(vm)
 
         Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
         Text("Segue ${BuildConfig.VERSION_NAME}, the MediaSync player. GPL-3.0-or-later; decodes with FFmpeg (GPL-3.0).", style = MaterialTheme.typography.bodySmall)

@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // Signed with MediaSync's release key (see app/build.gradle.kts), so the two apps share a signature.
@@ -19,8 +20,8 @@ android {
         applicationId = "com.tlisonbee.mediasync.player"
         minSdk = 33
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.5.2"
+        versionCode = 9
+        versionName = "0.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

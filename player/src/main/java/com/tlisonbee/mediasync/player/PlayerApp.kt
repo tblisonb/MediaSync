@@ -28,6 +28,9 @@ class PlayerApp : Application() {
     /** TIDAL: the logins, the catalog and the streams. */
     val tidal by lazy { com.tlisonbee.mediasync.player.tidal.Tidal(File(filesDir, "tidal")) }
 
+    /** Last.fm: scrobbling and your stats. */
+    val lastFm by lazy { com.tlisonbee.mediasync.player.lastfm.LastFm(File(filesDir, "lastfm"), scope) }
+
     /** Whether anything in this process has used the library yet (a screen, or playback). */
     val libraryStarted: Boolean get() = libraryLazy.isInitialized()
 
