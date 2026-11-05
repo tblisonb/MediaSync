@@ -160,8 +160,11 @@ The first PC you set up fills the library, so set up the PC with your music on i
 ### 4. The Android app
 
 1. Make sure the Tailscale app is connected on the phone.
-2. From the Releases page, download `mediasync-<version>.apk` on the phone and open it. Android asks
-   you to allow installing apps from your browser or file manager the first time.
+2. Either add the F-Droid repo at [tblisonb.github.io/fdroid](https://tblisonb.github.io/fdroid/)
+   (open that page on the phone and tap its link) and install MediaSync from it, which keeps it up
+   to date; or, from the Releases page, download `mediasync-<version>.apk` on the phone and open it.
+   Android asks you to allow installing apps from your browser or file manager the first time. Both
+   are the same APK, so either updates a MediaSync installed the other way.
 3. Open MediaSync and allow **All files access** (it needs it to manage your Music folder).
 4. In the web UI, go to **Devices > Pair a device** and scan the QR code with the app. You can
    also type in the server address and the code.
@@ -615,6 +618,8 @@ tarball) and `server-v…` (the server tarball, which installs itself). To relea
 To release all three together, as `v…` with every build attached (as 1.0.0 was), give them the same
 version and run `scripts/release.sh all`, optionally with a Markdown file to open the notes. Each part
 gets its own tag as well. The script runs the tests first, and refuses a version that's already tagged.
+A release with the app in it is then added to the F-Droid repo, by the fdroid repo's
+`scripts/publish.sh` (checked out in `~/Applications/fdroid`).
 
 The APK is a release build, signed with the release key from `~/.android/mediasync-release.jks`,
 whose password is in `~/.android/mediasync-release.properties`. `scripts/make-release-key.sh` made

@@ -9,6 +9,7 @@ This file holds instructions only, never the secrets themselves.
 | What | Where it lives | Without it |
 | --- | --- | --- |
 | **Android release key** (the maintainer only) | `~/.android/mediasync-release.jks` and `~/.android/mediasync-release.properties` on the PC that makes releases | New app releases can't install over the old ones: every phone has to uninstall MediaSync (losing its pairing) and install again. |
+| **F-Droid repo key** (the maintainer only) | `~/.android/fdroid-repo.p12` and `~/.android/fdroid-repo.properties` on the PC that publishes [the F-Droid repo](https://github.com/tblisonb/fdroid) | F-Droid won't trust a repo signed with a new key: every phone has to remove the repo and add it again. The apps themselves are fine. |
 | **restic backup password** (anyone with backups) | `/etc/mediasync/backup/password` on the server | **The backups can't be read**, by anyone, ever. |
 | **Backup location and login** (anyone with backups) | `/etc/mediasync/backup/repository` on the server | You can't reach the backups until you set a new login on the backup machine. That's fixable, but annoying when you're already recovering from a loss. |
 | **Web UI admin password** | Only in your head, unless you save it | Reset it with `mediasync-server setup` (see the README). |
@@ -48,7 +49,26 @@ Create a Secure Note with:
 You don't need to save the properties file itself. It's four lines that can be rewritten from the
 password (see [Restoring the release key](#restoring-the-release-key)).
 
-### 2. "MediaSync backup (restic)"
+### 2. "F-Droid repo key"
+
+Create a Secure Note with:
+
+1. **Notes:** the key file as text:
+
+   ```sh
+   base64 -w0 ~/.android/fdroid-repo.p12 | wl-copy     # or: | xclip -selection clipboard
+   ```
+
+2. **A hidden custom field `properties`:** the whole properties file (three lines), which holds
+   the keystore and key passwords: `cat ~/.android/fdroid-repo.properties`.
+3. **A text custom field `fingerprint`:** the repo's fingerprint, which phones check. It starts
+   `85:3B:E5:29` and ends `11:44:D1:CE`.
+
+To restore it, decode the note's text into `~/.android/fdroid-repo.p12` (as for the release key,
+below), paste the properties back into `~/.android/fdroid-repo.properties`, and `chmod 600` both.
+The fdroid repo's `scripts/publish.sh` prints the fingerprint in the address it publishes.
+
+### 3. "MediaSync backup (restic)"
 
 Create a Secure Note with:
 
@@ -66,10 +86,11 @@ is one encrypted file that you can put anywhere: a USB stick, another cloud driv
 computer.
 
 ```sh
-# Bundle the four files into one archive, encrypted with a passphrase you choose
+# Bundle the six files into one archive, encrypted with a passphrase you choose
 # (save the passphrase in Bitwarden as well).
 mkdir -m 700 /tmp/mediasync-keys
-cp ~/.android/mediasync-release.jks ~/.android/mediasync-release.properties /tmp/mediasync-keys/
+cp ~/.android/mediasync-release.jks ~/.android/mediasync-release.properties \
+    ~/.android/fdroid-repo.p12 ~/.android/fdroid-repo.properties /tmp/mediasync-keys/
 sudo cat /etc/mediasync/backup/password > /tmp/mediasync-keys/restic-password
 sudo cat /etc/mediasync/backup/repository > /tmp/mediasync-keys/restic-repository
 tar czf - -C /tmp mediasync-keys | gpg --symmetric --cipher-algo AES256 -o mediasync-keys.tar.gz.gpg
