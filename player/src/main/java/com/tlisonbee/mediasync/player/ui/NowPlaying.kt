@@ -105,7 +105,21 @@ fun MiniPlayer(ui: Ui, state: PlaybackState, data: LibraryData, transition: Tran
     val item = state.current ?: return@with
     val track = vm.track(item.mediaId)
     val position = rememberPosition(vm, state.isPlaying)
-    Surface(Modifier.container(), tonalElevation = 3.dp) {
+    // Swiping up opens Now Playing, as tapping does: once the finger has gone far enough up, or on a flick.
+    val openAt = with(LocalDensity.current) { 40.dp.toPx() }
+    var dragged by remember { mutableFloatStateOf(0f) }
+    val swipeUp = rememberDraggableState { delta ->
+        dragged += delta
+        if (dragged < -openAt && !vm.nowPlayingOpen) vm.nowPlayingOpen = true
+    }
+    Surface(
+        Modifier.container().draggable(
+            swipeUp, Orientation.Vertical,
+            onDragStarted = { dragged = 0f },
+            onDragStopped = { velocity -> if (velocity < -1000f) vm.nowPlayingOpen = true },
+        ),
+        tonalElevation = 3.dp,
+    ) {
         // Kept at the bottom while the container is still taller than the bar.
         Column(Modifier.wrapContentHeight(Alignment.Bottom).navigationBarsPadding()) {
             LinearProgressIndicator(
