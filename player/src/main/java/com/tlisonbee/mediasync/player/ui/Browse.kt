@@ -1,5 +1,7 @@
 package com.tlisonbee.mediasync.player.ui
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,7 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -92,9 +94,19 @@ class Ui(
 fun HomeScreen(ui: Ui, data: LibraryData, playing: String?) {
     val vm = ui.vm
     Column(Modifier.fillMaxSize()) {
-        PrimaryScrollableTabRow(selectedTabIndex = vm.tab.ordinal, edgePadding = 8.dp) {
+        // All six fit across the screen: equal widths, and a label shrinks a little if it must.
+        PrimaryTabRow(selectedTabIndex = vm.tab.ordinal) {
             HomeTab.entries.forEach { t ->
-                Tab(selected = vm.tab == t, onClick = { vm.tab = t }, text = { Text(t.label) })
+                Tab(
+                    selected = vm.tab == t, onClick = { vm.tab = t }, modifier = Modifier.height(48.dp),
+                    selectedContentColor = MaterialTheme.colorScheme.primary, unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Text(
+                        t.label, Modifier.padding(horizontal = 2.dp), maxLines = 1, softWrap = false,
+                        style = MaterialTheme.typography.titleSmall,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = MaterialTheme.typography.titleSmall.fontSize),
+                    )
+                }
             }
         }
         ScanBanner(vm)
