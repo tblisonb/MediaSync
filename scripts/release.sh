@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Usage: scripts/release.sh app|desktop|server
+#        scripts/release.sh player [INTRO.md]
 #        scripts/release.sh all [INTRO.md]
 #
 # Tags one part of MediaSync and publishes it as a GitHub release, with its build attached:
 #   app       app-v<versionName>: the APK, a release build signed with the release key
 #   desktop   desktop-v<version>: a tarball with its own Java (bundledDist)
 #   server    server-v<version>: the server tarball, which installs itself
+#   player    segue-v<versionName>: Segue's APK, signed with the same release key. Its own version,
+#             not part of all, and not marked Latest (the MediaSync app keeps that). INTRO.md, if
+#             given, opens its notes.
 #
 # all releases the three together as v<version>, one release with all three builds attached. The
 # parts must share that version; each also gets its own tag, so a later release of one part lists
@@ -32,6 +36,7 @@ cd "$(dirname "$0")/.."
 version_of() {
     case $1 in
         app) sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts ;;
+        player) sed -n 's/^ *versionName = "\(.*\)"$/\1/p' player/build.gradle.kts ;;
         desktop | server) sed -n 's/^version = "\(.*\)"$/\1/p' "$1/build.gradle.kts" ;;
     esac
 }
@@ -51,6 +56,7 @@ at_least() { [[ $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1) == "$2" ]]; }
 compatibility() {
     case $1 in
         app | desktop) echo "**Needs server $(min_server_of "$1") or later.** Update the server first." ;;
+        player) echo "**Works on its own.** With MediaSync, its server features (ReplayGain values, playlists that follow renamed tracks, streaming) need server 1.5.0 or later." ;;
         server)
             echo "**Works with every earlier Android app and desktop client**: a server only adds to the API." \
                 "The current Android app ($(version_of app)) needs server $(min_server_of app) or later," \
@@ -80,6 +86,14 @@ build() {
             cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/mediasync-$version.apk"
             echo "app/build/outputs/apk/release/mediasync-$version.apk"
             ;;
+        player)
+            [[ -f $HOME/.android/mediasync-release.properties ]] ||
+                { echo "No release key: restore ~/.android/mediasync-release.{jks,properties}, or make one with scripts/make-release-key.sh." >&2; exit 1; }
+            ./gradlew -q :player:testDebugUnitTest :player:assembleRelease >&2
+            [[ -f player/build/outputs/apk/release/player-release.apk ]] || { echo "The release build isn't signed." >&2; exit 1; }
+            cp player/build/outputs/apk/release/player-release.apk "player/build/outputs/apk/release/segue-$version.apk"
+            echo "player/build/outputs/apk/release/segue-$version.apk"
+            ;;
         desktop)
             ./gradlew -q :desktop:test :desktop:bundledDist >&2
             ls desktop/build/distributions/mediasync-desktop-"$version"-linux-*.tar.gz
@@ -93,8 +107,9 @@ build() {
 
 # The commits that touched a part (or :shared) since its last release.
 changes() {
-    local part=$1 previous paths=("$1" shared)
-    previous=$(git describe --tags --abbrev=0 --match "$part-v*" 2>/dev/null || true)
+    local part=$1 previous paths=("$1" shared) prefix=$1
+    [[ $part == player ]] && prefix=segue
+    previous=$(git describe --tags --abbrev=0 --match "$prefix-v*" 2>/dev/null || true)
     [[ $part == server ]] && paths+=(deploy)
     [[ -n $previous ]] || echo "First tagged release."$'\n'
     git log --no-merges --format='- %s' ${previous:+"$previous..HEAD"} -- "${paths[@]}"
@@ -102,8 +117,8 @@ changes() {
 
 part=${1:-}
 case $part in
-    app | desktop | server | all) ;;
-    *) echo "usage: $0 app|desktop|server|all (see --help)" >&2; exit 2 ;;
+    app | desktop | server | player | all) ;;
+    *) echo "usage: $0 app|desktop|server|player|all (see --help)" >&2; exit 2 ;;
 esac
 
 [[ $(git rev-parse --abbrev-ref HEAD) == master ]] || { echo "Release from master." >&2; exit 1; }
@@ -111,6 +126,26 @@ esac
 git fetch -q origin master
 [[ $(git rev-parse HEAD) == $(git rev-parse origin/master) ]] || { echo "master differs from origin/master: push or pull first." >&2; exit 1; }
 export JAVA_HOME=${JAVA_HOME:-$HOME/Android/jdk-21}
+
+if [[ $part == player ]]; then
+    intro=${2:-}
+    [[ -z $intro || -f $intro ]] || { echo "no file $intro" >&2; exit 1; }
+    version=$(version_of player)
+    [[ -n $version ]] || { echo "no versionName in player/build.gradle.kts" >&2; exit 1; }
+    tag="segue-v$version"
+    untagged "$tag" player
+    asset=$(build player "$version")
+    notes=${intro:+$(cat "$intro")$'\n\n'}
+    notes+="$(compatibility player)"
+    # The first release is described by INTRO.md; later ones list what changed since the last.
+    if git describe --tags --abbrev=0 --match 'segue-v*' >/dev/null 2>&1; then
+        notes+=$'\n\n'"## Changes"$'\n\n'"$(changes player)"
+    fi
+    git tag -a "$tag" -m "Segue $version"
+    git push -q origin "$tag"
+    gh release create "$tag" "$asset" --verify-tag --latest=false --title "Segue $version" --notes "$notes"
+    exit 0
+fi
 
 if [[ $part != all ]]; then
     version=$(version_of "$part")
