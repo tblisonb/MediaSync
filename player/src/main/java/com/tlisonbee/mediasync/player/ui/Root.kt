@@ -1,5 +1,15 @@
 package com.tlisonbee.mediasync.player.ui
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -251,6 +261,55 @@ private fun PermissionScreen() {
     }
 }
 
+/** Light, dark or black, and the accent colour. */
+@UnstableApi
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppearanceSection(vm: PlayerViewModel) {
+    val settings = vm.settings
+    val theme by settings.theme.collectAsState()
+    val accent by settings.accent.collectAsState()
+    Text("Appearance", style = MaterialTheme.typography.titleMedium)
+    ThemeMode.entries.forEach { m ->
+        Row(
+            Modifier.fillMaxWidth().selectable(selected = m == theme, role = Role.RadioButton, onClick = { settings.setTheme(m) }).padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = m == theme, onClick = null)
+            Column(Modifier.padding(start = 12.dp)) {
+                Text(m.label)
+                if (m.description.isNotEmpty()) Text(m.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    Text("Accent colour", Modifier.padding(top = 8.dp))
+    Text(
+        "For the play buttons, the seek bar, the playing track and other highlights. Wallpaper uses the colours Android picks from yours.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val context = LocalContext.current
+    val dark = theme.isDark()
+    FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Accent.entries.forEach { a ->
+            // Each swatch is the colour it gives in this theme.
+            val color = remember(a, dark) { segueColors(context, a, dark, black = false).primary }
+            val selected = a == accent
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(56.dp)) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(color)
+                        .border(if (selected) 3.dp else 0.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
+                        .selectable(selected = selected, role = Role.RadioButton, onClick = { settings.setAccent(a) })
+                        .semantics { contentDescription = a.label },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) Box(Modifier.size(12.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onPrimary))
+                }
+                Text(a.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+        }
+    }
+}
+
 @UnstableApi
 @Composable
 private fun SettingsScreen(vm: PlayerViewModel) {
@@ -259,7 +318,9 @@ private fun SettingsScreen(vm: PlayerViewModel) {
     val scan by vm.library.scan.collectAsState()
     var confirmFull by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Volume levelling (ReplayGain)", style = MaterialTheme.typography.titleMedium)
+        AppearanceSection(vm)
+
+        Text("Volume levelling (ReplayGain)", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
         Text(
             "Uses the ReplayGain tags in the files. Tracks without them play as they are. Changes apply from the next track.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
