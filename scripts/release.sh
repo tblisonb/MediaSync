@@ -21,6 +21,9 @@
 # X or later", and an app isn't released before a server that new is. A server only adds to the API,
 # so its notes say it works with every earlier app.
 #
+# A release with the app in it is then added to the F-Droid repo (github.com/tblisonb/fdroid, checked
+# out in ~/Applications/fdroid or $FDROID_REPO).
+#
 # Needs: gh, logged in. For the app, the release key in ~/.android (see make-release-key.sh).
 set -euo pipefail
 # -h or --help prints the comment at the top of this file.
@@ -63,6 +66,17 @@ untagged() {
     if git rev-parse -q --verify "refs/tags/$1" >/dev/null; then
         echo "$1 already exists: bump the version in $2/build.gradle.kts." >&2
         exit 1
+    fi
+}
+
+# Adds the app's newest release to the F-Droid repo. The GitHub release is out either way.
+publish_fdroid() {
+    local fdroid_repo=${FDROID_REPO:-$HOME/Applications/fdroid}
+    if [[ -x $fdroid_repo/scripts/publish.sh ]]; then
+        "$fdroid_repo/scripts/publish.sh" ||
+            echo "Released, but not in the F-Droid repo yet: run $fdroid_repo/scripts/publish.sh to retry." >&2
+    else
+        echo "No F-Droid repo in $fdroid_repo: clone github.com/tblisonb/fdroid there and run its scripts/publish.sh." >&2
     fi
 }
 
@@ -130,6 +144,7 @@ if [[ $part != all ]]; then
     git tag -a "$tag" -m "MediaSync $part $version"
     git push -q origin "$tag"
     gh release create "$tag" "$asset" --verify-tag --title "MediaSync $part $version" --notes "$notes"
+    [[ $part != app ]] || publish_fdroid
     exit 0
 fi
 
@@ -159,3 +174,4 @@ for p in app desktop server; do git tag -a "$p-v$version" -m "MediaSync $p $vers
 git tag -a "v$version" -m "MediaSync $version"
 git push -q origin "v$version" "app-v$version" "desktop-v$version" "server-v$version"
 gh release create "v$version" "${assets[@]}" --verify-tag --latest --title "MediaSync $version" --notes "$notes"
+publish_fdroid
