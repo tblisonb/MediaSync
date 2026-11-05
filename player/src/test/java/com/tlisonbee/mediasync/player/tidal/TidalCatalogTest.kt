@@ -33,6 +33,7 @@ class TidalCatalogTest {
         assertEquals(238_000L, item.durationMs)
         assertEquals("e1", item.playlistItemId)
         assertEquals("GBAYE9200070", item.isrc)
+        assertEquals(java.time.Instant.parse("2026-10-01T10:00:00Z").toEpochMilli(), item.addedAt)
         val track = item.track!!
         assertEquals("tidal:58990486", track.path)
         assertEquals("Radiohead", track.albumArtist)

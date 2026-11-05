@@ -22,6 +22,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -49,6 +55,7 @@ import androidx.media3.common.util.UnstableApi
 import com.tlisonbee.mediasync.player.R
 import com.tlisonbee.mediasync.player.library.Track
 import com.tlisonbee.mediasync.player.tidal.TidalItem
+import com.tlisonbee.mediasync.player.tidal.TidalSort
 import com.tlisonbee.mediasync.player.tidal.TidalList
 import com.tlisonbee.mediasync.player.tidal.TidalLogin
 import kotlinx.coroutines.Dispatchers
@@ -114,6 +121,41 @@ private fun TidalEntryRow(ui: Ui, item: TidalItem) {
     )
 }
 
+/** The sort menu for TIDAL's track lists: one order, kept for all of them. */
+@UnstableApi
+@Composable
+private fun TidalSortMenu(ui: Ui) {
+    val settings = ui.vm.settings
+    val sort by settings.tidalSort.collectAsState()
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconAction(R.drawable.ic_sort, "Sort") { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (by in TidalSort.By.entries) {
+                DropdownMenuItem(
+                    text = { Text(by.label) },
+                    leadingIcon = { RadioButton(selected = sort.by == by, onClick = null) },
+                    onClick = { open = false; settings.setTidalSort(sort.copy(by = by)) },
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Reverse") },
+                leadingIcon = { Checkbox(checked = sort.reversed, onCheckedChange = null) },
+                onClick = { open = false; settings.setTidalSort(sort.copy(reversed = !sort.reversed)) },
+            )
+        }
+    }
+}
+
+/** [items] in the chosen TIDAL sort. */
+@UnstableApi
+@Composable
+private fun sorted(ui: Ui, items: List<TidalItem>): List<TidalItem> {
+    val sort by ui.vm.settings.tidalSort.collectAsState()
+    return remember(items, sort) { sort.apply(items) }
+}
+
 private fun LazyListScope.listStatus(state: TidalListState, empty: String) {
     if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) }
     state.error?.let { item { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) } }
@@ -169,15 +211,21 @@ fun TidalTabContent(ui: Ui, playing: String?) {
         val list = browser.tab.list
         LaunchedEffect(list) { browser.load(list) }
         val state = browser.state(list)
+        val shown = if (browser.tab == TidalTab.TRACKS) sorted(ui, state.items) else state.items
         LazyColumn(Modifier.fillMaxSize()) {
             if (browser.tab == TidalTab.TRACKS && state.items.isNotEmpty()) {
                 item {
-                    val tracks = state.items.mapNotNull { it.track }
-                    PlayButtons(onPlay = { vm.play(tracks, 0, shuffle = false) }, onShuffle = { vm.play(tracks, 0, shuffle = true) }, label = summary(tracks.size, 0))
+                    val tracks = shown.mapNotNull { it.track }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            PlayButtons(onPlay = { vm.play(tracks, 0, shuffle = false) }, onShuffle = { vm.play(tracks, 0, shuffle = true) }, label = summary(tracks.size, 0))
+                        }
+                        TidalSortMenu(ui)
+                    }
                 }
             }
             if (browser.tab == TidalTab.TRACKS) {
-                itemsIndexed(state.items, key = { _, it -> it.id }) { i, it -> TidalTrackRow(ui, it, state.items, i, playing) }
+                itemsIndexed(shown, key = { _, it -> it.id }) { i, it -> TidalTrackRow(ui, it, shown, i, playing) }
             } else {
                 items(state.items, key = { it.id }) { TidalEntryRow(ui, it) }
             }
@@ -200,17 +248,20 @@ fun TidalTracksScreen(ui: Ui, list: TidalList, id: String, playing: String?) {
         if (list == TidalList.PLAYLIST_TRACKS) browser.load(TidalList.PLAYLISTS)
     }
     val state = browser.state(list, id)
-    val tracks = state.items.mapNotNull { it.track }
+    // Albums keep their track order.
+    val shown = if (list == TidalList.PLAYLIST_TRACKS) sorted(ui, state.items) else state.items
+    val tracks = shown.mapNotNull { it.track }
     LazyColumn(Modifier.fillMaxSize()) {
         if (tracks.isNotEmpty()) {
             item {
-                Row {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         PlayButtons(
                             onPlay = { ui.vm.play(tracks, 0, shuffle = false) }, onShuffle = { ui.vm.play(tracks, 0, shuffle = true) },
                             label = summary(tracks.size, tracks.sumOf { it.durationMs ?: 0 }),
                         )
                     }
+                    if (list == TidalList.PLAYLIST_TRACKS) TidalSortMenu(ui)
                     MoreMenu(ui.tidalTrackMenu(tracks, if (list == TidalList.ALBUM_TRACKS) "the album" else "the playlist"))
                 }
             }
@@ -218,9 +269,9 @@ fun TidalTracksScreen(ui: Ui, list: TidalList, id: String, playing: String?) {
         // Your own playlist: its entries can be taken out.
         val own = list == TidalList.PLAYLIST_TRACKS && browser.ownPlaylists().any { it.id == id }
         val title = browser.state(TidalList.PLAYLISTS).items.firstOrNull { it.id == id }?.title ?: "the playlist"
-        itemsIndexed(state.items, key = { i, it -> "$i:${it.id}" }) { i, it ->
+        itemsIndexed(shown, key = { i, it -> "$i:${it.id}" }) { i, it ->
             TidalTrackRow(
-                ui, it, state.items, i, playing, numbered = list == TidalList.ALBUM_TRACKS,
+                ui, it, shown, i, playing, numbered = list == TidalList.ALBUM_TRACKS,
                 extra = if (own) listOf("Remove from this TIDAL playlist" to { ui.tidalEditor.removeFromPlaylist(id, title, listOf(it)) }) else emptyList(),
             )
         }
