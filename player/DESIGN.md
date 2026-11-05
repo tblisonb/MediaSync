@@ -249,3 +249,13 @@ test APK and `am instrument` as above.
   tags are the ones shown, and their covers are fetched as they're shown or played. Settings can
   hide them. Checked on the phone up to the network: the pairing is read and the provider refuses
   other apps; the first real stream waits for the server update.
+
+## Appearance (0.5.0)
+
+Settings > Appearance: Follow system, Light, Dark or Black (dark with pure black surfaces, for
+AMOLED screens), and an accent colour: Wallpaper (Android's dynamic colours, the default) or one
+of nine. A chosen accent's scheme comes from material-color-utilities (MaterialKolor's Kotlin port,
+MIT, no Compose dependency, so Material 3 stays on its stable release); its primary keeps the
+colour's own hue and saturation at tone 70 (dark) or 40 (light), since Material's tone-80 dark
+primaries turn most hues pastel. The system bars' icons follow Segue's theme rather than the phone's.
+

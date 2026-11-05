@@ -4,6 +4,8 @@ import android.content.Context
 import com.tlisonbee.mediasync.player.audio.ReplayGain
 import com.tlisonbee.mediasync.player.library.Gains
 import com.tlisonbee.mediasync.player.tidal.TidalSort
+import com.tlisonbee.mediasync.player.ui.Accent
+import com.tlisonbee.mediasync.player.ui.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +58,22 @@ class PlayerSettings(context: Context) {
     fun setTidalSort(sort: TidalSort) {
         prefs.edit().putString("tidal_sort", sort.by.name).putBoolean("tidal_sort_reversed", sort.reversed).apply()
         _tidalSort.value = sort
+    }
+
+    private val _theme = MutableStateFlow(prefs.getString("theme", null)?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM)
+    val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
+
+    fun setTheme(mode: ThemeMode) {
+        prefs.edit().putString("theme", mode.name).apply()
+        _theme.value = mode
+    }
+
+    private val _accent = MutableStateFlow(prefs.getString("accent", null)?.let { runCatching { Accent.valueOf(it) }.getOrNull() } ?: Accent.WALLPAPER)
+    val accent: StateFlow<Accent> = _accent.asStateFlow()
+
+    fun setAccent(accent: Accent) {
+        prefs.edit().putString("accent", accent.name).apply()
+        _accent.value = accent
     }
 
     fun setGainMode(mode: GainMode) {

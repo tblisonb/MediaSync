@@ -4,22 +4,20 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Environment
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
 import com.tlisonbee.mediasync.player.ui.PlayerRoot
 import com.tlisonbee.mediasync.player.ui.PlayerViewModel
+import com.tlisonbee.mediasync.player.ui.SegueTheme
 
 @UnstableApi
 class PlayerActivity : ComponentActivity() {
@@ -36,9 +34,17 @@ class PlayerActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) handle(intent)
         setContent {
-            val context = LocalContext.current
-            val dark = isSystemInDarkTheme()
-            MaterialTheme(colorScheme = if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)) {
+            val settings = app.settings
+            val mode by settings.theme.collectAsState()
+            val accent by settings.accent.collectAsState()
+            val dark = mode.isDark()
+            // The status and navigation bar icons follow Segue's theme, not the phone's.
+            DisposableEffect(dark) {
+                val style = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose {}
+            }
+            SegueTheme(mode, accent) {
                 Surface { PlayerRoot(viewModel, hasAccess) }
             }
         }
