@@ -1,5 +1,7 @@
 package com.tlisonbee.mediasync.player.ui
 
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.clickable
@@ -177,17 +179,10 @@ private fun ScanBanner(vm: PlayerViewModel) {
 
 @Composable
 fun PlayButtons(onPlay: () -> Unit, onShuffle: () -> Unit, label: String? = null) {
+    // Round icon buttons, so a long summary (a 1500-track playlist's) still fits on one line.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Button(onClick = onPlay) {
-            Icon(R.drawable.ic_play, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Play")
-        }
-        FilledTonalButton(onClick = onShuffle) {
-            Icon(R.drawable.ic_shuffle, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Shuffle")
-        }
+        FilledIconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) { Icon(R.drawable.ic_play, "Play") }
+        FilledTonalIconButton(onClick = onShuffle, modifier = Modifier.size(48.dp)) { Icon(R.drawable.ic_shuffle, "Shuffle") }
         if (label != null) Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
