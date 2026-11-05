@@ -21,9 +21,9 @@ seen what's coming.
   genre. A device can keep the games or whole platforms you pick for it.
 - **A web UI** for browsing the library, editing tags, dating photos, tidying a messy collection,
   going through the history and managing devices.
-- **Segue, a music player for Android**, plays the synced library (and, if you like, the rest of it
-  streamed from the server, and TIDAL) with the server's ReplayGain values, gapless, and scrobbles
-  to Last.fm. Optional: MediaSync works with any player.
+- **[Segue](https://github.com/tblisonb/Segue), a music player for Android** (its own project),
+  works with MediaSync: it rescans right after a sync, uses the server's ReplayGain values, and
+  streams the tracks the phone doesn't keep. Optional: MediaSync works with any player.
 - **Private by design.** It runs only on your own machines and is reached over your own
   [Tailscale](https://tailscale.com) network (a "tailnet"), never the open internet.
 
@@ -211,29 +211,12 @@ stay where they are, on the PC and on the server, and other devices keep syncing
 
 ### 6. Segue, the music player (optional)
 
-Segue plays the music on your phone. It works on its own, with any `Music` folder, but it's made to
-go with MediaSync: it levels volume with the server's ReplayGain values, rescans right after a sync,
-keeps its playlists (`.m3u8` files in `Music/Playlists`, synced like any file and shared with
-[fooyin](https://github.com/fooyin/fooyin) on the desktop) and can stream the tracks the phone
-doesn't keep from the server. Those need server 1.5.0 or later.
-
-1. From the Releases page, download `segue-<version>.apk` on the phone and open it.
-2. Open Segue and allow **All files access** (it reads the `Music` folder and writes playlists).
-   The first scan of a big library takes a couple of minutes; later ones only read what changed.
-3. Optional, all in Segue's **Settings**:
-   - **Music from the server:** with the MediaSync app paired on the same phone, Segue lists the
-     server's tracks the phone doesn't hold (with a cloud icon) and streams them over Tailscale.
-   - **TIDAL:** search, your favorites and playlists, playback up to 24-bit FLAC, and edits, with
-     the same two logins as the fooyin TIDAL plugin (your own developer app from
-     developer.tidal.com, and a playback client). Needs a TIDAL subscription.
-   - **Last.fm:** scrobbling and your stats (menu > Last.fm). Create an API account at
-     last.fm/api/account/create (leave the callback URL empty) and enter its key and secret.
-   - **Appearance:** light, dark or black, and an accent colour.
-
-Tapping a track plays its album, playlist, folder or search results from it; **Play next** and
-**Add to queue** queue tracks without changing that. Swipe the mini player up for Now Playing and
-swipe down anywhere on Now Playing to close it. Segue is signed with the same key as the MediaSync
-app (they trust each other through it), so the same notes about installing over older builds apply.
+[Segue](https://github.com/tblisonb/Segue) is a music player for Android, also with TIDAL and
+Last.fm, that knows about MediaSync. Install it from its own Releases page. With the MediaSync app
+(1.3.1 or later) on the same phone it rescans right after each sync, and with server 1.5.0 or later
+it levels volume with the server's ReplayGain values and can stream the server's tracks the phone
+doesn't keep (Segue's **Settings > Music from the server**). The two apps trust each other through
+a signature permission, so this needs the released APKs of both (signed with the same key).
 
 ## Using it
 
@@ -598,7 +581,6 @@ MediaSync is Kotlin throughout, built with Gradle.
 | `server/` | Ktor server: repository, sync API, web UI, game identification, and the `setup`, `fsck`, `prune`, `snapshot` and `fetch-games-db` commands |
 | `desktop/` | Desktop client: a systemd user service, the review page, tray icon, notifications, the CLI, and the window (`src/main/qml`: Kirigami and QtWebEngine, run by Qt's `qml` tool and fed by the service's `WindowApi`) |
 | `app/` | Android app (Jetpack Compose and WorkManager) |
-| `player/` (Segue) | The music player for Android ([player/DESIGN.md](player/DESIGN.md)): Compose and Media3 |
 | `spike/` | The first tag round-trip check (see [MILESTONES.md](MILESTONES.md)) |
 | `deploy/` | The server's systemd unit, install script, backups and an end-to-end smoke test |
 | `scripts/` | `update.sh` (build and install), `release.sh`, `make-release-key.sh`, `make-fixtures.sh` |
@@ -645,4 +627,4 @@ How MediaSync got here, milestone by milestone, is in [MILESTONES.md](MILESTONES
 
 ## License
 
-GPL-3.0-or-later (see [COPYING](COPYING)). The player bundles a GPL-3.0 build of FFmpeg's decoders.
+GPL-3.0-or-later (see [COPYING](COPYING)).
