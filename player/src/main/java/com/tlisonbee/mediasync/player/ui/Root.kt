@@ -139,7 +139,7 @@ private fun TopBar(ui: Ui, route: Route, data: com.tlisonbee.mediasync.player.li
     val back: @Composable () -> Unit = { IconAction(R.drawable.ic_back, "Back") { vm.back() } }
     when (route) {
         Route.Home -> TopAppBar(
-            title = { Text("Music") },
+            title = { Text("Segue") },
             actions = {
                 IconAction(R.drawable.ic_search, "Search") { vm.navigate(Route.Search) }
                 MoreMenu(listOf("Scan for changes" to { vm.rescan(full = false) }, "Settings" to { vm.navigate(Route.Settings) }))
