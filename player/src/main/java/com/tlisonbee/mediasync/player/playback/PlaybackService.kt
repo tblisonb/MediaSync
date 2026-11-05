@@ -2,6 +2,7 @@ package com.tlisonbee.mediasync.player.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -14,6 +15,8 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.tlisonbee.mediasync.player.lastfm.PlayTracker
+import com.tlisonbee.mediasync.player.lastfm.Scrobble
 import com.tlisonbee.mediasync.player.library.Track
 import com.tlisonbee.mediasync.player.remote.RemoteMusic
 import com.tlisonbee.mediasync.player.tidal.TidalDataSource
@@ -54,6 +57,10 @@ class PlaybackService : MediaSessionService() {
     private var positionSaver: Job? = null
     private var errorsInARow = 0
 
+    /** For scrobbling: how long the current track has played. */
+    private val tracker = PlayTracker(SystemClock::elapsedRealtime) { System.currentTimeMillis() / 1000 }
+    private var scrobbleCheck: Job? = null
+
     /** The TIDAL track last prepared again after its stream expired. */
     private var retried: String? = null
 
@@ -90,6 +97,8 @@ class PlaybackService : MediaSessionService() {
         session = MediaSession.Builder(this, player).setCallback(Callback()).setSessionActivity(open).build()
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_notification) })
         exo.addListener(Listener())
+        // Scrobbles played while offline go out when there's a connection again.
+        if (app.lastFm.isLoggedIn) app.lastFm.flush()
         scope.launch {
             val restored = load() ?: return@launch
             // Something may have been played already, from a screen or a headset.
@@ -193,8 +202,53 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /** What Last.fm is told for [item]: the first artist (featured ones are in the tags, not Last.fm's artist), the album, its artist. */
+    private fun scrobbleInfo(item: MediaItem): Scrobble? {
+        val track = app.library.data.value?.let { find(it, item.mediaId) }
+        val meta = item.mediaMetadata
+        val artist = track?.artists?.firstOrNull()?.takeIf { it.isNotBlank() } ?: meta.artist?.toString()?.takeIf { it.isNotBlank() } ?: return null
+        val title = track?.title?.takeIf { it.isNotBlank() } ?: meta.title?.toString()?.takeIf { it.isNotBlank() } ?: return null
+        return Scrobble(
+            artist, title,
+            album = track?.album ?: meta.albumTitle?.toString().orEmpty(),
+            albumArtist = track?.albumArtist ?: meta.albumArtist?.toString().orEmpty(),
+            trackNumber = track?.trackNumber,
+        )
+    }
+
+    /** Brings the scrobbling up to date with the player; [restart] for a new track (or a repeat of it). */
+    private fun trackScrobble(restart: Boolean) {
+        val lastFm = app.lastFm
+        if (!lastFm.isLoggedIn) return
+        val item = exo.currentMediaItem
+        if (restart || item?.mediaId != tracker.currentId) {
+            tracker.start(item?.mediaId, item?.let(::scrobbleInfo), item?.mediaMetadata?.durationMs ?: 0)
+        }
+        tracker.duration(exo.duration.takeIf { it != C.TIME_UNSET } ?: 0)
+        tracker.playing(exo.isPlaying)
+        tracker.announce()?.let(lastFm::nowPlaying)
+        tracker.due()?.let { s ->
+            lastFm.scrobble(s)
+            lastFm.stats.counted(s.artist, s.track)
+        }
+        scrobbleCheck?.cancel()
+        tracker.msUntilDue()?.let { wait ->
+            scrobbleCheck = scope.launch {
+                delay(wait + 250)
+                trackScrobble(restart = false)
+            }
+        }
+    }
+
     private inner class Listener : Player.Listener {
+        /** A new track started, as opposed to the same item being replaced (its cover fetched). */
+        private var newTrack = false
+
         override fun onEvents(player: Player, events: Player.Events) {
+            if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                trackScrobble(restart = newTrack)
+                newTrack = false
+            }
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) || events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) saveQueue()
             if (events.containsAny(
                     Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_POSITION_DISCONTINUITY,
@@ -206,6 +260,7 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) newTrack = true
             if (exo.currentMediaItemIndex >= 0) fetchCover(exo.currentMediaItemIndex)
         }
 

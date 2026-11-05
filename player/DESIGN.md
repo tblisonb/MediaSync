@@ -259,3 +259,24 @@ MIT, no Compose dependency, so Material 3 stays on its stable release); its prim
 colour's own hue and saturation at tone 70 (dark) or 40 (light), since Material's tone-80 dark
 primaries turn most hues pastel. The system bars' icons follow Segue's theme rather than the phone's.
 
+## Last.fm (0.6.0)
+
+- **Login:** your own API account (last.fm/api/account/create; its key and shared secret typed into
+  Settings, kept in `files/lastfm/lastfm.json`, never in the repository). Web authentication:
+  `auth.getToken`, Last.fm's approval page in a web view (or the browser), and `auth.getSession`
+  asked every 3 s until you've approved; the session key doesn't expire. Signed calls use
+  `api_sig` = MD5 of the sorted parameters run together plus the secret (`format` left out).
+- **Scrobbling** (`PlayTracker`, driven by `PlaybackService`): a track counts once it has *played*
+  (seeking doesn't count) for half its length or 4 minutes, if it's at least 30 s long; stamped with
+  when it started; a repeat is a new listen. "Now playing" is sent when a track first plays. The
+  artist sent is the first of the track's artists (featured artists would otherwise become
+  "A, B" artists on Last.fm), with the album and album artist. Scrobbles queue on disk and go 50
+  to a request; on a network or temporary error they're tried again 5 minutes later and whenever
+  playback starts; ones older than two weeks (which Last.fm ignores) are dropped.
+- **Stats** (menu > Last.fm): profile totals, recent scrobbles (now playing first), and top
+  artists, albums and tracks for a period (7 days to all time), 50 a page. Covers come from the
+  library when it has the album, else Last.fm's image (keys `l…`; its grey-star placeholder is
+  skipped). Tapping opens the library's artist or album or plays the track, or searches TIDAL for
+  it. Now Playing shows your play count of the track (`track.getInfo`, cached for the session and
+  counted up locally as you scrobble).
+

@@ -204,6 +204,7 @@ fun NowPlayingScreen(ui: Ui, state: PlaybackState, data: LibraryData, transition
                         Modifier.clickable(enabled = track != null && !track.isTidal) { track?.let { vm.navigate(Route.AlbumPage(it.albumKey)) } },
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
+                    LastFmPlays(vm, track, item.mediaMetadata.artist?.toString(), item.mediaMetadata.title?.toString())
                 }
             }
             Seek(vm, state)

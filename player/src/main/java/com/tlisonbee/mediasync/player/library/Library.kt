@@ -86,6 +86,8 @@ class Library(
                 key.startsWith(RemoteMusic.REMOTE_COVER) -> remote.download(key.removePrefix(RemoteMusic.REMOTE_COVER))
                 // TIDAL's images are public.
                 key.startsWith(TidalCatalog.COVER_PREFIX) -> TidalCatalog.coverUrl(key)?.let { url -> runCatching { TidalHttp.get(url) }.getOrNull()?.takeIf { it.ok }?.body }
+                key.startsWith(com.tlisonbee.mediasync.player.lastfm.LastFmImages.PREFIX) ->
+                    com.tlisonbee.mediasync.player.lastfm.LastFmImages.url(key)?.let { url -> runCatching { TidalHttp.get(url) }.getOrNull()?.takeIf { it.ok }?.body }
                 else -> null
             }
         }

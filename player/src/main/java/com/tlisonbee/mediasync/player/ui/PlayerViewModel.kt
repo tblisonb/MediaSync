@@ -39,6 +39,8 @@ sealed interface Route {
     data class TidalPlaylist(val id: String, val title: String) : Route
     data class TidalArtist(val id: String, val name: String) : Route
     data class TidalLoginPage(val playback: Boolean) : Route
+    data object LastFmLoginPage : Route
+    data object LastFmStatsPage : Route
 }
 
 enum class HomeTab(val label: String) { ARTISTS("Artists"), ALBUMS("Albums"), SONGS("Songs"), FOLDERS("Folders"), PLAYLISTS("Playlists"), TIDAL("TIDAL") }
@@ -142,6 +144,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         else com.tlisonbee.mediasync.player.tidal.TidalLogin.accountRequest(clientId)
         navigate(Route.TidalLoginPage(playback))
     }
+
+    val lastFm = application.app.lastFm
+
+    /** The Last.fm login the login page is finishing, and the secret it was started with. */
+    var pendingLastFmLogin: Pair<com.tlisonbee.mediasync.player.lastfm.LastFm.Login, String>? = null
 
     /** Plays [tracks] from [index], as a new queue; [shuffle] null keeps the shuffle setting. */
     fun play(tracks: List<Track>, index: Int = 0, shuffle: Boolean? = null) {

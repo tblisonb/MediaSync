@@ -11,14 +11,14 @@ class HttpResult(val status: Int, val body: ByteArray) {
     val text: String get() = body.decodeToString()
 }
 
-/** Blocking HTTP for TIDAL's APIs; call it off the main thread. */
+/** Blocking HTTP (TIDAL's APIs, Last.fm's); call it off the main thread. */
 object TidalHttp {
     fun get(url: String, headers: Map<String, String> = emptyMap()): HttpResult = send("GET", url, headers, null)
 
-    fun postForm(url: String, form: Map<String, String>): HttpResult =
-        send("POST", url, mapOf("Content-Type" to "application/x-www-form-urlencoded"), encodeForm(form).toByteArray())
+    fun postForm(url: String, form: Map<String, String>, headers: Map<String, String> = emptyMap(), service: String = "TIDAL"): HttpResult =
+        send("POST", url, headers + ("Content-Type" to "application/x-www-form-urlencoded"), encodeForm(form).toByteArray(), service)
 
-    fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?): HttpResult {
+    fun send(method: String, url: String, headers: Map<String, String>, body: ByteArray?, service: String = "TIDAL"): HttpResult {
         val connection = URL(url).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
@@ -33,7 +33,7 @@ object TidalHttp {
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
             return HttpResult(status, stream?.use { it.readBytes() } ?: ByteArray(0))
         } catch (e: IOException) {
-            throw IOException("Couldn't reach TIDAL: ${e.message ?: e.javaClass.simpleName}", e)
+            throw IOException("Couldn't reach $service: ${e.message ?: e.javaClass.simpleName}", e)
         } finally {
             connection.disconnect()
         }
