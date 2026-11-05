@@ -34,6 +34,8 @@ data class TidalItem(
     /** A playlist's owners' user IDs (none for mixes). */
     val owners: List<String> = emptyList(),
     val isrc: String? = null,
+    /** When it was added to the favorites or playlist it's listed in (ms since 1970). */
+    val addedAt: Long? = null,
 ) {
     enum class Kind { TRACK, ALBUM, ARTIST, PLAYLIST }
 }
@@ -288,6 +290,9 @@ class TidalCatalog(private val account: TidalSession) {
             }
         }
 
+        private fun addedAt(meta: JsonObject?): Long? =
+            meta?.string("addedAt")?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+
         private fun names(artists: List<JsonObject>) = artists.mapNotNull { it.attrs()?.string("name") }
 
         private fun trackItem(r: JsonObject, included: Included): TidalItem {
@@ -318,7 +323,7 @@ class TidalCatalog(private val account: TidalSession) {
             )
             return TidalItem(
                 TidalItem.Kind.TRACK, id, title, artists.joinToString(", "), track.album, durationMs = duration, cover = cover, track = track,
-                playlistItemId = meta?.string("itemId"), isrc = attrs?.string("isrc"),
+                playlistItemId = meta?.string("itemId"), isrc = attrs?.string("isrc"), addedAt = addedAt(meta),
             )
         }
 

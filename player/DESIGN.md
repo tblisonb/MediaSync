@@ -198,6 +198,10 @@ learned about the APIs):
   favorite tracks, albums and artists and your playlists (mixes too); albums, playlists and
   artists open as pages. Lists come page by page and are kept for the session (10 minutes). Covers
   are TIDAL's 640-pixel images, kept with the others (keys `t…`).
+  Playlists and favorite tracks can be sorted (playlist order, recently added, title, artist,
+  album; reversible) from the sort button by Play and Shuffle; as in the fooyin plugin, one sort
+  applies to every such list and is kept in the settings. Albums keep their track order. The
+  dates come from the linkage `meta.addedAt` of each entry (0.4.1).
 - **Playback** (v1): a TIDAL track is `tidal://track/<id>` with the DASH type; `TidalDataSource`
   answers that address with the track's `playbackinfo` manifest when ExoPlayer gets to the track
   (it prepares playlist items lazily), so a long TIDAL queue asks for one at a time and segment

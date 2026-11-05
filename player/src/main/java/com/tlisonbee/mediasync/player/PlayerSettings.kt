@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.player
 import android.content.Context
 import com.tlisonbee.mediasync.player.audio.ReplayGain
 import com.tlisonbee.mediasync.player.library.Gains
+import com.tlisonbee.mediasync.player.tidal.TidalSort
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,6 +41,21 @@ class PlayerSettings(context: Context) {
     fun setShowRemote(show: Boolean) {
         prefs.edit().putBoolean("show_remote", show).apply()
         _showRemote.value = show
+    }
+
+    private val _tidalSort = MutableStateFlow(
+        TidalSort(
+            prefs.getString("tidal_sort", null)?.let { runCatching { TidalSort.By.valueOf(it) }.getOrNull() } ?: TidalSort.By.LIST,
+            prefs.getBoolean("tidal_sort_reversed", false),
+        ),
+    )
+
+    /** How TIDAL's playlists and favorite tracks are sorted: one choice for all of them. */
+    val tidalSort: StateFlow<TidalSort> = _tidalSort.asStateFlow()
+
+    fun setTidalSort(sort: TidalSort) {
+        prefs.edit().putString("tidal_sort", sort.by.name).putBoolean("tidal_sort_reversed", sort.reversed).apply()
+        _tidalSort.value = sort
     }
 
     fun setGainMode(mode: GainMode) {
