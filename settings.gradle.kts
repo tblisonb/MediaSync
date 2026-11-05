@@ -22,4 +22,4 @@ include(":shared", ":spike", ":server", ":desktop")
 val androidSdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
     ?: file("local.properties").takeIf { it.isFile }?.readLines()
         ?.firstNotNullOfOrNull { it.trim().removePrefix("sdk.dir=").takeIf { dir -> dir != it.trim() } }
-if (androidSdk != null && file(androidSdk).isDirectory) include(":app", ":player")
+if (androidSdk != null && file(androidSdk).isDirectory) include(":app")

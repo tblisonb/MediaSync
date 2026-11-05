@@ -379,7 +379,8 @@ object SyncScheduler {
 }
 
 // Segue (the player/ module), told of each sync's changes.
-private const val PLAYER_PACKAGE = "com.tlisonbee.mediasync.player"
+/** Segue (github.com/tblisonb/Segue); before its 1.0.0 it was com.tlisonbee.mediasync.player. */
+private const val PLAYER_PACKAGE = "com.tlisonbee.segue"
 private const val PLAYER_PERMISSION = "com.tlisonbee.mediasync.permission.PLAYER"
 private const val PLAYER_FILES_CHANGED = "com.tlisonbee.mediasync.action.FILES_CHANGED"
 private const val PLAYER_EXTRA_PATHS = "paths"
