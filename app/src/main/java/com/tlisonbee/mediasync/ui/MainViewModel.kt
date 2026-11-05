@@ -3,6 +3,7 @@ package com.tlisonbee.mediasync.ui
 import android.app.Application
 import android.os.Build
 import android.os.Environment
+import android.util.Log
 import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -34,6 +35,7 @@ import com.tlisonbee.mediasync.sync.SyncEngine
 import com.tlisonbee.mediasync.sync.SyncScheduler
 import com.tlisonbee.mediasync.sync.SyncState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,6 +46,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.net.URI
 import java.net.URLEncoder
 
@@ -182,7 +185,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         UiState(screen, settings.config, settings.lastSync, progress, count, pair, prev, rev, vids, activity, work.applying, work.images, work.games)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
+    private val reviewLoads = Channel<Unit>(Channel.CONFLATED)
+    private val reviewDone = AtomicBoolean(false)
+
     init {
+        viewModelScope.launch(Dispatchers.IO) { readReviews() }
         // A check or apply in the worker ends with a settings change: reload what waits.
         viewModelScope.launch { app.settings.changes.collect { loadReview() } }
         viewModelScope.launch {
@@ -197,17 +204,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Asks for the review to be read again. Reads run one at a time, and asks made during one
+     * become a single read after it: a big review (a whole library retagged) takes a lot of
+     * memory, and opening the app mid-sync used to read it twice at once beside the sync's copy.
+     */
     fun loadReview(doneApplying: Boolean = false) {
-        val config = app.settings.config ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            val settings = ReviewSettings(app.index)
-            review.value = ReviewState(
-                enabled = settings.enabled,
-                checkMinutes = settings.checkMinutes,
-                lastCheck = app.index.state(SyncEngine.LAST_CHECK)?.toLong(),
-                review = SyncEngine.storedReview(config, app.index, ignoresCase = true),
-            )
-            if (doneApplying) applying.value = emptyMap()
+        if (doneApplying) reviewDone.set(true)
+        reviewLoads.trySend(Unit)
+    }
+
+    private suspend fun readReviews() {
+        for (ask in reviewLoads) {
+            val config = app.settings.config ?: continue
+            val done = reviewDone.getAndSet(false)
+            try {
+                val settings = ReviewSettings(app.index)
+                review.value = ReviewState(
+                    enabled = settings.enabled,
+                    checkMinutes = settings.checkMinutes,
+                    lastCheck = app.index.state(SyncEngine.LAST_CHECK)?.toLong(),
+                    review = SyncEngine.storedReview(config, app.index, ignoresCase = true),
+                )
+            } catch (e: Exception) {
+                // The next ask reads again; the list on screen stays until then.
+                Log.w("MediaSync", "Couldn't read the review", e)
+            }
+            if (done) applying.value = emptyMap()
         }
     }
 

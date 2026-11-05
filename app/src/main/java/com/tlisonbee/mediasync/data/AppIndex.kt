@@ -119,10 +119,30 @@ class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 2
         }
     }
 
-    override fun remote(): List<RemoteChange> =
-        readableDatabase.rawQuery("SELECT change FROM remote ORDER BY rev, asset_id", null).use { c ->
-            buildList { while (c.moveToNext()) add(ApiJson.decodeFromString(RemoteChange.serializer(), c.getString(0))) }
+    /**
+     * In pages, each its own query: a cursor that outgrows its window re-runs the query for the
+     * next one, and if a sync deleted rows meanwhile (accepting them) the rows it asks for are gone.
+     */
+    override fun remote(): List<RemoteChange> = buildList {
+        var rev = Long.MIN_VALUE
+        var assetId = ""
+        while (true) {
+            val page = readableDatabase.rawQuery(
+                "SELECT rev, asset_id, change FROM remote WHERE rev > ? OR (rev = ? AND asset_id > ?) ORDER BY rev, asset_id LIMIT $REMOTE_PAGE",
+                arrayOf(rev.toString(), rev.toString(), assetId),
+            ).use { c ->
+                var n = 0
+                while (c.moveToNext()) {
+                    rev = c.getLong(0)
+                    assetId = c.getString(1)
+                    add(ApiJson.decodeFromString(RemoteChange.serializer(), c.getString(2)))
+                    n++
+                }
+                n
+            }
+            if (page < REMOTE_PAGE) break
         }
+    }
 
     override fun putRemote(change: RemoteChange) {
         val values = ContentValues().apply {
@@ -177,6 +197,9 @@ class AppIndex(context: Context) : SQLiteOpenHelper(context, "index.db", null, 2
     }
 
     private companion object {
+        /** Rows per query in [remote]: a page stays inside one cursor window (2 MB), even with long tags. */
+        const val REMOTE_PAGE = 100
+
         val tagsSerializer = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
         fun encode(tags: Tags) = ApiJson.encodeToString(tagsSerializer, tags)
         fun decode(text: String): Tags = ApiJson.decodeFromString(tagsSerializer, text)
