@@ -129,6 +129,59 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun anEpisodeMovedByHandIsAFieldEditToReview() = TestWorld().use { world ->
+        val pc = world.client("PC", videos = false)
+        val videos = pc.music.resolveSibling("Videos")
+        val special = videos.resolve("shows/Specials/Season 00/Specials - S00E01 - Best Gift Ever.mkv")
+        Files.createDirectories(special.parent)
+        Files.write(special, ByteArray(50_000) { (it * 5).toByte() })
+        pc.sync()
+        val assetId = pc.index.get(special)!!.assetId!!
+        assertEquals("videos/shows/Specials/Season 00/Specials - S00E01 - Best Gift Ever", world.repo.headVersion(assetId)!!.path)
+
+        // Moved into another show's folder: a check lists it, and leaves the file where it was put.
+        val moved = videos.resolve("shows/MLP/Specials/Specials - S00E01 - Best Gift Ever.mkv")
+        Files.createDirectories(moved.parent)
+        Files.move(special, moved)
+        val review = pc.engine.check()
+        assertTrue(Files.exists(moved), "a check changes nothing on disk")
+        val item = review.outgoing.flatMap { it.items }.single()
+        assertTrue("show: Specials → MLP" in item.detail, item.detail)
+        assertTrue("filed as shows/MLP/Season 00/MLP - S00E01 - Best Gift Ever" in item.detail, item.detail)
+        assertTrue(Files.exists(moved), "still")
+
+        // Accepted, it's refiled as the new show's special, here as on the server.
+        pc.engine.apply(review.acceptAll())
+        val head = world.repo.headVersion(assetId)!!
+        assertEquals(listOf("MLP"), head.tags["show"])
+        assertEquals("videos/shows/MLP/Season 00/MLP - S00E01 - Best Gift Ever", head.path)
+        assertTrue(Files.exists(videos.resolve("shows/MLP/Season 00/MLP - S00E01 - Best Gift Ever.mkv")))
+        assertFalse(Files.exists(moved))
+        assertTrue(pc.engine.check().isEmpty)
+    }
+
+    @Test
+    fun aTrackMovedByHandStaysUntilChangesAreApplied() = TestWorld().use { world ->
+        val desktop = world.importedDesktop()
+        val airbag = desktop.file("Radiohead/OK Computer/01 Airbag.flac")
+        val moved = desktop.file("Elsewhere/01 Airbag.flac")
+        Files.createDirectories(moved.parent)
+        Files.move(airbag, moved)
+
+        // Music is named by its tags, so it goes back: but not in a check, which says so instead.
+        val review = desktop.engine.check()
+        assertTrue(Files.exists(moved), "a check changes nothing on disk")
+        assertTrue(review.warnings.any { "goes back to $airbag" in it }, review.warnings.joinToString())
+        assertTrue(desktop.engine.check().warnings.any { "goes back to $airbag" in it }, "said again at the next check")
+        assertTrue(Files.exists(moved))
+
+        desktop.engine.apply(review.acceptAll())
+        assertTrue(Files.exists(airbag))
+        assertFalse(Files.exists(moved))
+        assertTrue(desktop.engine.check().warnings.isEmpty())
+    }
+
+    @Test
     fun importRenamesByTagsAndASecondPcReceives() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         assertEquals(

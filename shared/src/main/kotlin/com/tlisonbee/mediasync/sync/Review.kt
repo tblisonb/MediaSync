@@ -3,7 +3,9 @@ package com.tlisonbee.mediasync.sync
 import com.tlisonbee.mediasync.api.AssetDto
 import com.tlisonbee.mediasync.api.AssetKind
 import com.tlisonbee.mediasync.library.RepoPaths
+import com.tlisonbee.mediasync.api.Tags
 import com.tlisonbee.mediasync.library.SyncMode
+import com.tlisonbee.mediasync.library.VideoNames
 import kotlinx.serialization.Serializable
 import java.security.MessageDigest
 
@@ -143,7 +145,20 @@ class ReviewBuilder(private val config: ClientConfig, private val index: FileInd
     fun pending(row: Row): Boolean {
         val folder = folderOf(row) ?: return false
         if (folder.mode == SyncMode.RECEIVE_ONLY) return false
-        return row.changed || movedOutsideMusic(folder, row)
+        return row.changed || movedOutsideMusic(folder, row) || movedFields(row).isNotEmpty()
+    }
+
+    /**
+     * A movie or episode is filed by its fields, so moving one by hand within movies/ or shows/
+     * edits them: the fields its new place gives it that differ ([VideoNames.movedFields]).
+     */
+    fun movedFields(row: Row): Tags {
+        val base = row.base ?: return emptyMap()
+        val folder = folderOf(row) ?: return emptyMap()
+        if (row.missing || base.deleted || base.kind != AssetKind.VIDEO || !RepoPaths.followsFields(base.kind, base.path, base.category)) return emptyMap()
+        val here = LocalFiles.repoPath(folder, row.file)
+        if (pathKey(folder, here) == pathKey(folder, base.path)) return emptyMap()
+        return VideoNames.movedFields(base.path, here)
     }
 
     private fun movedOutsideMusic(folder: FolderConfig, row: Row): Boolean {
@@ -195,7 +210,17 @@ class ReviewBuilder(private val config: ClientConfig, private val index: FileInd
             LocalKind.NEW -> "new file"
             LocalKind.DELETED -> "deleted here"
             LocalKind.REPLACED -> "audio replaced"
-            LocalKind.MOVED -> "moved from ${base?.path?.removePrefix(row.prefix)}"
+            LocalKind.MOVED -> {
+                val from = "moved from ${base?.path?.removePrefix(row.prefix)}"
+                val fields = movedFields(row)
+                if (fields.isEmpty() || base == null) {
+                    from
+                } else {
+                    val edits = fields.map { (field, value) -> "$field: ${base.tags[field].show()} → ${value.show()}" }
+                    val filed = RepoPaths.video(base.tags + fields, base.category, RepoPaths.name(base.path))?.removePrefix(row.prefix)
+                    (listOf(from) + edits + listOfNotNull(filed?.let { "filed as $it" })).joinToString("; ")
+                }
+            }
             LocalKind.RETAGGED -> {
                 val seen = row.seenTags.orEmpty()
                 val fields = (seen.keys + row.tags.keys).filter { seen[it] != row.tags[it] }

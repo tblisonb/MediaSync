@@ -135,7 +135,7 @@ class SyncEngine(
     fun check(allowDeletes: Boolean = false, full: Boolean = false): Review {
         val report = SyncReport()
         refreshSettings()
-        scan(report, allowDeletes)
+        scan(report, allowDeletes, reviewing = true)
         // From the start: everything the server holds is compared with the files again, and
         // whatever differs (a download that once failed, say) is staged.
         if (full) index.setState(SINCE, null)
@@ -298,7 +298,7 @@ class SyncEngine(
 
     // ---- Scan: what changed on disk ----
 
-    private fun scan(report: SyncReport, allowDeletes: Boolean) {
+    private fun scan(report: SyncReport, allowDeletes: Boolean, reviewing: Boolean = false) {
         for (folder in config.folders) {
             val root = folder.root
             if (!Files.isDirectory(root)) {
@@ -354,7 +354,7 @@ class SyncEngine(
                 gone -= moved
                 val carried = row.copy(seenMedia = moved.seenMedia, seenTags = moved.seenTags, seenCover = moved.seenCover, assetId = moved.assetId, base = moved.base, ignored = moved.ignored)
                 index.replace(moved.path, carried)
-                moveBackIfMusic(folder, carried, report)
+                moveBackIfFiled(folder, carried, report, reviewing)
             }
             // Kept in the library when deleted here: a file that's gone is only forgotten.
             if (folder.keepsDeleted) {
@@ -372,26 +372,79 @@ class SyncEngine(
                 deletions.forEach { index.put(it.copy(missing = true)) }
             }
         }
+        settleMisplaced(report, reviewing)
     }
 
     /**
-     * Music paths follow the tags, so a track renamed by hand goes back where its tags put it. A
-     * send-only folder keeps its own names (a phone's camera folder isn't filed by date).
+     * Where a file filed by its fields (a track by its tags, an episode by its show and season, a
+     * photo by its date) belongs, when it was moved by hand somewhere its fields don't put it; null
+     * when it's where it belongs, or isn't filed. A video moved to where other fields would put it
+     * isn't misplaced: the move edits those fields ([ReviewBuilder.movedFields]). A send-only folder
+     * keeps its own names (a phone's camera folder isn't filed by date).
      */
-    private fun moveBackIfMusic(folder: FolderConfig, row: Row, report: SyncReport) {
-        val base = row.base ?: return
-        if (folder.mode == SyncMode.SEND_ONLY) return
-        if (row.ignored != null || !RepoPaths.followsFields(base.kind, base.path, base.category)) return
+    private fun misplaced(folder: FolderConfig, row: Row): Path? {
+        val base = row.base ?: return null
+        if (folder.mode == SyncMode.SEND_ONLY || row.missing || base.deleted) return null
+        if (row.ignored != null || !RepoPaths.followsFields(base.kind, base.path, base.category)) return null
+        if (reviewer.movedFields(row).isNotEmpty()) return null
         val expected = LocalFiles.localPath(folder, base.path, row.extension)
-        if (expected == row.file || Files.exists(expected)) return
+        if (expected == row.file || Files.exists(expected)) return null
+        return expected
+    }
+
+    /**
+     * A filed file moved by hand goes back where its fields put it, but only when changes are
+     * being applied: a check ([reviewing]) leaves it where it is and says where it goes, so
+     * nothing on disk changes before it's approved.
+     */
+    private fun moveBackIfFiled(folder: FolderConfig, row: Row, report: SyncReport, reviewing: Boolean) {
+        val expected = misplaced(folder, row) ?: return
+        if (reviewing) {
+            // Said in the review by settleMisplaced, at the end of the scan.
+            index.setState(MISPLACED, (misplacedPaths() + row.path).joinToString("\n"))
+            return
+        }
         LocalFiles.move(row.file, expected)
         touched.add(row.file)
         touched.add(expected)
         LocalFiles.pruneEmpty(row.file.parent, folder.root)
         val (size, mtime) = LocalFiles.stat(expected)
         index.replace(row.path, row.copy(path = expected.toString(), size = size, mtime = mtime))
-        log("Moved ${row.path} back to $expected: music files are named by their tags")
+        log("Moved ${row.path} back to $expected: ${filedBy(row.base!!.kind)}")
         report.renamed++
+    }
+
+    /** Files a check left where they were moved to, to go back when changes are applied. */
+    private fun misplacedPaths(): Set<String> = index.state(MISPLACED)?.lines()?.filter { it.isNotBlank() }?.toSet().orEmpty()
+
+    /**
+     * After a scan: the files a check left moved go back now ([reviewing] false), or are said
+     * again to be waiting to. One that was put back by hand, or edited since, is let go.
+     */
+    private fun settleMisplaced(report: SyncReport, reviewing: Boolean) {
+        val waiting = misplacedPaths()
+        if (waiting.isEmpty()) return
+        val still = waiting.filter { path ->
+            val row = index.get(Path.of(path)) ?: return@filter false
+            val folder = folderOf(row)
+            val expected = misplaced(folder, row) ?: return@filter false
+            if (reviewing) {
+                report.warn("$path was moved by hand; it goes back to $expected when changes are applied: ${filedBy(row.base!!.kind)}")
+                true
+            } else {
+                moveBackIfFiled(folder, row, report, reviewing = false)
+                false
+            }
+        }
+        index.setState(MISPLACED, still.joinToString("\n").ifEmpty { null })
+    }
+
+    private fun filedBy(kind: AssetKind) = when (kind) {
+        AssetKind.AUDIO -> "music is named by its tags"
+        AssetKind.VIDEO -> "a movie or episode is filed by its fields; move it within movies/ or shows/, or edit its fields, to refile it"
+        AssetKind.IMAGE -> "photos are filed by their date"
+        AssetKind.GAME -> "games are filed by their platform and title"
+        else -> "it's filed by its fields"
     }
 
     /** Whether a file holds tags the policy doesn't keep, which the next write removes. */
@@ -675,6 +728,8 @@ class SyncEngine(
             val value = row.tags[field]
             if (value == null) tags.remove(field) else tags[field] = value
         }
+        // A movie or episode moved by hand to where other fields would file it: those fields.
+        tags += reviewer.movedFields(row)
         val pictures = if (coverChanged) base.pictures.filter { it.type != TagPolicy.FRONT_COVER } + listOfNotNull(cover) else base.pictures
         val music = RepoPaths.followsFields(base.kind, base.path, base.category)
         // A plain file on the server that this device reads as a track, picture or video: saying
@@ -848,6 +903,9 @@ class SyncEngine(
         const val LAST_SUCCESS = "lastSuccessAt"
         const val LAST_CHECK = "lastCheckAt"
         private const val CHECK_WARNINGS = "checkWarnings"
+
+        /** Filed files a check found moved by hand, which go back when changes are applied. */
+        private const val MISPLACED = "misplaced"
 
         private fun checkWarnings(index: FileIndex) = index.state(CHECK_WARNINGS)?.lines()?.filter { it.isNotBlank() }.orEmpty()
 

@@ -51,6 +51,56 @@ object VideoNames {
         return VideoGuess(RepoPaths.MOVIES, tags(TagField.TITLE to title.ifEmpty { name }, TagField.YEAR to year?.groupValues?.get(1)))
     }
 
+    private val SEASON_FOLDER = Regex("""(?i)^season\s*(\d{1,3})$""")
+    private val SPECIALS_FOLDER = Regex("""(?i)^specials?$""")
+
+    /**
+     * The fields a filed video's place says it has: for `videos/shows/{show}/[Season nn/]{name}` the
+     * show (its folder), the season (its folder, else the name's SnnEnn), episode and title; for
+     * `videos/movies/{title (year)}/{name}` the title and year (its folder). Null outside that layout.
+     */
+    fun filedFields(repoPath: String): Tags? {
+        val shows = "${RepoPaths.VIDEOS}${RepoPaths.SHOWS}/"
+        val movies = "${RepoPaths.VIDEOS}${RepoPaths.MOVIES}/"
+        return when {
+            repoPath.startsWith(shows) -> {
+                val parts = repoPath.removePrefix(shows).split('/')
+                if (parts.size !in 2..3 || parts.any { it.isBlank() }) return null
+                val named = guess("x/" + parts.last()).tags
+                val season = if (parts.size == 3) {
+                    val folder = parts[1]
+                    SEASON_FOLDER.find(folder)?.groupValues?.get(1)?.toInt()?.toString()
+                        ?: if (SPECIALS_FOLDER.matches(folder)) "0" else return null
+                } else {
+                    named[TagField.SEASON]?.firstOrNull()
+                }
+                tags(
+                    TagField.SHOW to parts[0],
+                    TagField.SEASON to season,
+                    TagField.EPISODE to named[TagField.EPISODE]?.firstOrNull(),
+                    TagField.TITLE to named[TagField.TITLE]?.firstOrNull(),
+                )
+            }
+            repoPath.startsWith(movies) -> {
+                val parts = repoPath.removePrefix(movies).split('/')
+                if (parts.size != 2 || parts[0].isBlank()) return null
+                guess("Movies/${parts[0]}/${parts[0]}").tags
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * What moving a filed video from [oldPath] to [newPath] (repository paths) says about its
+     * fields: those that differ, as [newPath] has them. Empty when the move says nothing, or
+     * leaves the layout (a move out of shows/ isn't a field).
+     */
+    fun movedFields(oldPath: String, newPath: String): Tags {
+        val before = filedFields(oldPath) ?: return emptyMap()
+        val after = filedFields(newPath) ?: return emptyMap()
+        return after.filter { (field, value) -> before[field] != value }
+    }
+
     private fun episode(name: String, match: MatchResult, season: Int, episode: Int, folders: List<String>): VideoGuess {
         val before = clean(name.substring(0, match.range.first))
         val after = clean(name.substring(match.range.last + 1))
