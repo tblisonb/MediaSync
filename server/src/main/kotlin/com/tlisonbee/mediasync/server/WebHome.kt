@@ -9,6 +9,7 @@ import io.ktor.server.html.respondHtml
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import kotlinx.html.DIV
+import kotlinx.html.code
 import kotlinx.html.FlowContent
 import kotlinx.html.HTML
 import kotlinx.html.InputType
@@ -93,7 +94,10 @@ class Activity(val text: String, val device: String, val at: Long, val newest: L
 class Home(
     val head: Long,
     val sizes: Map<Area, Long>,
-    val stored: Long,
+    /** Bytes only older versions and deleted files use: what undo needs, and prune frees. */
+    val history: Long,
+    /** MediaSync's own files: the database and its snapshot, thumbnails, game databases, uploads. */
+    val ownData: Long,
     /** The disk the repository is on: its size and what's free, when the system says. */
     val disk: Long?,
     val free: Long?,
@@ -114,6 +118,40 @@ private const val QUIET_DAYS = 3
 
 /** A backup snapshot older than this means the nightly backup isn't running. */
 private const val BACKUP_DAYS = 2
+
+/**
+ * Bytes of the blobs no live file uses: older versions, files deleted but not yet pruned, and
+ * uploads not yet pushed. A blob a live file shares with an old version counts as the live file's.
+ */
+fun Repository.historyBytes(): Long = db.long(
+    """
+    WITH live AS (
+      SELECT v.renditions, v.pictures FROM asset_head h JOIN asset_version v ON v.asset_id = h.asset_id AND v.rev = h.rev
+      WHERE h.deleted = 0
+    ), used(hash) AS (
+      SELECT m.base_blob FROM live, json_each(live.renditions) j JOIN media m ON m.media_hash = j.value
+      UNION SELECT json_extract(p.value, '$.blob') FROM live, json_each(live.pictures) p
+    )
+    SELECT COALESCE(SUM(size), 0) FROM blob WHERE hash NOT IN (SELECT hash FROM used WHERE hash IS NOT NULL)
+    """.trimIndent(),
+)
+
+/** How long [ownDataBytes] reuses its last count: thumbs/ is a file or more for every image and video. */
+private const val OWN_DATA_TTL_MS = 10 * 60_000L
+
+/** The repository's files that aren't blobs, counted at most every [OWN_DATA_TTL_MS]. */
+internal fun Repository.ownDataBytes(now: Long): Long {
+    ownDataSize.get()?.takeIf { now - it.first < OWN_DATA_TTL_MS }?.let { return it.second }
+    val files = listOf(dir.db, dir.db.resolveSibling("repo.db-wal"))
+    val folders = listOf(dir.snapshots, dir.thumbs, dir.uploads, dir.root.resolve("gamedb"))
+    val bytes = files.sumOf { runCatching { Files.size(it) }.getOrDefault(0L) } + folders.sumOf(::folderBytes)
+    ownDataSize.set(now to bytes)
+    return bytes
+}
+
+private fun folderBytes(folder: java.nio.file.Path): Long = runCatching {
+    Files.walk(folder).use { paths -> paths.mapToLong { runCatching { if (Files.isRegularFile(it)) Files.size(it) else 0L }.getOrDefault(0L) }.sum() }
+}.getOrDefault(0L)
 
 fun Repository.liveSummary(): List<HomeAsset> = db.read {
     db.query(
@@ -171,7 +209,8 @@ fun Repository.home(now: Long = System.currentTimeMillis()): Home {
     return Home(
         head = head,
         sizes = Area.entries.associateWith { area -> byArea[area].orEmpty().sumOf { it.size } },
-        stored = db.long("SELECT COALESCE(SUM(size), 0) FROM blob"),
+        history = historyBytes(),
+        ownData = ownDataBytes(now),
         disk = store?.let { runCatching { it.totalSpace }.getOrNull() },
         free = store?.let { runCatching { it.usableSpace }.getOrNull() },
         music = musicCard(byArea[Area.MUSIC].orEmpty()),
@@ -462,17 +501,23 @@ private fun FlowContent.devices(home: Home) = section("side-card") {
 private class Segment(val css: String, val label: String, val size: Long)
 
 /**
- * The live library split by area: an SVG, since the CSP allows no inline styles to size a bar. With
- * "Show free space" ticked, a second bar is the whole disk instead, the library beside everything else
- * on it (old versions, other files) and what's free. CSS picks the bar; storage.js remembers the box.
+ * What MediaSync stores: the live library split by area, then its revision history and its own
+ * files. An SVG, since the CSP allows no inline styles to size a bar. With "Show free space" ticked,
+ * a second bar is the whole disk instead, MediaSync beside everything else on it and what's free.
+ * CSS picks the bar; storage.js remembers the box.
  */
 private fun FlowContent.storage(home: Home) = section("side-card storage") {
     val library = Area.entries.map { Segment("seg-${it.name.lowercase()}", it.label, home.sizes.getValue(it)) }.filter { it.size > 0 }
-    val total = library.sumOf { it.size }
+    val own = listOf(
+        Segment("seg-history", "Revision history", home.history),
+        Segment("seg-data", "MediaSync data", home.ownData),
+    ).filter { it.size > 0 }
+    val stored = library + own
+    val total = stored.sumOf { it.size }
     val free = home.free
     val disk = home.disk?.takeIf { free != null && it >= free }
     val rest = if (disk != null && free != null) listOf(
-        // Old versions, the system's files, space kept for root: whatever isn't the library or free.
+        // The system's files, other programs', space kept for root: whatever isn't MediaSync's or free.
         Segment("seg-rest", "Used by other files", (disk - free - total).coerceAtLeast(0)),
         Segment("seg-free", "Free", free),
     ) else emptyList()
@@ -483,21 +528,28 @@ private fun FlowContent.storage(home: Home) = section("side-card storage") {
             +"Show free space"
         }
     }
-    if (total == 0L) return@section p("empty") { +"Nothing stored yet." }
+    if (library.isEmpty()) return@section p("empty") { +"Nothing stored yet." }
     p("headline") {
         +bytes(total)
         if (disk != null) span("muted disk-only of-disk") { +" of ${bytes(disk)}" }
     }
     div("storage-bar") {
-        bar("library", "Library by area", library)
-        if (rest.isNotEmpty()) bar("disk", "The disk: the library, other files, and free space", library + rest)
+        bar("library", "What MediaSync stores: the library by area, its history and its own data", stored)
+        if (rest.isNotEmpty()) bar("disk", "The disk: what MediaSync stores, other files, and free space", stored + rest)
     }
     ul("legend") {
         library.forEach { legendRow(it) }
-        // Not part of the library, so set apart; their swatches are hollow while the bar leaves them out.
+        // MediaSync's own, not the library's; then the rest of the disk, hollow while the bar leaves it out.
+        own.forEachIndexed { i, s -> legendRow(s, if (i == 0) "beside" else null) }
         rest.forEachIndexed { i, s -> legendRow(s, if (i == 0) "beside" else null) }
     }
-    p("muted small") { +"${bytes(home.stored)} stored, with old versions" }
+    if (home.history > 0) {
+        p("muted small") {
+            +"Revision history is the older versions undo and revert bring back. "
+            code { +"mediasync-server prune --older-than 90d" }
+            +" frees what's older than 90 days."
+        }
+    }
     p("muted small") { +(home.backupAt?.let { "Last backup started ${ago(it)}" } ?: "No backups yet") }
 }
 

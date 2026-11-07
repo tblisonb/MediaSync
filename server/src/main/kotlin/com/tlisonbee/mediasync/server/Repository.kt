@@ -43,6 +43,9 @@ class Repository(val dir: RepoDir, val clock: () -> Long = System::currentTimeMi
     /** The video conversion running or last run (ConvertVideos.kt): one at a time. */
     internal val videoConversion = java.util.concurrent.atomic.AtomicReference<VideoConversion?>(null)
 
+    /** When MediaSync's own files were last counted, and their bytes (WebHome's storage box). */
+    internal val ownDataSize = java.util.concurrent.atomic.AtomicReference<Pair<Long, Long>?>(null)
+
     /** The game identification running or last run (Games.kt): one at a time. */
     internal val gameJob = java.util.concurrent.atomic.AtomicReference<GameJob?>(null)
 

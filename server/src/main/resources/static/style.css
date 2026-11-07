@@ -16,6 +16,8 @@
     --images: #eb6834;
     --videos: #1baf7a;
     --games: #eda100;
+    --history: #7f5ad8;
+    --data: #d24f8a;
     --rest: #a3abaa;
     --free: #d3d9d7;
 }
@@ -37,6 +39,8 @@
         --images: #d95926;
         --videos: #199e70;
         --games: #c98500;
+        --history: #8b67e0;
+        --data: #d65a93;
         --rest: #6c7573;
         --free: #3f4846;
     }
@@ -198,6 +202,8 @@ ul.plain { list-style: none; padding: 0; margin: 0; }
 .seg-videos { fill: var(--videos); background: var(--videos); }
 .seg-games { fill: var(--games); background: var(--games); }
 .seg-other { fill: var(--muted); background: var(--muted); }
+.seg-history { fill: var(--history); background: var(--history); }
+.seg-data { fill: var(--data); background: var(--data); }
 .seg-rest { fill: var(--rest); background: var(--rest); }
 .seg-free { fill: var(--free); background: var(--free); }
 /* "Show free space" swaps the library bar for the whole disk. */
