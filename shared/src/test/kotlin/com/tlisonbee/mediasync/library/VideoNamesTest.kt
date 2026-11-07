@@ -34,4 +34,20 @@ class VideoNamesTest {
         val wrong = cases.mapNotNull { (path, expected) -> guess(path).takeIf { it != expected }?.let { "$path\n  expected: $expected\n  got:      $it" } }
         assertEquals("", wrong.joinToString("\n"))
     }
+    @Test
+    fun aMoveWithinTheFiledLayoutSaysWhichFieldsChange() {
+        val from = "videos/shows/Specials/Season 00/Specials - S00E01 - Best Gift Ever"
+        // Into another show's folder, as Specials: the show changes; the season stays 0.
+        assertEquals(mapOf("show" to listOf("MLP")), VideoNames.movedFields(from, "videos/shows/MLP/Specials/Specials - S00E01 - Best Gift Ever"))
+        assertEquals(mapOf("show" to listOf("MLP")), VideoNames.movedFields(from, "videos/shows/MLP/Season 00/Specials - S00E01 - Best Gift Ever"))
+        assertEquals(mapOf("season" to listOf("2")), VideoNames.movedFields(from, "videos/shows/Specials/Season 02/Specials - S00E01 - Best Gift Ever"))
+        assertEquals(mapOf("title" to listOf("Best Gift")), VideoNames.movedFields(from, "videos/shows/Specials/Season 00/Specials - S00E01 - Best Gift"))
+        assertEquals(emptyMap(), VideoNames.movedFields(from, from))
+        assertEquals(emptyMap(), VideoNames.movedFields(from, "videos/Misc/Specials - S00E01 - Best Gift Ever"), "out of shows/ isn't a field")
+        assertEquals(emptyMap(), VideoNames.movedFields(from, "videos/shows/MLP/Extras/Specials - S00E01 - Best Gift Ever"), "not a season folder")
+        assertEquals(
+            mapOf("title" to listOf("Inception Redux"), "year" to listOf("2011")),
+            VideoNames.movedFields("videos/movies/Inception (2010)/Inception (2010)", "videos/movies/Inception Redux (2011)/Inception (2010)"),
+        )
+    }
 }
