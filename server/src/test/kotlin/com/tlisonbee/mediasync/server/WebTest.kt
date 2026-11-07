@@ -312,7 +312,76 @@ class WebTest {
         desktop.push(desktop.retag(asset.assetId, asset.tags).copy(mediaHash = new.mediaHash))
         assertEquals(repo.db.long("SELECT size FROM blob WHERE hash = ?", old.blobHash), repo.historyBytes())
         val home = loggedIn().get("/").bodyAsText()
-        assertTrue("<span>Revision history</span>" in home && "prune --older-than" in home)
+        assertTrue("<span>Revision history</span>" in home && "/revisions?prune=90d" in home)
+    }
+}
+
+class PruneTest {
+    private suspend fun ServerFixture.loggedIn(): HttpClient = browser().also {
+        assertEquals(HttpStatusCode.Found, it.submitForm("/login", parameters { append("password", ADMIN_PASSWORD) }).status)
+    }
+
+    @Test
+    fun historyPagePrunesOnlyOnceConfirmed() = withServer {
+        val web = loggedIn()
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val asset = desktop.add(TestDevice.fakeFile("a.flac", seed = 1), track("Airbag", 1))
+        val new = TestDevice.fakeFile("a.flac", seed = 2)
+        desktop.upload(new)
+        val replaced = desktop.push(desktop.retag(asset.assetId, asset.tags).copy(mediaHash = new.mediaHash)).results.single().asset
+        assertEquals(2, repo.versions(asset.assetId).size)
+
+        // Reviewing changes nothing: the dialog names the timeframe, the revisions, and wants the box ticked.
+        val review = web.get("/revisions?prune=all").bodyAsText()
+        assertTrue("Are you sure?" in review && "All of it: keep only the current files" in review)
+        assertTrue("r${asset.rev}" in review && "Prune 2 revisions" in review)
+        assertTrue("id=\"prune-confirm\"" in review && "required" in review && "danger-fill" in review)
+        assertEquals(2, repo.versions(asset.assetId).size)
+
+        // Without the box ticked, it's back to the dialog.
+        val unconfirmed = web.submitForm("/revisions/prune", parameters { append("age", "all"); append("through", replaced.rev.toString()) })
+        assertEquals("/revisions?prune=all", unconfirmed.headers[HttpHeaders.Location])
+        assertEquals(2, repo.versions(asset.assetId).size)
+
+        val confirmed = web.submitForm(
+            "/revisions/prune",
+            parameters { append("age", "all"); append("through", replaced.rev.toString()); append("confirm", "yes") },
+        )
+        assertEquals("/revisions?pruned=1", confirmed.headers[HttpHeaders.Location])
+        assertEquals(1, repo.versions(asset.assetId).size)
+        assertEquals(replaced.rev, repo.prunedThrough())
+        val after = web.get("/revisions?pruned=1").bodyAsText()
+        assertTrue("Pruned history through r${replaced.rev}" in after && ">pruned<" in after)
+
+        // A pruned revision can't be reverted: its file would look added in it, and be deleted.
+        assertTrue("can't be reverted" in web.get("/revisions/${replaced.rev}").bodyAsText())
+        assertTrue(runCatching { repo.revert(repo.webDeviceId(), com.tlisonbee.mediasync.api.RevertRequest(rev = replaced.rev)) }.isFailure)
+        assertFalse(repo.headVersion(asset.assetId)!!.deleted)
+    }
+
+    @Test
+    fun revisionsAfterTheCutoffStayRevertible() = withServer {
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val v1 = desktop.add(TestDevice.fakeFile("a.flac", seed = 1), track("One", 1))
+        val v2 = desktop.push(desktop.retag(v1.assetId, track("Two", 1))).results.single().asset
+        val v3 = desktop.push(desktop.retag(v1.assetId, track("Three", 1))).results.single().asset
+
+        // Through r2: the version current then stays, so r3 still has its before.
+        repo.prune(v2.rev)
+        assertEquals(listOf(v3.rev, v2.rev), repo.versions(v1.assetId).map { it.rev })
+        repo.revert(repo.webDeviceId(), com.tlisonbee.mediasync.api.RevertRequest(rev = v3.rev))
+        assertEquals(listOf("Two"), repo.headVersion(v1.assetId)!!.tags["title"])
+    }
+
+    @Test
+    fun aDryRunChangesNothing() = withServer {
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val v1 = desktop.add(TestDevice.fakeFile("a.flac", seed = 1), track("One", 1))
+        val v2 = desktop.push(desktop.retag(v1.assetId, track("Two", 1))).results.single().asset
+        val plan = repo.prune(v2.rev, dryRun = true)
+        assertEquals(1, plan.versions)
+        assertEquals(2, repo.versions(v1.assetId).size)
+        assertEquals(0, repo.prunedThrough())
     }
 }
 

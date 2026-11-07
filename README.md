@@ -552,15 +552,21 @@ Maintenance commands run as the service's user:
 
 ```sh
 sudo -u mediasync /opt/mediasync/bin/mediasync-server fsck --full --repo /var/lib/mediasync   # check every file
-sudo -u mediasync /opt/mediasync/bin/mediasync-server prune --older-than 1y --repo /var/lib/mediasync
+sudo -u mediasync /opt/mediasync/bin/mediasync-server prune --older-than 1y --dry-run --repo /var/lib/mediasync
 sudo -u mediasync /opt/mediasync/bin/mediasync-server pair-code --repo /var/lib/mediasync     # a pairing code without the web UI
 sudo -u mediasync /opt/mediasync/bin/mediasync-server setup --repo /var/lib/mediasync         # change the admin password
 ```
 
-`prune` drops the history older than that (keeping each file's latest version) and files deleted
-before then, so those can no longer be restored. It's also what frees the disk: a file removed or
-replaced (a copy removed in Resolve, a track's original converted to MP3) stays in the repository
-while the history still has it.
+The installer also links `mediasync-server` into `/usr/local/bin`, so `mediasync-server --help`
+works from any shell; commands that open the repository still need `sudo -u mediasync`.
+
+`prune` drops the history older than that and files deleted before then (once every device has
+synced the deletion), so those can no longer be restored; `--dry-run` says what would go. Each
+file keeps the version it had at the cutoff, so every revision after it can still be reverted;
+revisions up to it can't. It's also what frees the disk: a file removed or replaced (a copy
+removed in Resolve, a track's original converted to MP3, a video re-encoded) stays in the
+repository while the history still has it. The web UI does the same under History > Prune
+history, showing what goes before you confirm.
 
 ## Troubleshooting
 

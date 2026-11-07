@@ -10,9 +10,6 @@ import kotlin.time.Duration.Companion.days
 
 /** The fsck, prune and snapshot commands. They can run while the service does. */
 object Maintenance {
-    /** Uploaded but not yet pushed blobs are left alone for this long, so prune can't race a sync. */
-    private val BLOB_GRACE = 7.days
-
     fun fsck(repo: Repository, full: Boolean): Int {
         val problems = mutableListOf<String>()
         val db = repo.db
@@ -64,65 +61,17 @@ object Maintenance {
         return if (problems.isEmpty()) 0 else 1
     }
 
-    /**
-     * Drops versions older than [olderThan] except each asset's latest, removes assets deleted
-     * before then entirely, then deletes blobs nothing references any more.
-     */
-    fun prune(repo: Repository, olderThan: String): Int {
-        val age = parseAge(olderThan)
-        val cutoffTime = repo.clock() - age.inWholeMilliseconds
-        val db = repo.db
-        val (versions, assets, blobs) = db.tx {
-            val cutoffRev = db.long("SELECT COALESCE(MAX(rev), 0) FROM revision WHERE created_at < ?", cutoffTime)
-            val goneAssets = db.query("SELECT asset_id FROM asset_head WHERE deleted = 1 AND rev <= ?", cutoffRev) { it.getString(1) }
-            for (id in goneAssets) {
-                db.exec("DELETE FROM asset_version WHERE asset_id = ?", id)
-                db.exec("DELETE FROM asset_head WHERE asset_id = ?", id)
-                db.exec("DELETE FROM asset_import WHERE asset_id = ?", id)
-                db.exec("DELETE FROM issue WHERE asset_id = ?", id)
-            }
-            val droppedVersions = db.exec(
-                "DELETE FROM asset_version WHERE rev <= ? AND rev < (SELECT h.rev FROM asset_head h WHERE h.asset_id = asset_version.asset_id)",
-                cutoffRev,
-            )
-
-            // Whatever a version, an open issue or a rendition still points at stays.
-            val usedMedia = HashSet<String>()
-            val usedBlobs = HashSet<String>()
-            db.query("SELECT renditions, pictures FROM asset_version") {
-                it.getString(1) to it.getString(2)
-            }.forEach { (renditions, pictures) ->
-                usedMedia += com.tlisonbee.mediasync.api.ApiJson.decodeFromString(Repository.stringList, renditions)
-                usedBlobs += com.tlisonbee.mediasync.api.ApiJson.decodeFromString(Repository.pictureList, pictures).map { it.blob }
-            }
-            db.query("SELECT candidates FROM issue WHERE resolved_rev IS NULL") { it.getString(1) }.forEach {
-                usedMedia += com.tlisonbee.mediasync.api.ApiJson.decodeFromString(Repository.candidateList, it).mapNotNull { c -> c.mediaHash }
-            }
-            usedMedia += db.query("SELECT media_hash FROM rendition") { it.getString(1) }
-
-            // Media uploaded within the grace period may be about to be pushed, so it stays.
-            val graceCutoff = repo.clock() - BLOB_GRACE.inWholeMilliseconds
-            db.query("SELECT m.media_hash, m.base_blob, b.created_at FROM media m JOIN blob b ON b.hash = m.base_blob") {
-                Triple(it.getString(1), it.getString(2), it.getLong(3))
-            }.forEach { (media, blob, createdAt) ->
-                if (media in usedMedia || createdAt >= graceCutoff) usedBlobs += blob else db.exec("DELETE FROM media WHERE media_hash = ?", media)
-            }
-            val doomed = db.query("SELECT hash FROM blob WHERE created_at < ?", graceCutoff) { it.getString(1) }.filter { it !in usedBlobs }
-            doomed.forEach {
-                db.exec("DELETE FROM blob WHERE hash = ?", it)
-                db.exec("DELETE FROM image_info WHERE blob = ?", it)
-            }
-            Triple(droppedVersions, goneAssets.size, doomed)
+    /** The prune command: [Repository.prune] through the last revision older than [olderThan]. */
+    fun prune(repo: Repository, olderThan: String, dryRun: Boolean = false): Int {
+        val through = repo.revBefore(repo.clock() - parseAge(olderThan).inWholeMilliseconds)
+        if (through <= repo.prunedThrough()) {
+            println("Nothing older than $olderThan that isn't pruned already.")
+            return 0
         }
-        // Files go only after the database no longer mentions them.
-        var freed = 0L
-        for (hash in blobs) {
-            val file = repo.dir.blob(hash)
-            if (Files.exists(file)) freed += Files.size(file)
-            Files.deleteIfExists(file)
-            Files.deleteIfExists(repo.dir.thumb(hash))
-        }
-        println("Pruned $versions old versions and $assets deleted assets; removed ${blobs.size} blobs (${freed / (1 shl 20)} MiB).")
+        val plan = repo.prune(through, dryRun)
+        val what = "${plan.versions} old versions and ${plan.assets} deleted files, r${plan.from}–r${plan.through}; " +
+            "${plan.blobs.size} blobs (${plan.bytes / (1 shl 20)} MiB)"
+        println(if (dryRun) "Would prune $what. Nothing changed." else "Pruned $what.")
         return 0
     }
 

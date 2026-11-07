@@ -143,12 +143,27 @@ fun Route.webRoutes(repo: Repository) {
         get("/revisions") {
             val before = call.parameters["before"]?.toLongOrNull()
             val page = io { repo.revisions(before, 50) }
-            call.respondHtml { revisionsPage(page.revisions, page.more) }
+            val prune = io { repo.pruneView(call.parameters["prune"], justPruned = call.parameters["pruned"] != null) }
+            call.respondHtml { revisionsPage(page.revisions, page.more, prune) }
+        }
+        // Prunes what the dialog showed: through the revision it named, never a newer one.
+        post("/revisions/prune") {
+            val form = call.receiveParameters()
+            val age = PruneAge.of(form["age"]) ?: badRequest("pick a timeframe")
+            val through = form["through"]?.toLongOrNull() ?: badRequest("through is required")
+            if (form["confirm"] != "yes") return@post call.respondRedirect("/revisions?prune=${age.key}")
+            io {
+                repo.pruneBlocker()?.let(::badRequest)
+                if (through <= repo.prunedThrough() || through > age.through(repo)) badRequest("That timeframe changed; review it again.")
+                repo.prune(through)
+            }
+            call.respondRedirect("/revisions?pruned=1")
         }
         get("/revisions/{rev}") {
             val rev = call.parameters["rev"]?.toLongOrNull() ?: return@get call.respond(HttpStatusCode.NotFound)
             val diff = io { repo.diff(rev) }
-            call.respondHtml { diffPage(diff) }
+            val pruned = io { rev <= repo.prunedThrough() }
+            call.respondHtml { diffPage(diff, pruned) }
         }
         post("/revisions/{rev}/revert") {
             val rev = call.parameters["rev"]?.toLongOrNull() ?: badRequest("bad revision")
@@ -504,30 +519,35 @@ private fun HTML.deletedPage(deleted: List<Version>) = page("Recently deleted") 
     }
 }
 
-private fun HTML.revisionsPage(revisions: List<RevisionDto>, more: Boolean) = page("History") {
+private fun HTML.revisionsPage(revisions: List<RevisionDto>, more: Boolean, prune: PruneView) = page("History") {
     h1 { +"History" }
+    if (revisions.isNotEmpty()) pruneBox(prune)
     if (revisions.isEmpty()) p("empty") { +"No revisions yet." }
-    revisionList(revisions)
+    revisionList(revisions, prune.prunedThrough)
     if (more) p { a(href = "/revisions?before=${revisions.last().rev}") { +"Older" } }
+    prune.dialog?.let { pruneDialog(prune, it) }
 }
 
-private fun FlowContent.revisionList(revisions: List<RevisionDto>) = ul("list revisions") {
+private fun FlowContent.revisionList(revisions: List<RevisionDto>, prunedThrough: Long = 0) = ul("list revisions") {
     revisions.forEach { r ->
         li {
             a(href = "/revisions/${r.rev}") { +"r${r.rev}" }
             +" · ${r.deviceName} · ${time(r.createdAt)} · ${r.message}"
+            if (r.rev <= prunedThrough) span("chip") { +"pruned" }
         }
     }
 }
 
-private fun HTML.diffPage(diff: com.tlisonbee.mediasync.api.RevisionDiff) = page("r${diff.revision.rev}") {
+private fun HTML.diffPage(diff: com.tlisonbee.mediasync.api.RevisionDiff, pruned: Boolean) = page("r${diff.revision.rev}") {
     val r = diff.revision
     h1 { +"r${r.rev}: ${r.message}" }
     p("muted") {
         +"${r.deviceName} · ${time(r.createdAt)}"
         r.reverts?.let { +" · reverts "; a(href = "/revisions/$it") { +"r$it" } }
     }
-    if (diff.assets.isNotEmpty()) {
+    if (pruned) {
+        p("notice warn") { +"This revision is in pruned history: the versions before it are gone, so it can't be reverted, and what it changed may show only in part." }
+    } else if (diff.assets.isNotEmpty()) {
         form(action = "/revisions/${r.rev}/revert", method = FormMethod.post) {
             button(classes = "danger") { +"Revert this revision" }
         }

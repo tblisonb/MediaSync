@@ -77,6 +77,9 @@ rm -rf /opt/mediasync.old
 if [[ -d /opt/mediasync ]]; then mv /opt/mediasync /opt/mediasync.old; fi
 mv /opt/mediasync.new /opt/mediasync
 rm -rf /opt/mediasync.old
+# On PATH for --help; commands that open the repository run as its owner:
+# sudo -u mediasync mediasync-server prune --older-than 90d --dry-run
+ln -sfn /opt/mediasync/bin/mediasync-server /usr/local/bin/mediasync-server
 
 install -d -o mediasync -g mediasync -m 700 "$REPO"
 if [[ ! -f $REPO/admin.json ]]; then
