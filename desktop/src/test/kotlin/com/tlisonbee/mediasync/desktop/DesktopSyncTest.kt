@@ -99,6 +99,36 @@ class DesktopSyncTest {
     }
 
     @Test
+    fun aVideoThatSyncedAsAPlainFileBecomesAVideo() = TestWorld().use { world ->
+        // Synced under a name without its extension: a plain file on the server, stored as "bin".
+        val pc = world.client("PC", videos = false)
+        val season = Files.createDirectories(pc.music.resolveSibling("Videos").resolve("shows/Show/Season 01"))
+        val bare = season.resolve("Show - S01E01 - Pilot")
+        Files.write(bare, ByteArray(50_000) { (it * 7).toByte() })
+        assertEquals(1, pc.sync().pushed)
+        val assetId = pc.index.get(bare)!!.assetId!!
+        assertEquals(AssetKind.OTHER, world.repo.headVersion(assetId)!!.kind)
+
+        // Then renamed to .webm by a client that kept the server's plain kind: in sync, it seemed.
+        val webm = season.resolve("Show - S01E01 - Pilot.webm")
+        Files.move(bare, webm)
+        val row = pc.index.get(bare)!!
+        pc.index.replace(row.path, row.copy(path = webm.toString(), kind = AssetKind.VIDEO, mtime = LocalFiles.stat(webm).second))
+        assertTrue(pc.index.get(webm)!!.readsAsMore)
+
+        // It reads as a video, so it says so: a video, its format known, ready to convert.
+        val report = pc.sync()
+        assertEquals(1, report.pushed, report.warnings.joinToString())
+        val head = world.repo.headVersion(assetId)!!
+        assertEquals(AssetKind.VIDEO, head.kind)
+        assertEquals("shows", head.category)
+        assertEquals("webm", world.repo.media(head.renditions.single())!!.format)
+        assertTrue(Files.exists(webm))
+        assertFalse(pc.index.get(webm)!!.readsAsMore)
+        assertEquals(0, pc.sync().pushed)
+    }
+
+    @Test
     fun importRenamesByTagsAndASecondPcReceives() = TestWorld().use { world ->
         val desktop = world.importedDesktop()
         assertEquals(

@@ -53,6 +53,32 @@ class VideoTest {
     }
 
     @Test
+    fun aPlainFileReadAsAVideoBecomesOne() = withServer {
+        val pc = pc()
+        // Uploaded under a name without its extension: a plain file, stored as "bin".
+        val file = TestDevice.fakeFile("Pilot", seed = 7)
+        pc.upload(file)
+        val dir = "videos/shows/Show/Season 01"
+        val plain = pc.push(PushChange(path = "$dir/Show - S01E01 - Pilot", kind = AssetKind.OTHER, mediaHash = file.mediaHash)).results.single().asset
+        assertEquals("bin", repo.media(file.mediaHash)!!.format)
+        assertTrue(repo.convertibleVideos().isEmpty())
+
+        // Renamed with its extension, the device reads it as a video and says so.
+        val change = PushChange(
+            assetId = plain.assetId, baseRev = plain.rev, path = plain.path, kind = AssetKind.VIDEO,
+            mediaHash = file.mediaHash, baseMediaHash = file.mediaHash, tags = plain.tags,
+            sourcePath = "/home/test/Videos/TV Shows/Show/Season 01/Show - S01E01 - Pilot.webm",
+        )
+        val video = pc.push(change).results.single().asset
+        assertEquals(AssetKind.VIDEO, video.kind)
+        assertEquals("shows", video.category)
+        assertEquals(listOf("1"), video.tags["episode"])
+        assertEquals("$dir/Show - S01E01 - Pilot", video.path)
+        assertEquals("webm", repo.media(file.mediaHash)!!.format)
+        assertEquals(listOf(plain.assetId), repo.convertibleVideos()["webm"]?.map { it.assetId })
+    }
+
+    @Test
     fun subtitlesAndPostersJoinTheirVideoAndFollowIt() = withServer {
         val pc = pc()
         // Subtitles sort before the video, and may come in an earlier push.

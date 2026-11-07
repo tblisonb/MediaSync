@@ -677,9 +677,12 @@ class SyncEngine(
         }
         val pictures = if (coverChanged) base.pictures.filter { it.type != TagPolicy.FRONT_COVER } + listOfNotNull(cover) else base.pictures
         val music = RepoPaths.followsFields(base.kind, base.path, base.category)
-        // A plain file on the server that this device reads as a track: saying so makes it one.
-        val kind = if (base.kind == AssetKind.OTHER && row.kind == AssetKind.AUDIO) AssetKind.AUDIO else base.kind
+        // A plain file on the server that this device reads as a track, picture or video: saying
+        // so makes it one. Its name tells the server the format it came in without.
+        val readsAsMore = base.kind == AssetKind.OTHER && row.kind in Row.READABLE
+        val kind = if (readsAsMore) row.kind else base.kind
         return PushChange(
+            sourcePath = if (readsAsMore) row.path else null,
             assetId = row.assetId,
             baseRev = base.rev,
             path = if (music) base.path else LocalFiles.repoPath(folder, row.file),
@@ -742,9 +745,9 @@ class SyncEngine(
             index.put(row.synced(asset).copy(ignored = Row.sameAs(row.kind) + others.first().path))
             return
         }
-        // A track this device reads but the server still holds as a plain file (a server from
-        // before it could make one a track): not synced yet, so it's offered again next time.
-        if (row.kind == AssetKind.AUDIO && asset.kind == AssetKind.OTHER && !asset.deleted) {
+        // A track, picture or video this device reads but the server still holds as a plain file
+        // (a server from before it could make one so): not synced yet, so it's offered again next time.
+        if (row.kind in Row.READABLE && asset.kind == AssetKind.OTHER && !asset.deleted) {
             index.put(row.copy(assetId = asset.assetId, base = asset))
             return
         }
