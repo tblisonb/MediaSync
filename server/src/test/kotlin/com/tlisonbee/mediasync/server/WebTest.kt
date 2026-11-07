@@ -374,6 +374,30 @@ class PruneTest {
     }
 
     @Test
+    fun replacedFilesGoAtOnceButUnpushedUploadsWaitAWeek() = withServer {
+        val web = loggedIn()
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val old = TestDevice.fakeFile("a.flac", seed = 1)
+        val asset = desktop.add(old, track("Airbag", 1))
+        val new = TestDevice.fakeFile("a.flac", seed = 2)
+        desktop.upload(new)
+        val replaced = desktop.push(desktop.retag(asset.assetId, asset.tags).copy(mediaHash = new.mediaHash)).results.single().asset
+        // Uploaded, not pushed yet: a sync may be about to use it.
+        val pending = TestDevice.fakeFile("b.flac", seed = 3)
+        desktop.upload(pending)
+
+        // The replaced original was pushed, so it needs no week's grace; the pending upload does.
+        val review = web.get("/revisions?prune=all").bodyAsText()
+        assertTrue("more stays until" in review)
+        val plan = repo.prune(replaced.rev)
+        assertEquals(listOf(old.blobHash), plan.blobs)
+        assertEquals(pending.bytes.size.toLong(), plan.heldBytes)
+        assertFalse(Files.exists(repo.dir.blob(old.blobHash)))
+        assertTrue(Files.exists(repo.dir.blob(new.blobHash)))
+        assertTrue(Files.exists(repo.dir.blob(pending.blobHash)))
+    }
+
+    @Test
     fun aDryRunChangesNothing() = withServer {
         val desktop = pair("Desktop").apply { subscribeMusic() }
         val v1 = desktop.add(TestDevice.fakeFile("a.flac", seed = 1), track("One", 1))

@@ -146,7 +146,12 @@ internal fun FlowContent.pruneDialog(view: PruneView, dialog: PruneDialog) {
             if (plan.assets > 0) li { +"${plural(plan.assets, "deleted file", "deleted files")} removed for good" }
             li { strong { +bytes(plan.bytes) }; +" freed" }
         }
-        p("muted small") { +"Files uploaded in the last 7 days stay until they're a week old, so a sync under way can't lose them." }
+        if (plan.heldBytes > 0 && plan.heldUntil != null) {
+            p("muted small") {
+                +"${bytes(plan.heldBytes)} more stays until ${day(plan.heldUntil)}: uploads from the last 7 days that no revision has used yet, "
+                +"kept until they're a week old so a sync under way can't lose them."
+            }
+        }
         p("prune-warning") {
             strong { +"This can't be undone. " }
             +"Pruned history is deleted, not hidden: nothing brings it back. Revisions after r$through stay revertible."

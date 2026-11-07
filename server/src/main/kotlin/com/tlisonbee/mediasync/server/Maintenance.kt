@@ -72,6 +72,9 @@ object Maintenance {
         val what = "${plan.versions} old versions and ${plan.assets} deleted files, r${plan.from}–r${plan.through}; " +
             "${plan.blobs.size} blobs (${plan.bytes / (1 shl 20)} MiB)"
         println(if (dryRun) "Would prune $what. Nothing changed." else "Pruned $what.")
+        plan.heldUntil?.let {
+            println("${plan.heldBytes / (1 shl 20)} MiB of unpushed uploads stay until ${java.time.Instant.ofEpochMilli(it)}, a week after upload.")
+        }
         return 0
     }
 
