@@ -292,12 +292,27 @@ class WebTest {
         // The PC's three pushes are one line; the web UI's edit keeps its message.
         assertTrue("PC added 2 tracks, 1 photo" in home)
         assertTrue("Retitled a song" in home)
-        assertTrue("Photos" in home && "Library by area" in home)
+        assertTrue("Photos" in home && "What MediaSync stores" in home)
+        // A retitle shares its file with the old version, so no history yet; the database is MediaSync's own.
+        assertTrue("<span>Revision history</span>" !in home && "<span>MediaSync data</span>" in home)
         // Free space is its own line in the legend, and the box swaps in a bar of the whole disk.
         assertTrue("id=\"show-free\"" in home && "Show free space" in home)
         assertTrue("<span>Free</span>" in home && "<span>Used by other files</span>" in home)
         assertTrue("class=\"disk\"" in home && "class=\"seg-free\"" in home)
-        assertTrue(" free" !in home.substringAfter("stored, with old versions").substringBefore("</p>"))
+    }
+
+    @Test
+    fun historyIsWhatOnlyOldVersionsUse() = withServer {
+        val desktop = pair("Desktop").apply { subscribeMusic() }
+        val old = TestDevice.fakeFile("a.flac", seed = 1)
+        val asset = desktop.add(old, track("Airbag", 1))
+        assertEquals(0L, repo.historyBytes())
+        val new = TestDevice.fakeFile("a.flac", seed = 2)
+        desktop.upload(new)
+        desktop.push(desktop.retag(asset.assetId, asset.tags).copy(mediaHash = new.mediaHash))
+        assertEquals(repo.db.long("SELECT size FROM blob WHERE hash = ?", old.blobHash), repo.historyBytes())
+        val home = loggedIn().get("/").bodyAsText()
+        assertTrue("<span>Revision history</span>" in home && "prune --older-than" in home)
     }
 }
 

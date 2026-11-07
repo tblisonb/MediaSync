@@ -72,14 +72,43 @@ object DesktopWindow {
      * Brings the open window to the front through KWin's window search (Plasma); false if there's
      * no such window, or no KWin. Only a window with this app's id, not a browser tab named MediaSync.
      */
-    fun activate(): Boolean {
-        val matches = gdbus("/WindowsRunner", "org.kde.krunner1.Match", "MediaSync") ?: return false
+    fun activate(): Boolean = windowId()?.takeIf { it.isNotEmpty() }?.let { gdbus("/WindowsRunner", "org.kde.krunner1.Run", it, "") != null } ?: false
+
+    /** The open window's id in KWin's window search; "" when KWin has no such window, null without KWin. */
+    private fun windowId(): String? {
+        val matches = gdbus("/WindowsRunner", "org.kde.krunner1.Match", "MediaSync") ?: return null
         for (id in Regex("'(0_\\{[0-9a-fA-F-]+\\})'").findAll(matches).map { it.groupValues[1] }) {
             val info = gdbus("/KWin", "org.kde.KWin.getWindowInfo", id.removePrefix("0_")) ?: continue
-            if ("'resourceClass': <'$APP_ID'>" !in info) continue
-            return gdbus("/WindowsRunner", "org.kde.krunner1.Run", id, "") != null
+            if ("'resourceClass': <'$APP_ID'>" in info) return id
         }
-        return false
+        return ""
+    }
+
+    /** How long a raise may take to show the window before it counts as lost: its poll is 4 s. */
+    private const val SHOW_WAIT_MS = 8_000L
+
+    /**
+     * Brings the running window forward, in the background. If KWin still has no such window after
+     * [SHOW_WAIT_MS], restarts it: when every screen goes away (the monitor sleeping), Qt can lose the
+     * window's surface while the process lives on, and a raise then has nothing to show. Without KWin
+     * there's no telling, so nothing is restarted.
+     */
+    fun raiseOrRestart(dirs: Dirs, show: String) {
+        Thread({
+            val until = System.currentTimeMillis() + SHOW_WAIT_MS
+            while (true) {
+                val id = windowId() ?: return@Thread
+                if (id.isNotEmpty()) {
+                    activate()
+                    return@Thread
+                }
+                if (System.currentTimeMillis() >= until) break
+                Thread.sleep(500)
+            }
+            System.err.println("The MediaSync window is running but not on screen; restarting it.")
+            runCatching { ProcessBuilder("systemctl", "--user", "stop", "$UNIT.service").start().waitFor(10, TimeUnit.SECONDS) }
+            launch(dirs, show)
+        }, "window-raise").apply { isDaemon = true }.start()
     }
 
     /** Calls KWin over the session bus with gdbus; its output, or null if that failed. */
