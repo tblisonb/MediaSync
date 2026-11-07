@@ -46,6 +46,9 @@ import kotlinx.html.a
 import kotlinx.html.body
 import kotlinx.html.button
 import kotlinx.html.code
+import kotlinx.html.dd
+import kotlinx.html.dl
+import kotlinx.html.dt
 import kotlinx.html.details
 import kotlinx.html.div
 import kotlinx.html.form
@@ -247,7 +250,8 @@ fun Route.webRoutes(repo: Repository) {
 
         get("/settings") {
             val loudness = io { repo.loudnessStatus() }
-            call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null, loudness) }
+            val about = io { WebFooter.info?.let { runCatching(it).getOrNull() } }
+            call.respondHtml { settingsPage(repo.settings, saved = call.parameters["saved"] != null, loudness, about, repo.dir.root.toString()) }
         }
         post("/settings") {
             val form = call.receiveParameters()
@@ -348,6 +352,8 @@ internal fun HTML.page(pageTitle: String, loggedIn: Boolean = true, refresh: Int
             }
         }
         main { content() }
+        // A footer that can't be read leaves the page as it is.
+        if (loggedIn) WebFooter.info?.let { runCatching(it).getOrNull() }?.let { serverFooter(it) }
     }
 }
 
@@ -796,7 +802,7 @@ private fun HTML.devicesPage(devices: List<Device>, pairing: Pairing?, head: Lon
 
 private val prettyJson = kotlinx.serialization.json.Json(ApiJson) { prettyPrint = true }
 
-private fun HTML.settingsPage(settings: Settings, saved: Boolean, loudness: String?) = page("Settings") {
+private fun HTML.settingsPage(settings: Settings, saved: Boolean, loudness: String?, about: ServerInfo?, repoDir: String) = page("Settings") {
     h1 { +"Settings" }
     form(action = "/settings", method = FormMethod.post, classes = "card") {
         h2 { +"Music tag policy" }
@@ -827,6 +833,28 @@ private fun HTML.settingsPage(settings: Settings, saved: Boolean, loudness: Stri
         loudness?.let { p { +it } }
         if (saved) p("notice") { +"Saved." }
         div("actions") { button(classes = "primary") { +"Save" } }
+    }
+    about?.let { info ->
+        section("card about") {
+            h2 { +"About this server" }
+            dl("about-list") {
+                dt { +"Version" }
+                dd {
+                    +"MediaSync server ${versionName(info.version)} · "
+                    a(href = "https://github.com/tblisonb/MediaSync/releases") { +"releases" }
+                }
+                dt { +"Revision" }
+                dd { a(href = "/revisions") { +"r${info.head}" } }
+                dt { +"Devices" }
+                dd { a(href = "/devices") { +plural(info.devices, "device", "devices") }; +", ${info.recent} synced in the last day" }
+                dt { +"Up for" }
+                dd { +uptime(info.upMillis) }
+                dt { +"Java" }
+                dd { +(System.getProperty("java.runtime.version") ?: System.getProperty("java.version") ?: "?") }
+                dt { +"Repository" }
+                dd { code { +repoDir } }
+            }
+        }
     }
 }
 

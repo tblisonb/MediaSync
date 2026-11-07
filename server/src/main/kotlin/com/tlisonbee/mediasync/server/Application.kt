@@ -163,6 +163,7 @@ fun Application.mediaSyncModule(repo: Repository, version: String? = VERSION) {
         }
         webRoutes(repo)
     }
+    WebFooter.info = { repo.serverInfo(version) }
 }
 
 private fun Route.apiRoutes(repo: Repository) {
