@@ -4,7 +4,11 @@ import com.tlisonbee.mediasync.api.ApiJson
 import java.nio.file.Files
 import kotlin.time.Duration.Companion.days
 
-/** Uploaded but not yet pushed blobs are left alone for this long, so prune can't race a sync. */
+/**
+ * Uploaded blobs no revision has used yet are left alone for this long, so prune can't race a sync
+ * that's about to push them. A blob some version used (a replaced original, say) gets no grace: it
+ * was pushed already.
+ */
 private val BLOB_GRACE = 7.days
 
 /**
@@ -18,10 +22,15 @@ class PrunePlan(
     val assets: Int,
     val blobs: List<String>,
     val bytes: Long,
+    /** Unused uploads kept anyway for being under [BLOB_GRACE] old, and when the last of them is past it. */
+    val heldBytes: Long = 0,
+    val heldUntil: Long? = null,
 )
 
 /** One prune, as the History page tells of it. */
 class PruneRecord(val through: Long, val at: Long, val versions: Int, val bytes: Long)
+
+private data class UnusedBlob(val hash: String, val size: Long, val createdAt: Long)
 
 private class DryRun(val plan: PrunePlan) : RuntimeException(null, null, false, false)
 
@@ -61,6 +70,13 @@ fun Repository.prune(through: Long, dryRun: Boolean = false): PrunePlan {
                 "SELECT COALESCE(MIN(synced_rev), ?) FROM device WHERE revoked_at IS NULL AND kind != 'web' AND synced_rev > 0",
                 through,
             )
+            // What any version used, before versions go: those blobs were pushed, so no grace for them.
+            val committedMedia = HashSet<String>()
+            val committedBlobs = HashSet<String>()
+            db.query("SELECT renditions, pictures FROM asset_version") { it.getString(1) to it.getString(2) }.forEach { (renditions, pictures) ->
+                committedMedia += ApiJson.decodeFromString(Repository.stringList, renditions)
+                committedBlobs += ApiJson.decodeFromString(Repository.pictureList, pictures).map { it.blob }
+            }
             val goneAssets = db.query("SELECT asset_id FROM asset_head WHERE deleted = 1 AND rev <= ?", minOf(through, synced)) { it.getString(1) }
             for (id in goneAssets) {
                 db.exec("DELETE FROM asset_version WHERE asset_id = ?", id)
@@ -88,20 +104,33 @@ fun Repository.prune(through: Long, dryRun: Boolean = false): PrunePlan {
             }
             usedMedia += db.query("SELECT media_hash FROM rendition") { it.getString(1) }
 
-            // Media uploaded within the grace period may be about to be pushed, so it stays.
+            // Media uploaded within the grace period that no version used may be about to be pushed, so it stays.
             val graceCutoff = clock() - BLOB_GRACE.inWholeMilliseconds
+            val heldBlobs = HashSet<String>()
             db.query("SELECT m.media_hash, m.base_blob, b.created_at FROM media m JOIN blob b ON b.hash = m.base_blob") {
                 Triple(it.getString(1), it.getString(2), it.getLong(3))
             }.forEach { (media, blob, createdAt) ->
-                if (media in usedMedia || createdAt >= graceCutoff) usedBlobs += blob else db.exec("DELETE FROM media WHERE media_hash = ?", media)
+                when {
+                    media in usedMedia -> usedBlobs += blob
+                    media !in committedMedia && createdAt >= graceCutoff -> heldBlobs += blob
+                    else -> {
+                        committedBlobs += blob
+                        db.exec("DELETE FROM media WHERE media_hash = ?", media)
+                    }
+                }
             }
-            val doomed = db.query("SELECT hash, size FROM blob WHERE created_at < ?", graceCutoff) { it.getString(1) to it.getLong(2) }
-                .filter { it.first !in usedBlobs }
-            doomed.forEach { (hash, _) ->
+            val (doomed, held) = db.query("SELECT hash, size, created_at FROM blob") { UnusedBlob(it.getString(1), it.getLong(2), it.getLong(3)) }
+                .filter { it.hash !in usedBlobs }
+                .partition { it.hash !in heldBlobs && (it.createdAt < graceCutoff || it.hash in committedBlobs) }
+            doomed.forEach { (hash) ->
                 db.exec("DELETE FROM blob WHERE hash = ?", hash)
                 db.exec("DELETE FROM image_info WHERE blob = ?", hash)
             }
-            val plan = PrunePlan(from, through, versions, goneAssets.size, doomed.map { it.first }, doomed.sumOf { it.second })
+            val plan = PrunePlan(
+                from, through, versions, goneAssets.size, doomed.map { it.hash }, doomed.sumOf { it.size },
+                heldBytes = held.sumOf { it.size },
+                heldUntil = held.maxOfOrNull { it.createdAt + BLOB_GRACE.inWholeMilliseconds },
+            )
             if (dryRun) throw DryRun(plan)
             db.exec("INSERT INTO prune (through_rev, at, versions, bytes) VALUES (?, ?, ?, ?)", through, clock(), versions, plan.bytes)
             plan
