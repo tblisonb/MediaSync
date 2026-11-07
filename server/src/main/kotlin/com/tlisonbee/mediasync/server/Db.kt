@@ -143,6 +143,8 @@ class Db(path: Path) : AutoCloseable {
             "CREATE TABLE IF NOT EXISTS loudness (media_hash TEXT PRIMARY KEY, peak REAL NOT NULL, blocks TEXT NOT NULL, " +
                 "failed INTEGER NOT NULL DEFAULT 0, measured_at INTEGER NOT NULL)",
         )
+        // Each prune (Prune.kt): revisions up to through_rev may have lost the versions before them.
+        exec("CREATE TABLE IF NOT EXISTS prune (through_rev INTEGER NOT NULL, at INTEGER NOT NULL, versions INTEGER NOT NULL, bytes INTEGER NOT NULL)")
         val deviceColumns = query("PRAGMA table_info(device)") { it.getString("name") }
         if ("web_grant" !in deviceColumns) {
             // A phone allowed into the web UI: a fingerprint of the password it was allowed with,

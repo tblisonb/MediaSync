@@ -8,6 +8,7 @@
     --accent: #00796b;
     --accent-text: #ffffff;
     --danger: #b3261e;
+    --danger-text: #ffffff;
     --old: #fdecea;
     --new: #e6f4ea;
     --radius: 12px;
@@ -32,6 +33,7 @@
         --accent: #80cbc4;
         --accent-text: #00201c;
         --danger: #ffb4ab;
+        --danger-text: #690005;
         --old: #3b1f1d;
         --new: #1b3324;
         --warn: #f0b44c;
@@ -352,6 +354,32 @@ main table { width: auto; min-width: min(100%, var(--readable)); }
 main > .card:has(.photo-grid, table), main > form.card:has(.photo-grid, table) { max-width: none; }
 .asset { max-width: var(--readable); }
 .card table { width: 100%; min-width: 0; }
+
+/* History > Prune history: the timeframe picker, and the "are you sure?" dialog over the page. */
+.prune-pick { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.prune-pick label { margin: 0; }
+.prune .chip, .revisions .chip { margin-left: 6px; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 20; background: rgb(0 0 0 / 0.5); }
+.modal {
+    position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 24px; box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+}
+.modal h2 { margin-top: 0; }
+.modal .prune-list { max-height: 30vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; font-size: 0.9rem; }
+.prune-facts { padding-left: 20px; }
+.prune-warning { color: var(--danger); }
+.modal label.confirm { align-items: flex-start; margin: 16px 0 0; }
+.modal label.confirm input { margin-top: 3px; }
+.modal .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px; }
+a.button {
+    display: inline-block; padding: 8px 16px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--text); text-decoration: none;
+}
+button.danger-fill { background: var(--danger); border-color: var(--danger); color: var(--danger-text); font-weight: 600; }
+/* Until the box is ticked the button looks off; `required` is what stops it. */
+.modal form:has(#prune-confirm:not(:checked)) button.danger-fill { opacity: 0.45; cursor: not-allowed; }
 @media (min-width: 1600px) {
     .areas { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

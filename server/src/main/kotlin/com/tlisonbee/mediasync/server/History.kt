@@ -66,6 +66,8 @@ fun Repository.revert(deviceId: String, request: RevertRequest): RevertResponse 
 
 private fun Repository.revertRevision(deviceId: String, rev: Long): RevertResponse {
     if (revision(rev) == null) notFound("no revision $rev")
+    // Its before-versions may be gone: a file would look added in it, and its revert would delete it.
+    if (rev <= prunedThrough()) badRequest("r$rev is in pruned history, so it can't be reverted")
     val scope = RevisionScope(this, deviceId, "Reverted r$rev", reverts = rev)
     val skipped = mutableListOf<SkippedField>()
     val atRev = db.query("SELECT * FROM asset_version WHERE rev = ?", rev) { it.toVersion() }

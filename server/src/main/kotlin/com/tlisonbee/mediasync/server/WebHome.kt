@@ -9,7 +9,6 @@ import io.ktor.server.html.respondHtml
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import kotlinx.html.DIV
-import kotlinx.html.code
 import kotlinx.html.FlowContent
 import kotlinx.html.HTML
 import kotlinx.html.InputType
@@ -546,8 +545,8 @@ private fun FlowContent.storage(home: Home) = section("side-card storage") {
     if (home.history > 0) {
         p("muted small") {
             +"Revision history is the older versions undo and revert bring back. "
-            code { +"mediasync-server prune --older-than 90d" }
-            +" frees what's older than 90 days."
+            a(href = "/revisions?prune=${PruneAge.DEFAULT.key}") { +"Prune history" }
+            +" frees what's older than a timeframe you pick."
         }
     }
     p("muted small") { +(home.backupAt?.let { "Last backup started ${ago(it)}" } ?: "No backups yet") }
