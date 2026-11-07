@@ -440,3 +440,21 @@ class MaintenanceTest {
         assertTrue(Files.size(repo.dir.snapshots.resolve("repo.db")) > 0)
     }
 }
+
+class FooterTest {
+    @Test
+    fun everyPageSaysTheServerVersionAndSettingsSaysMore() = withServer {
+        val web = browser()
+        assertFalse("server-footer" in web.get("/login").bodyAsText(), "not before logging in")
+        assertEquals(HttpStatusCode.Found, web.submitForm("/login", parameters { append("password", ADMIN_PASSWORD) }).status)
+        pair("Desktop").apply { subscribeMusic() }.add(TestDevice.fakeFile("a.flac", seed = 1), track("Airbag", 1))
+
+        for (page in listOf("/", "/revisions", "/devices")) {
+            val html = web.get(page).bodyAsText()
+            assertTrue("MediaSync server development build" in html, page)
+            assertTrue(">r${repo.head()}<" in html && ">1 device<" in html, page)
+        }
+        val settings = web.get("/settings").bodyAsText()
+        assertTrue("About this server" in settings && repo.dir.root.toString() in settings)
+    }
+}

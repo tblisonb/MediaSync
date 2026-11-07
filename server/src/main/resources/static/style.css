@@ -383,3 +383,17 @@ button.danger-fill { background: var(--danger); border-color: var(--danger); col
 @media (min-width: 1600px) {
     .areas { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+/* One line at the foot of every page: the server's version, revision, devices, uptime. */
+.server-footer {
+    max-width: var(--page); margin: 0 auto; padding: 12px var(--gutter) 24px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem;
+    display: flex; flex-wrap: wrap; gap: 4px 0;
+}
+.server-footer span:not(:last-child)::after { content: "·"; margin: 0 8px; }
+.server-footer a { color: inherit; }
+
+/* Settings > About this server. */
+.about-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.about-list dt { color: var(--muted); }
+.about-list dd { margin: 0; overflow-wrap: anywhere; }
