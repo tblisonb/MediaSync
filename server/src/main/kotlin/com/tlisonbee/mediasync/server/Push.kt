@@ -181,6 +181,21 @@ private fun Repository.raiseRendition(scope: RevisionScope, match: Version, new:
     )
 }
 
+/** The kinds a plain file becomes when a device reads it as one. */
+private val READABLE_KINDS = setOf(AssetKind.AUDIO, AssetKind.IMAGE, AssetKind.VIDEO)
+
+/**
+ * A plain file uploaded under a name without its extension is stored as "bin": the name the
+ * device has it under now ([PushChange.sourcePath]) says what it is.
+ */
+private fun Repository.learnFormat(change: PushChange) {
+    val hash = change.mediaHash ?: return
+    val media = media(hash)?.takeIf { it.format == "bin" } ?: return
+    val format = BlobStore.formatOf(change.sourcePath ?: return).takeIf { it != "bin" } ?: return
+    db.exec("UPDATE media SET format = ? WHERE media_hash = ?", format, hash)
+    db.exec("UPDATE blob SET mime = ? WHERE hash = ?", BlobStore.mimeOf(format), media.baseBlob)
+}
+
 private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, head: Version): Applied {
     val base = change.baseRev?.let { version(head.assetId, it) }
     val unchanged = Applied(PushOutcome.UNCHANGED, head.assetId)
@@ -193,10 +208,12 @@ private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, h
         return Applied(PushOutcome.UPDATED, head.assetId)
     }
 
-    // A track an older client couldn't read, so it came in as a plain file, read now: the same
-    // media with tags. It becomes a track, and is filed by them.
-    val readable = head.kind == AssetKind.OTHER && change.kind == AssetKind.AUDIO && change.mediaHash?.let { it in head.renditions } == true
-    val kind = if (readable) AssetKind.AUDIO else head.kind
+    // A plain file a device reads as more: a track an older client couldn't read, or a video or
+    // picture that came in under a name without its extension. The same media, now known for what
+    // it is: it becomes a track (filed by its tags), a picture or a video.
+    val readable = head.kind == AssetKind.OTHER && change.kind in READABLE_KINDS && change.mediaHash?.let { it in head.renditions } == true
+    val kind = if (readable) change.kind else head.kind
+    if (readable) learnFormat(change)
     // Named from its fields (music, movies, episodes): the device's path doesn't count.
     val music = RepoPaths.followsFields(kind, head.path, head.category)
     val ours = head.copy(
@@ -213,6 +230,11 @@ private fun Repository.mergeExisting(scope: RevisionScope, change: PushChange, h
     var result = head.withFields(merge.merged + mapOf(Fields.PATH to listOf(head.path), Fields.MEDIA to head.renditions))
         .copy(deleted = head.deleted, category = head.category, kind = kind)
     if (!music) result = result.copy(path = merge.merged[Fields.PATH]?.firstOrNull() ?: head.path)
+    // A video's fields come from its name, as when it's first added.
+    if (readable && kind == AssetKind.VIDEO && result.path.startsWith(RepoPaths.VIDEOS) && result.category == null) {
+        val guess = VideoNames.guess(change.sourcePath ?: result.path)
+        result = result.copy(category = guess.category, tags = result.tags.ifEmpty { policy.filter(kind, guess.tags) })
+    }
     if (merge.conflicts.isNotEmpty()) {
         val fields = merge.conflicts.toList()
         val oursFields = ours.fields()

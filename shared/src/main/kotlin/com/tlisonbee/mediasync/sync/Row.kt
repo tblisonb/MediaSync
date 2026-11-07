@@ -47,6 +47,9 @@ data class Row(
     companion object {
         private const val LEGACY_SAME = "same audio as "
 
+        /** The kinds a plain file on the server becomes when a device reads it as one. */
+        val READABLE = setOf(AssetKind.AUDIO, AssetKind.IMAGE, AssetKind.VIDEO)
+
         /** "same picture as ", for a second local copy of an asset of [kind]. */
         fun sameAs(kind: AssetKind) = "same " + when (kind) {
             AssetKind.AUDIO -> "audio"
@@ -59,7 +62,15 @@ data class Row(
     val extension: String get() = file.fileName.toString().substringAfterLast('.', "")
 
     val changed: Boolean
-        get() = assetId == null || missing || media != seenMedia || tags != seenTags || cover != seenCover
+        get() = assetId == null || missing || media != seenMedia || tags != seenTags || cover != seenCover || readsAsMore
+
+    /**
+     * The server holds this file as a plain one, but this device reads it as a picture or video
+     * (it came in under a name without its extension, say): pushing it says so. A track says so
+     * with its tags instead, which are what it's filed by, so it waits for those.
+     */
+    val readsAsMore: Boolean
+        get() = base != null && !base.deleted && base.kind == AssetKind.OTHER && kind != AssetKind.AUDIO && kind in READABLE && media == seenMedia
 
     /** This row as freshly in sync with [asset]: what it holds now is what the server has. */
     fun synced(asset: AssetDto) = copy(
