@@ -361,8 +361,24 @@ private fun window(dirs: Dirs, what: String?) {
         "resolve" -> "/resolve"
         else -> usage()
     }
-    val reply = Service.request(dirs, "window $show") ?: fail("The service isn't running: systemctl --user start mediasync-desktop")
+    val reply = Service.request(dirs, "window $show") ?: startServiceAnd(dirs) { Service.request(dirs, "window $show") }
+        ?: fail("The service isn't running and didn't start: systemctl --user enable --now mediasync-desktop, then journalctl --user -u mediasync-desktop")
     if (reply.startsWith(DesktopWindow.NEEDS)) System.err.println(reply)
+}
+
+/**
+ * Starts the service (a launcher click after a login it didn't start with) and retries [request]
+ * until it answers; null if the service won't start or doesn't answer within half a minute.
+ */
+private fun <T> startServiceAnd(dirs: Dirs, request: () -> T?): T? {
+    if (ConfigStore(dirs).load() == null) fail("Not set up yet: mediasync-desktop setup")
+    System.err.println("Starting the MediaSync service…")
+    if (systemctl("start", "mediasync-desktop") != 0) return null
+    repeat(60) {
+        request()?.let { return it }
+        Thread.sleep(500)
+    }
+    return null
 }
 
 private fun review(dirs: Dirs) {
