@@ -99,6 +99,9 @@ DROP_IN="$UNIT_DIR/mediasync-desktop.service.d/folders.conf"
 systemctl --user daemon-reload
 CLI="$DEST/bin/mediasync-desktop"
 if "$CLI" status >/dev/null 2>&1; then
+    # Enabled too: a service only ever started by hand runs until the next login, then the window
+    # has nothing to talk to.
+    systemctl --user enable --quiet mediasync-desktop.service
     systemctl --user restart mediasync-desktop.service
     echo "Updated and restarted. Logs: journalctl --user -u mediasync-desktop -f"
 elif [[ -t 0 ]]; then
